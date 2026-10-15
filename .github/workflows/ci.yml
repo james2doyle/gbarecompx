@@ -50,7 +50,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config git ca-certificates
+            build-essential cmake ninja-build pkg-config git ca-certificates \
+            libsdl2-dev
+          # libsdl2-dev makes this job compile the SDL backend region too
+          # (SDL2 present, runtime UI absent) — the configuration where a
+          # closing brace inside `#if GBARECOMP_RUNTIME_UI` once broke the
+          # standalone build.
 
       - name: Configure
         run: >

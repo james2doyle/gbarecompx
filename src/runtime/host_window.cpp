@@ -752,8 +752,11 @@ void interp_display_tick(const uint8_t* rgb888,
         }
         this->interp_tick_count = 0;
     }
-}
+#else
+    (void)rgb888;
+    (void)deadline_ns;
 #endif
+}
 #if defined(GBARECOMP_RUNTIME_UI)
     void set_runtime_ui(RecompRuntimeUi* ui) override {
         this->runtime_ui = ui;
