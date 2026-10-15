@@ -1082,6 +1082,10 @@ add_executable(window_backend_virtual_dispatch_tests tests/runtime/window_backen
 target_include_directories(window_backend_virtual_dispatch_tests PRIVATE src/runtime)
 add_test(NAME window_backend_virtual_dispatch_tests COMMAND window_backend_virtual_dispatch_tests)
 
+add_executable(backend_v2_types_tests tests/runtime/backend_v2_types_test.cpp)
+target_include_directories(backend_v2_types_tests PRIVATE src/runtime)
+add_test(NAME backend_v2_types_tests COMMAND backend_v2_types_tests)
+
 
 add_executable(value_clamps_tests tests/runtime/value_clamps_test.cpp)
 target_include_directories(value_clamps_tests PRIVATE src/runtime)
