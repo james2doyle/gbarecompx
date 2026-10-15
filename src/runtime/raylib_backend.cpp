@@ -169,9 +169,10 @@ struct RaylibBackend::Impl {
     std::unique_ptr<Overlay> overlay;
     std::unique_ptr<Menu> menu;
     // Menu frame stash: MenuImpl::present() computes the geometry + pointer
-    // hit-test and stores the frame here; draw_pending_menu() consumes it
-    // inside the video present's Begin/EndDrawing (one-shot — no model
-    // pointer survives the frame).
+    // hit-test and stores the frame here; draw_pending_menu() draws it inside
+    // every present of the frame (the interp ticks present more than once per
+    // pump). The stash survives until the next menu().present() clears and
+    // re-sets it; close() clears it with the rest of the derived state.
     MenuModel* menu_model = nullptr;
     MenuGeometry menu_geometry;
     PointerState menu_pointer;
@@ -2318,9 +2319,12 @@ private:
     Impl* impl_;
 };
 
-// Draw (and clear) the menu frame stashed by MenuImpl::present. One-shot:
-// a frame without a fresh menu().present() draws nothing, so no model
-// pointer survives a frame.
+// Draw the menu frame stashed by MenuImpl::present. The stash lives until the
+// NEXT menu().present() (which clears and re-sets it): a guest frame can
+// present MORE than once — the frame-interpolation ticks subdivide the wait
+// with extra display-paced presents — and every one of them must carry the
+// menu, or it flickers at the tick rate. The pointer is host-owned and
+// refreshed every pump; close() clears it.
 void RaylibBackend::draw_pending_menu(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     MenuModel* model = impl->menu_model;
@@ -2754,6 +2758,7 @@ void RaylibBackend::close() {
     // closed raylib read() reports an empty snapshot (the state-only stub
     // still reports the flag, but has no input device to leak into).
     impl_->menu_open = false;
+    impl_->menu_model = nullptr;  // never draw a stale model after close
 }
 bool RaylibBackend::is_open() const { return impl_->open; }
 
