@@ -758,7 +758,14 @@ void test_extended_view_obj_native_clip_is_opt_in() {
     store16(&f.oam[8], 0x0000);
     store16(&f.oam[10], 8);
     store16(&f.oam[12], 0x0000);
+    // OBJ 2: origin inside the native span at X=236; its sprite extends past
+    // 240. The opt-in clip must ALLOW the extension into the margin (edge
+    // units stay visible in wide views) — only parked origins are skipped.
+    store16(&f.oam[16], 0x0000);
+    store16(&f.oam[18], 236);
+    store16(&f.oam[20], 0x0000);
     f.vram[0x10000] = 0x11;          // Tile 0: first two texels use color 1.
+    f.vram[0x10002] = 0x11;          // Texels 4/5 too (the margin extension).
     store16(&f.pal[0x202], 0x001F);  // OBJ color 1 = red.
 
     f.ppu.set_view_margins(24, 24, 0, 0);
@@ -776,6 +783,8 @@ void test_extended_view_obj_native_clip_is_opt_in() {
                  f.oam.data(), f.pal.data());
     expect_pixel(wide.data() + (24u - 4u) * 3u, 0, 0, 0,
                  "clipped margin OBJ leaked into margin");
+    expect_pixel(wide.data() + (24u + 236u + 4u) * 3u, 255, 0, 0,
+                 "in-view OBJ extension dropped at the native edge");
     expect_pixel(wide.data() + (24u + 8u) * 3u, 255, 0, 0,
                  "clip altered native-viewport OBJ");
     gba::g_ws_obj_native_clip = 0;
