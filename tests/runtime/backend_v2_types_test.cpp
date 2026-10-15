@@ -36,12 +36,10 @@ using gbarecomp::MenuResult;
 using gbarecomp::OpenParams;
 using gbarecomp::Overlay;
 using gbarecomp::PointerState;
-using ::RecompRuntimeUi;
 using gbarecomp::Result;
 using gbarecomp::TouchConfig;
 using gbarecomp::Video;
 using gbarecomp::WindowBackend;
-using gbarecomp::WindowBackendV2;
 
 #define CHECK(x)                                                             \
     do {                                                                     \
@@ -52,15 +50,10 @@ using gbarecomp::WindowBackendV2;
         }                                                                    \
     } while (0)
 
-// Events moved to seam scope in Phase 1; the flat class keeps a member alias
-// so WindowBackend::Events (and HostWindow::Events) still name the same type.
+// Events lives at seam scope; the facade keeps the historical member alias so
+// WindowBackend::Events (and HostWindow::Events) still name the same type.
 static_assert(std::is_same_v<Events, WindowBackend::Events>,
               "WindowBackend::Events must alias the seam-scope Events");
-
-// Both generations coexist during the port: the V2 facade is a distinct type,
-// not an evolution of the flat class.
-static_assert(!std::is_base_of_v<WindowBackend, WindowBackendV2>,
-              "V2 facade must not derive from the flat generation");
 
 // Interfaces are safely deletable through their base pointer...
 static_assert(std::has_virtual_destructor_v<Video>);
@@ -68,14 +61,14 @@ static_assert(std::has_virtual_destructor_v<Audio>);
 static_assert(std::has_virtual_destructor_v<Input>);
 static_assert(std::has_virtual_destructor_v<Fx>);
 static_assert(std::has_virtual_destructor_v<Overlay>);
-static_assert(std::has_virtual_destructor_v<WindowBackendV2>);
+static_assert(std::has_virtual_destructor_v<WindowBackend>);
 // ...and abstract: nothing may instantiate a bare interface.
 static_assert(std::is_abstract_v<Video>);
 static_assert(std::is_abstract_v<Audio>);
 static_assert(std::is_abstract_v<Input>);
 static_assert(std::is_abstract_v<Fx>);
 static_assert(std::is_abstract_v<Overlay>);
-static_assert(std::is_abstract_v<WindowBackendV2>);
+static_assert(std::is_abstract_v<WindowBackend>);
 
 bool caps_all_false(const Caps& c) {
     return !c.window && !c.headless && !c.input && !c.audio && !c.shaders &&
@@ -157,7 +150,7 @@ struct NoopMenu final : Menu {
     }
 };
 
-struct NoopBackend final : WindowBackendV2 {
+struct NoopBackend final : WindowBackend {
     NoopVideo v;
     NoopAudio a;
     NoopInput i;
@@ -178,7 +171,6 @@ struct NoopBackend final : WindowBackendV2 {
     Overlay& overlay() override { return o; }
     Menu& menu() override { return m; }
     Events pump() override { return Events{}; }
-    void set_runtime_ui(RecompRuntimeUi*) override {}
     bool suspend() override { return false; }
     bool resume() override { return false; }
     bool wait_for_foreground() override { return true; }

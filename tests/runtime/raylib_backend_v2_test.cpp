@@ -53,7 +53,7 @@ using gbarecomp::Result;
 using gbarecomp::TouchConfig;
 using gbarecomp::TouchHub;
 using gbarecomp::Video;
-using gbarecomp::WindowBackendV2;
+using gbarecomp::WindowBackend;
 using gbarecomp::menu_close;
 using gbarecomp::menu_open;
 
@@ -72,11 +72,10 @@ void video_defaults_clamps_and_shared_state() {
     CHECK(!v.fps_readout());
     CHECK(v.px_per_mm() > 3.7f && v.px_per_mm() < 3.9f);  // 96/25.4 ≈ 3.7795
 
-    // One state, two views: mutating through V2 is visible through the flat
-    // generation and vice versa.
+    // One state: the facade accessor and the concern are the same object.
     v.adjust_scale(2);
     CHECK(v.scale() == 5);
-    CHECK(b.window_scale() == 5);
+    CHECK(b.video().scale() == 5);
 
     v.adjust_scale(100);
     CHECK(v.scale() == 8);  // clamped high
@@ -85,28 +84,28 @@ void video_defaults_clamps_and_shared_state() {
 
     v.set_linear_filter(true);
     CHECK(v.linear_filter());
-    CHECK(b.linear_filter_enabled());
+    CHECK(b.video().linear_filter());
 
     v.set_fullscreen(9);
     CHECK(v.fullscreen() == 2);  // clamped high
-    CHECK(b.fullscreen_mode() == 2);
+    CHECK(b.video().fullscreen() == 2);
     v.set_fullscreen(-3);
     CHECK(v.fullscreen() == 0);  // clamped low
-    CHECK(b.fullscreen_mode() == 0);
+    CHECK(b.video().fullscreen() == 0);
 
     v.set_fps_readout(true);
     CHECK(v.fps_readout());
-    CHECK(b.fps_readout_value());
+    CHECK(b.video().fps_readout());
 
-    // ...and the other direction: the flat setters must be visible through V2
-    // (a broken flat forwarder would otherwise pass every check above).
-    b.set_linear_filter(false);
+    // Through the facade accessor: the same state (Phase 4b: one generation —
+    // the accessor and the concern are the same object).
+    b.video().set_linear_filter(false);
     CHECK(!v.linear_filter());
-    b.adjust_scale(1);
+    b.video().adjust_scale(1);
     CHECK(v.scale() == 2);
-    b.set_fullscreen(1);
+    b.video().set_fullscreen(1);
     CHECK(v.fullscreen() == 1);
-    b.set_fps_readout(false);
+    b.video().set_fps_readout(false);
     CHECK(!v.fps_readout());
 }
 
@@ -136,18 +135,18 @@ void video_safe_without_a_window() {
     v.set_view_margins(1, 2, 3, 4);
     v.set_presentation_anchor_top(true);
 
-    // The flat side of the same paths (forwarders): same no-ops, same state.
-    CHECK(b.px_per_mm_value() > 3.7f && b.px_per_mm_value() < 3.9f);
+    // The facade accessor on the same paths: same no-ops, same state.
+    CHECK(b.video().px_per_mm() > 3.7f && b.video().px_per_mm() < 3.9f);
     int fw = 0, fh = 0;
-    CHECK(!b.drawable_size(&fw, &fh));
+    CHECK(!b.video().drawable_size(&fw, &fh));
     std::vector<std::uint8_t> frame2;
-    CHECK(!b.copy_presented_frame(frame2, fw, fh));
-    b.present(px.data(), false);
-    b.interp_display_tick(px.data(), 2000u);
-    b.set_title("flat title");
-    b.set_view_margins(0, 0, 0, 0);
-    b.set_resize_driven_view(false);
-    b.set_presentation_anchor_top(false);
+    CHECK(!b.video().readback(frame2, fw, fh));
+    b.video().present(px.data(), false);
+    b.video().interp_display_tick(px.data(), 2000u);
+    b.video().set_title("facade title");
+    b.video().set_view_margins(0, 0, 0, 0);
+    b.video().set_resize_driven_view(false);
+    b.video().set_presentation_anchor_top(false);
 
     // Surface size: rejects nonsense, accepts changes, idempotent on repeat.
     CHECK(!v.set_surface_size(0, 160));
@@ -174,24 +173,24 @@ void audio_defaults_and_shared_state() {
     CHECK(&b.audio() == &a);
     CHECK(a.volume() == 100);
     CHECK(a.enabled());
-    CHECK(b.volume_percent() == 100);
-    CHECK(b.audio_enabled());
+    CHECK(b.audio().volume() == 100);
+    CHECK(b.audio().enabled());
 
     // One state, two views, both directions.
     a.set_volume(55);
     CHECK(a.volume() == 55);
-    CHECK(b.volume_percent() == 55);
+    CHECK(b.audio().volume() == 55);
     a.set_volume(150);
     CHECK(a.volume() == 100);  // clamped high
     a.set_volume(-5);
     CHECK(a.volume() == 0);  // clamped low
-    b.set_volume(80);
+    b.audio().set_volume(80);
     CHECK(a.volume() == 80);
 
     a.set_enabled(false);
     CHECK(!a.enabled());
-    CHECK(!b.audio_enabled());
-    b.set_audio_enabled(true);
+    CHECK(!b.audio().enabled());
+    b.audio().set_enabled(true);
     CHECK(a.enabled());
 }
 
@@ -212,7 +211,7 @@ void audio_safe_without_a_device() {
     std::vector<std::int16_t> samples(64, 0);
     a.push(samples.data(), 0);
     a.push(samples.data(), samples.size());
-    b.push_audio_samples(samples.data(), samples.size());
+    b.audio().push(samples.data(), samples.size());
 }
 
 void input_defaults_and_shared_state() {
@@ -220,13 +219,13 @@ void input_defaults_and_shared_state() {
     Input& in = b.input();
     CHECK(&b.input() == &in);
 
-    // Defaults mirror the flat generation's.
+    // Defaults (through the facade accessor too: the same object).
     CHECK(in.assist_tools_enabled());
-    CHECK(b.assist_tools_enabled());
+    CHECK(b.input().assist_tools_enabled());
     CHECK(in.fast_forward_multiplier() == 4);
-    CHECK(b.fast_forward_multiplier() == 4);
+    CHECK(b.input().fast_forward_multiplier() == 4);
     CHECK(!in.gamepad_connected());
-    CHECK(!b.gamepad_connected());
+    CHECK(!b.input().gamepad_connected());
 
     // bindings() is the live table (stable address; the ctor's default seed:
     // index 0 = A = X, per raylib_keymap.h).
@@ -237,7 +236,7 @@ void input_defaults_and_shared_state() {
     // multiplier) without touching a file.
     in.load_config(nullptr, false, 7);
     CHECK(!in.assist_tools_enabled());
-    CHECK(!b.assist_tools_enabled());
+    CHECK(!b.input().assist_tools_enabled());
     CHECK(in.fast_forward_multiplier() == 7);
     in.load_config(nullptr, true, 99);
     CHECK(in.assist_tools_enabled());
@@ -270,8 +269,8 @@ void input_safe_without_a_window() {
     // rumble/haptic are safe no-ops without a pad.
     in.rumble(0.5f, 0.5f, 100);
     in.haptic_pulse(50, 1.0f);
-    b.gamepad_rumble(0.5f, 0.5f, 100);
-    b.haptic_pulse(50, 1.0f);
+    b.input().rumble(0.5f, 0.5f, 100);
+    b.input().haptic_pulse(50, 1.0f);
 }
 
 void fx_defaults_roundtrip_and_shared_state() {
@@ -286,13 +285,21 @@ void fx_defaults_roundtrip_and_shared_state() {
     CHECK(!d.lcd);
     CHECK(d.lcd_boost == 1.0f && d.lcd_dither == 1.0f && d.lcd_deband == 0.0f);
 
-    // Flat setters -> settings() (V2), both directions.
-    b.set_frame_interp(true);
+    // apply() drives settings(); the facade accessor is the same object.
+    {
+        FxSettings s = f.settings();
+        s.frame_interp = true;
+        f.apply(s);
+    }
     CHECK(f.settings().frame_interp);
-    CHECK(b.frame_interp());
-    b.set_frame_blend(true);
+    CHECK(b.fx().settings().frame_interp);
+    {
+        FxSettings s = f.settings();
+        s.frame_blend = 1.0f;
+        f.apply(s);
+    }
     CHECK(f.settings().frame_blend == 1.0f);
-    CHECK(b.frame_blend_value());
+    CHECK(b.fx().settings().frame_blend != 0.0f);
     f.apply(FxSettings{});  // defaults: toggles both back off
     CHECK(!f.settings().frame_interp);
     CHECK(f.settings().frame_blend == 0.0f);
@@ -314,10 +321,10 @@ void fx_defaults_roundtrip_and_shared_state() {
     CHECK(got.lcd_boost == want.lcd_boost);
     CHECK(got.lcd_dither == want.lcd_dither);
     CHECK(got.lcd_deband == want.lcd_deband);
-    CHECK(b.lcd_shader_enabled());
-    CHECK(b.lcd_boost_value() == 1.25f);
-    CHECK(b.lcd_dither_value() == 0.5f);
-    CHECK(b.lcd_deband_value() == 0.25f);
+    CHECK(b.fx().settings().lcd);
+    CHECK(b.fx().settings().lcd_boost == 1.25f);
+    CHECK(b.fx().settings().lcd_dither == 0.5f);
+    CHECK(b.fx().settings().lcd_deband == 0.25f);
 
     // Out-of-range values clamp like the flat setters (shared policy:
     // boost [1,3], dither [0,2], deband [0,16]).
@@ -331,10 +338,9 @@ void fx_defaults_roundtrip_and_shared_state() {
     CHECK(clamped.lcd_dither == 0.0f);
     CHECK(clamped.lcd_deband == 16.0f);
 
-    // reset_frame_blend is a safe no-op unopened (no history yet), through
-    // both views.
+    // reset_frame_blend is a safe no-op unopened (no history yet).
     f.reset_frame_blend();
-    b.reset_frame_blend();
+    b.fx().reset_frame_blend();
 }
 
 void overlay_defaults_and_shared_state() {
@@ -344,7 +350,7 @@ void overlay_defaults_and_shared_state() {
 
     // Fresh backend: no pad.
     CHECK(!o.touch_pad_visible());
-    CHECK(!b.touch_pad_visible_value());
+    CHECK(!b.overlay().touch_pad_visible());
 
     // configure_touch stores the value struct: emulation turns the pad
     // capability on, and the unsaved pad choice follows pad_default.
@@ -356,27 +362,33 @@ void overlay_defaults_and_shared_state() {
     cfg.pad_idle_hide_seconds = 5;
     o.configure_touch(cfg);
     CHECK(o.touch_pad_visible());
-    CHECK(b.touch_pad_visible_value());
+    CHECK(b.overlay().touch_pad_visible());
 
     // A saved choice wins from then on (pad_default no longer applies).
     o.set_touch_pad_visible(false);
     CHECK(!o.touch_pad_visible());
-    CHECK(!b.touch_pad_visible_value());
-    b.configure_touch(true, 1, 2, true, 5);
+    CHECK(!b.overlay().touch_pad_visible());
+    {
+        TouchConfig cfg2;
+        cfg2.policy = true;
+        cfg2.claims = 1;
+        cfg2.pad_default = 2;
+        cfg2.emulate_touch = true;
+        cfg2.pad_idle_hide_seconds = 5;
+        b.overlay().configure_touch(cfg2);
+    }
     CHECK(!o.touch_pad_visible());  // saved: stays hidden
-    b.set_touch_pad_visible(true);
+    b.overlay().set_touch_pad_visible(true);
     CHECK(o.touch_pad_visible());
 
     // Config dir + overlay hook: null is a safe no-op in both views.
     o.set_config_dir(nullptr);
-    b.set_touch_config_dir(nullptr);
     o.set_host_overlay(nullptr);
-    b.set_host_overlay(nullptr);
 }
 
 void facade_lifecycle_contract() {
     RaylibBackend b;
-    WindowBackendV2& v2 = b;  // both generations on one object
+    WindowBackend& v2 = b;  // the facade
 
     // Caps invariants that hold in every config.
     const Caps caps = v2.caps();

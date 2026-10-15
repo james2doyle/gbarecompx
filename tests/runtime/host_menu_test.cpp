@@ -38,7 +38,7 @@ using gbarecomp::MenuResult;
 using gbarecomp::MenuRow;
 using gbarecomp::MenuRowKind;
 using gbarecomp::PointerState;
-using gbarecomp::WindowBackendV2;
+using gbarecomp::WindowBackend;
 using gbarecomp::testing::FakeBackend;
 
 // GBA KEYINPUT bits, active-low (bit clear = pressed).
@@ -103,7 +103,7 @@ struct HookLog {
     MenuModel* last_model = nullptr;
 };
 
-void hook_fn(void* user, WindowBackendV2&, const MenuResult& r) {
+void hook_fn(void* user, WindowBackend&, const MenuResult& r) {
     auto* log = static_cast<HookLog*>(user);
     ++log->calls;
     if (r.changed_row >= 0) log->last_changed = r.changed_row;

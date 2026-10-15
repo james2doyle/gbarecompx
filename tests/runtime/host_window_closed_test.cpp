@@ -1,10 +1,9 @@
 // HostWindow closed-state contract.
 //
-// The seam routing change rewrote 41 delegation sites from
-// `static_cast<Backend*>(impl_)` to `static_cast<WindowBackend*>(impl_)` and typed
-// `impl_` as `WindowBackend*`. That is a lot of identical guard clauses, and a
-// typo in any of them is invisible: the method still compiles, still links, and
-// still "works" — it just returns the wrong fallback on a closed window.
+// Phase 4b reduced the delegation to the facade (one branch per method), but
+// the guard clauses are still a lot of near-identical code: a typo in any of
+// them is invisible — the method still compiles, still links, and still
+// "works", it just returns the wrong fallback on a closed window.
 //
 // This test needs no backend at all. Every HostWindow method must be safe to call
 // on a never-opened window and must return its documented fallback, never crash

@@ -3,8 +3,6 @@
 
 #include "host_backend_factory.h"
 
-#include "host_window.h"  // host_make_sdl_backend()
-
 #if defined(GBARECOMP_USE_RAYLIB)
 #include "raylib_backend.h"
 #endif
@@ -14,9 +12,9 @@ namespace gbarecomp {
 WindowBackend* host_make_backend() {
 #if defined(GBARECOMP_USE_RAYLIB)
     return new RaylibBackend{};
-#elif defined(GBARECOMP_HAVE_SDL2)
-    return host_make_sdl_backend();
 #else
+    // The stub compile-check build (raylib OFF): no window backend at all.
+    // Phase 4b retired GBARECOMP_HAVE_SDL2 as a selection input.
     return nullptr;
 #endif
 }

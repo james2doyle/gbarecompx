@@ -40,11 +40,9 @@ namespace gbarecomp {
 struct Clock;
 struct RaylibApi;
 
-// Both generations live on this object during the transition (plan §3.1):
-// the flat class forwards into the concern implementations, and the V2
-// facade (WindowBackendV2) returns the same objects. Phase 4b deletes the
-// flat base.
-class RaylibBackend final : public WindowBackend, public WindowBackendV2 {
+// The product backend: implements the single seam facade (Phase 4b deleted
+// the flat generation) and returns the concern implementations it owns.
+class RaylibBackend final : public WindowBackend {
 public:
     // Dependencies are injectable for tests (Phase 2 tail / Phase 5): a fake
     // RaylibApi injects failures, a fake Clock makes host loops deterministic.
@@ -55,20 +53,13 @@ public:
     RaylibBackend(const RaylibBackend&) = delete;
     RaylibBackend& operator=(const RaylibBackend&) = delete;
 
-    // ---- lifecycle -------------------------------------------------------
-    bool open(const WindowBackendOpenParams& params) override;
-    bool open(int scale, int base_w, int base_h, const char* title,
-              const char* screen, bool linear_filter, bool sharp_filter,
-              bool resize_driven_view,
-              bool freely_resizable_window) override;
-    void close() override;
-    bool is_open() const override;
-
-    // ---- V2 lifecycle (plan §3.2/§3.3) ------------------------------------
-    // The single V2 entry point (AlreadyOpen/Unsupported per §3.3), the
+    // ---- lifecycle (plan §3.2/§3.3) ---------------------------------------
+    // The single entry point (AlreadyOpen/Unsupported per §3.3), the
     // capability report, and the mobile lifecycle hooks (desktop no-ops;
     // the Android port is where suspend/resume grow real work).
     Result open(const OpenParams& params) override;
+    void close() override;
+    bool is_open() const override;
     Caps caps() const override;
     bool suspend() override;
     bool resume() override;
@@ -84,98 +75,12 @@ public:
     Overlay& overlay() override;
     Menu& menu() override;
 
-    // ---- window state (implemented: pure state) --------------------------
-    void set_title(const char* title) override;
-    bool assist_tools_enabled() const override;
-    int fast_forward_multiplier() const override;
-    void load_input_config(const char* dir, bool assist_tools_default,
-                           int fast_forward_multiplier_default) override;
-    void set_volume(int pct) override;
-    int window_scale() const override;
-    void set_linear_filter(bool enabled) override;
-    bool linear_filter_enabled() const override;
-    void set_resize_driven_view(bool enabled) override;
-    void set_view_margins(std::uint32_t left, std::uint32_t right,
-                          std::uint32_t top, std::uint32_t bottom) override;
-    float px_per_mm_value() const override;
-    void set_presentation_anchor_top(bool anchor_top) override;
-    void set_host_overlay(void (*overlay)(HostOverlay*)) override;
-    void set_fps_readout(bool on) override;
-    bool fps_readout_value() const override;
-    void set_frame_interp(bool enabled) override;
-    bool frame_interp() const override;
-    void set_frame_blend(bool enabled) override;
-    bool frame_blend_value() const override;
-    void reset_frame_blend() override;
-    void set_audio_enabled(bool enabled) override;
-    bool audio_enabled() const override;
-    void adjust_scale(int delta) override;
-    int volume_percent() const override;
-    void set_fullscreen(int mode) override;
-    int fullscreen_mode() const override;
-    void set_runtime_ui(::RecompRuntimeUi* ui) override;
-
-    // ---- touch / virtual pad --------------------------------------------
-    void configure_touch(bool policy, std::uint32_t claims, int pad_default,
-                         bool emulate_touch,
-                         int pad_idle_hide_seconds) override;
-    void set_touch_config_dir(const char* dir) override;
-    void set_touch_pad_visible(bool visible) override;
-    bool touch_pad_visible_value() const override;
-
-    // ---- gamepad ---------------------------------------------------------
-    bool gamepad_connected() const override;
-    bool gamepad_supports_rumble() const override;
-    void gamepad_rumble(float low_frequency, float high_frequency,
-                        std::uint32_t duration_ms) override;
-
-    // ---- haptics ---------------------------------------------------------
-    void haptic_pulse(int duration_ms, float strength) override;
-
-    // ---- frame / geometry ------------------------------------------------
-    bool set_surface_size(int base_w, int base_h) override;
-    bool drawable_size(int* width, int* height) const override;
-
-    // ---- LCD shader (seam methods; the shader itself stays raylib-only) ----
-    // Promoted from backend-specific methods so flags/menu drive them like the
-    // frame-blend pair; the SDL backend inherits silent no-ops. Enablement
-    // persists like the other display flags; the shader itself is GPU-side, so
-    // copy_presented_frame() (CPU staging) is unaffected and verify/frame-hash
-    // never see it. Precedence: a set GBARECOMP_LCD_SHADER pins on/off above
-    // all callers (operator override); otherwise CLI flags beat the config
-    // file, which beats defaults.
-    void set_lcd_shader(bool enabled) override;
-    bool lcd_shader_enabled() const override;
-    void set_lcd_boost(float boost) override;
-    float lcd_boost_value() const override;
-    void set_lcd_dither(float dither) override;
-    float lcd_dither_value() const override;
-    void set_lcd_deband(float deband) override;
-    float lcd_deband_value() const override;
-
-    // ---- window/renderer/audio surface -----------------------------------
-    // raylib-guarded bodies; stub builds return the WindowBackend default so
-    // behaviour is honest rather than silently wrong.
-
-    // Draining the raylib input queue into the host-neutral Events struct.
-    void pump_events(Events& out) override;
+    // ---- input pump + lifecycle -------------------------------------------
     // Full pump: fills save slots, hotkeys, gyro, assist, gamepad, touch.
     Events pump() override;
     // Suspend/resume. raylib has no blocking "wait for foreground" event;
     // this should poll IsWindowReady/IsGestureAvailable with a sleep.
     bool wait_for_foreground() override;
-    // Upload RGB888 -> Texture2D, apply filter/scale, present. This is also
-    // the hook point for shader / post-processing passes.
-    void present(const std::uint8_t* rgb888, bool fresh) override;
-    // Copy the exact bytes handed to the GPU for the `presented` debug cmd.
-    bool copy_presented_frame(std::vector<std::uint8_t>& out, int& w,
-                              int& h) const override;
-    // Convert mono 65536 Hz S16 into raylib's AudioStream and push.
-    void push_audio_samples(const std::int16_t* samples,
-                            std::size_t count) override;
-    // Display-paced interpolation loop (see interp_pacing.h for the policy).
-    void interp_display_tick(const std::uint8_t* rgb888,
-                             std::uint64_t deadline_ns) override;
 
 private:
     struct Impl;
@@ -221,9 +126,9 @@ private:
     static bool ensure_post_target(Impl* impl, int which, int w, int h);
     // Touch config persistence (pure file I/O, no raylib).
     static void save_touch_config(const Impl* impl);
-    // Pad visibility transition (state + persistence + logging), shared by the
-    // flat setter and InputImpl::read()'s tap handling (read() has no backend
-    // object to call the flat method through).
+    // Pad visibility transition (state + persistence + logging), shared by
+    // OverlayImpl::set_touch_pad_visible and InputImpl::read()'s tap handling
+    // (read() has no backend object to call the overlay method through).
     static void apply_touch_pad_visible(Impl* impl, bool visible);
     // Draw (and clear) the menu frame stashed by MenuImpl::present. Called by
     // VideoImpl::present after the pad chrome — the menu is the topmost layer

@@ -20,7 +20,7 @@ const char* const kFullscreenChoices[] = {"Windowed", "Borderless",
 
 }  // namespace
 
-void HostMenu::build(WindowBackendV2& backend) {
+void HostMenu::build(WindowBackend& backend) {
     model_ = MenuModel{};
     for (int i = 0; i < MenuModel::kMaxRows; ++i) binds_[i] = Bind::None;
 
@@ -183,14 +183,14 @@ void HostMenu::build(WindowBackendV2& backend) {
     if (rebuild_hook_) rebuild_hook_(rebuild_user_, model_);
 }
 
-void HostMenu::open(WindowBackendV2& backend) {
+void HostMenu::open(WindowBackend& backend) {
     build(backend);
     menu_open(model_);
 }
 
 void HostMenu::close() { menu_close(model_); }
 
-void HostMenu::toggle(WindowBackendV2& backend) {
+void HostMenu::toggle(WindowBackend& backend) {
     if (model_.open) {
         close();
     } else {
@@ -198,7 +198,7 @@ void HostMenu::toggle(WindowBackendV2& backend) {
     }
 }
 
-void HostMenu::frame(WindowBackendV2& backend, const Events& ev,
+void HostMenu::frame(WindowBackend& backend, const Events& ev,
                      const PointerState& pointer) {
     // Newly-pressed edges only: active-low, so a bit that was released and is
     // now clear is a fresh press. menu_keyinput, not keyinput: while the menu
@@ -224,7 +224,7 @@ bool HostMenu::row_in_range(int row) const {
     return row >= 0 && row < model_.row_count && row < MenuModel::kMaxRows;
 }
 
-bool HostMenu::apply(WindowBackendV2& backend, const MenuResult& result) {
+bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
     if (result.changed_row >= 0) {
         if (!row_in_range(result.changed_row)) return false;
         const int row = result.changed_row;

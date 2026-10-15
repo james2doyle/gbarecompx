@@ -1,6 +1,4 @@
 #pragma once
-class RecompRuntimeUi;
-
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -8,24 +6,13 @@ class RecompRuntimeUi;
 
 #include "menu_model.h"
 
-// Backend seam for HostWindow. The SDL implementation is still inlined in
-// host_window.cpp; this header is the first step toward letting a raylib
-// implementation share the same logical contract. It intentionally stays free
-// of SDL/raylib headers so it can be compiled on any backend target.
+// Backend seam for HostWindow: the facade (WindowBackend) plus the five
+// concern interfaces (Video/Audio/Input/Fx/Overlay) and the generic Menu
+// presentation. The raylib backend is the only implementation (Phase 4b
+// deleted the flat generation and the SDL backend); this header stays free of
+// SDL/raylib headers so it compiles on any backend target.
 namespace gbarecomp {
 struct HostOverlay;
-
-struct WindowBackendOpenParams {
-    int scale = 3;
-    int base_w = 240;
-    int base_h = 160;
-    const char* title = "gbarecomp";
-    const char* screen = nullptr;
-    bool linear_filter = false;
-    bool sharp_filter = false;
-    bool resize_driven_view = false;
-    bool freely_resizable_window = false;
-};
 
 // Full host event contract. Historically declared as HostWindow::Events;
 // it lives in the seam so a backend can fill it directly without depending
@@ -89,141 +76,12 @@ struct Events {
     bool     terminating = false;
 };
 
-class WindowBackend {
-public:
-    virtual ~WindowBackend() = default;
-
-    virtual bool open(const WindowBackendOpenParams& params) { return false; }
-    virtual bool open(int scale, int base_w, int base_h, const char* title,
-                      const char* screen, bool linear_filter, bool sharp_filter,
-                      bool resize_driven_view,
-                      bool freely_resizable_window) {
-        (void)scale; (void)base_w; (void)base_h; (void)title; (void)screen;
-        (void)linear_filter; (void)sharp_filter; (void)resize_driven_view;
-        (void)freely_resizable_window; return false;
-    }
-    virtual void close() {}
-    virtual bool is_open() const { return false; }
-
-    virtual void set_title(const char* title) { (void)title; }
-    virtual bool assist_tools_enabled() const { return true; }
-    virtual int fast_forward_multiplier() const { return 4; }
-
-    virtual void load_input_config(const char* dir, bool assist_tools_default,
-                                  int fast_forward_multiplier_default) {
-        (void)dir; (void)assist_tools_default; (void)fast_forward_multiplier_default;
-    }
-
-    virtual void set_volume(int pct) { (void)pct; }
-    virtual int window_scale() const { return 1; }
-    virtual void set_linear_filter(bool enabled) { (void)enabled; }
-    virtual bool linear_filter_enabled() const { return false; }
-    virtual void set_resize_driven_view(bool enabled) { (void)enabled; }
-
-    virtual void set_view_margins(std::uint32_t left, std::uint32_t right,
-                                 std::uint32_t top, std::uint32_t bottom) {
-        (void)left; (void)right; (void)top; (void)bottom;
-    }
-    virtual void configure_touch(bool policy, std::uint32_t claims,
-                                int pad_default, bool emulate_touch,
-                                int pad_idle_hide_seconds) {
-        (void)policy; (void)claims; (void)pad_default;
-        (void)emulate_touch; (void)pad_idle_hide_seconds;
-    }
-    virtual void set_touch_config_dir(const char* dir) { (void)dir; }
-    virtual void set_host_overlay(void (*overlay)(HostOverlay*)) { (void)overlay; }
-    virtual float px_per_mm_value() const { return 96.0f / 25.4f; }
-    virtual void set_presentation_anchor_top(bool anchor_top) { (void)anchor_top; }
-
-    virtual void set_fps_readout(bool on) { (void)on; }
-    virtual void haptic_pulse(int duration_ms, float strength) { (void)duration_ms; (void)strength; }
-
-    // Gamepad presence. Used to auto-show the on-screen pad on Android when a
-    // physical pad is attached. Deliberately conservative default so a backend
-    // that has not wired it never claims a pad it cannot deliver.
-    virtual bool gamepad_connected() const { return false; }
-
-    // Gamepad rumble. The base GBA has no rumble, so this is a host-side
-    // enhancement, not emulation: recompiled game code calls
-    // host_gamepad_rumble() and the backend drives the pad's motors. Dual
-    // motors (low = heavy, high = light) so profiles can express "tap" vs
-    // "impact" rather than collapsing everything into one strength scalar.
-    // Capability-gated and a silent no-op when unsupported, so callers do not
-    // need to probe first.
-    virtual bool gamepad_supports_rumble() const { return false; }
-    virtual void gamepad_rumble(float low_frequency, float high_frequency,
-                                std::uint32_t duration_ms) {
-        (void)low_frequency; (void)high_frequency; (void)duration_ms;
-    }
-    virtual void set_runtime_ui(::RecompRuntimeUi* ui) { (void)ui; }
-
-    virtual bool fps_readout_value() const { return false; }
-
-    virtual void set_touch_pad_visible(bool visible) { (void)visible; }
-    virtual bool touch_pad_visible_value() const { return false; }
-
-    virtual void set_frame_interp(bool enabled) { (void)enabled; }
-    virtual bool frame_interp() const { return false; }
-    // LCD shader (raylib-only enhancement; SDL inherits these no-ops).
-    // The menu/flags drive these exactly like the frame-blend pair above;
-    // backends without a shader stay silent and report defaults.
-    virtual void set_lcd_shader(bool enabled) { (void)enabled; }
-    virtual bool lcd_shader_enabled() const { return false; }
-    virtual void set_lcd_boost(float boost) { (void)boost; }
-    virtual float lcd_boost_value() const { return 1.0f; }
-    virtual void set_lcd_dither(float dither) { (void)dither; }
-    virtual float lcd_dither_value() const { return 1.0f; }
-    // Adaptive vertical deband (off by default; threshold in display LSB).
-    virtual void set_lcd_deband(float deband) { (void)deband; }
-    virtual float lcd_deband_value() const { return 0.0f; }
-    virtual void set_frame_blend(bool enabled) { (void)enabled; }
-    virtual bool frame_blend_value() const { return false; }
-    virtual void reset_frame_blend() {}
-    virtual void interp_display_tick(const std::uint8_t* rgb888,
-                                      std::uint64_t deadline_ns) {
-        (void)rgb888; (void)deadline_ns;
-    }
-
-    virtual void set_audio_enabled(bool enabled) { (void)enabled; }
-    virtual bool audio_enabled() const { return false; }
-    virtual void adjust_scale(int delta) { (void)delta; }
-    virtual int volume_percent() const { return 100; }
-
-    virtual void set_fullscreen(int mode) { (void)mode; }
-    virtual int fullscreen_mode() const { return 0; }
-
-    virtual bool set_surface_size(int base_w, int base_h) { return false; }
-    virtual bool drawable_size(int* width, int* height) const { return false; }
-
-    // The host event contract now lives at seam scope (moved in Phase 1 so
-    // the V2 facade can return it too); this alias keeps every
-    // WindowBackend::Events reference — and HostWindow::Events — intact.
-    using Events = gbarecomp::Events;
-
-    virtual void pump_events(Events& out) { (void)out; }
-    virtual Events pump() { return Events{}; }
-    virtual bool wait_for_foreground() { return true; }
-
-    virtual void present(const std::uint8_t* rgb888, bool fresh) { (void)rgb888; (void)fresh; }
-    virtual bool copy_presented_frame(std::vector<std::uint8_t>& out, int& w, int& h) const { (void)out; (void)w; (void)h; return false; }
-
-    virtual void push_audio_samples(const std::int16_t* samples, std::size_t count) { (void)samples; (void)count; }
-
-    // The UID/backends currently expose raster/audio state through HostWindow's
-    // platform-independent helpers; subclasses are expected to keep the same
-    // logical contracts documented in host_window.h.
-
-protected:
-    WindowBackend() = default;
-};
-
 // ═══════════════════════════════════════════════════════════════════════════
-// V2 generation — WINDOW_BACKEND_V2_PLAN §3.2/§3.3 (additive until Phase 4).
+// The seam — WINDOW_BACKEND_V2_PLAN §3.2/§3.3.
 //
-// The flat generation above and this one coexist while the raylib backend
-// converts concern by concern; Phase 4 deletes the flat class and this
-// facade takes the plain `WindowBackend` name. Names, defaults and contracts
-// are normative in the plan — keep them in sync.
+// Single generation since Phase 4b (the flat class and the SDL backend were
+// deleted; the facade took the plain `WindowBackend` name). Names, defaults
+// and contracts are normative in the plan — keep them in sync.
 //
 // Dependency-free: no raylib, no SDL, no GL. Interfaces carry no data members
 // (§3.1); state lives in the implementation behind them.
@@ -389,11 +247,16 @@ public:
 };
 
 // ── facade ────────────────────────────────────────────────────────────────
-// Transitional name: the flat generation above still owns `WindowBackend`;
-// Phase 4 deletes it and this class becomes `WindowBackend` (§6 4b).
-class WindowBackendV2 {
+// The single seam entry point (Phase 4b renamed the transitional
+// `WindowBackendV2` facade to this name): lifecycle + capabilities, and the
+// five concern accessors plus the generic menu presentation.
+class WindowBackend {
 public:
-    virtual ~WindowBackendV2() = default;
+    virtual ~WindowBackend() = default;
+
+    // The historical alias (the flat generation declared it): keeps every
+    // `WindowBackend::Events` reference and `HostWindow::Events` intact.
+    using Events = gbarecomp::Events;
 
     virtual Result open(const OpenParams& params) = 0;   // single entry point
     virtual void close() = 0;                            // idempotent
@@ -408,7 +271,10 @@ public:
     virtual Menu&    menu() = 0;
 
     virtual Events pump() = 0;   // = translate_input(read(snapshot), bindings, edges)
-    virtual void set_runtime_ui(RecompRuntimeUi* ui) = 0;
+    // set_runtime_ui is gone with the flat generation: recomp-ui's runtime UI
+    // is not ported to the raylib path — the generic menu (§3.4) is the
+    // in-game surface, and HostWindow::set_runtime_ui stays as a compile-
+    // compatibility shim.
 
     // Mobile lifecycle. raylib Android CANNOT close/reopen (upstream
     // InitPlatform waits on an INIT_WINDOW the OS never re-sends): these

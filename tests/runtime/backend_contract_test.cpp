@@ -42,12 +42,12 @@ using gbarecomp::kRayKeyX;
 using gbarecomp::OpenParams;
 using gbarecomp::RaylibBackend;
 using gbarecomp::Result;
-using gbarecomp::WindowBackendV2;
+using gbarecomp::WindowBackend;
 using gbarecomp::testing::FakeBackend;
 
 // `fake` is non-null only for the FakeBackend run: it unlocks the scripted
 // checks (input scripting, readback fidelity, audio claim, fx/overlay).
-void run_contract(WindowBackendV2& b, const char* name,
+void run_contract(WindowBackend& b, const char* name,
                   bool must_open, FakeBackend* fake) {
     // Fresh: closed; close() idempotent; lifecycle calls safe.
     CHECK(!b.is_open());

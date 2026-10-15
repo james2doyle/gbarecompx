@@ -270,7 +270,7 @@ public:
 // `suspend_ok`/`resume_ok`. pump() mirrors the real backend's composition:
 // ScriptedInput -> translate_input(edges), with the FakeClock supplying
 // now_ms.
-class FakeBackend final : public WindowBackendV2 {
+class FakeBackend final : public WindowBackend {
 public:
     Result open(const OpenParams& params) override {
         ++open_calls;
@@ -310,7 +310,6 @@ public:
         scripted_input.read(s);
         return translate_input(s, scripted_input.bindings(), edges);
     }
-    void set_runtime_ui(RecompRuntimeUi* ui) override { runtime_ui = ui; }
     bool suspend() override {
         ++suspend_calls;
         return suspend_ok;
@@ -349,7 +348,6 @@ public:
     int open_calls = 0, close_calls = 0, pump_calls = 0;
     int suspend_calls = 0, resume_calls = 0;
     OpenParams last_open;
-    RecompRuntimeUi* runtime_ui = nullptr;
 };
 
 }  // namespace gbarecomp::testing

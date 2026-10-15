@@ -1,12 +1,13 @@
-// host_backend_factory.h — selects the WindowBackend implementation for a build.
+// host_backend_factory.h — the backend this build was configured with.
 //
-// The only place that knows which backend is compiled in. HostWindow calls
-// host_make_backend() and stays ignorant of SDL vs raylib, so adding a platform
-// never reaches host_window.cpp.
+// The only place that knows the selection. HostWindow calls host_make_backend()
+// and stays ignorant of it, so a future runtime selector never reaches
+// host_window.cpp.
 //
-// Selection is compile-time (GBARECOMP_USE_RAYLIB, default OFF). A later
-// enhancement will allow runtime selection for a single binary; the seam already
-// supports it, only this function would change.
+// Selection is compile-time and binary (Phase 4b retired GBARECOMP_USE_RAYLIB
+// as a *backend* flag): raylib ON builds the product backend; raylib OFF is the
+// stub compile-check — no window backend at all, host_make_backend() returns
+// nullptr.
 
 #pragma once
 
@@ -14,11 +15,7 @@
 
 namespace gbarecomp {
 
-// The SDL backend. Defined in host_window.cpp, where the concrete Backend lives in
-// an anonymous namespace and cannot be named from elsewhere.
-WindowBackend* host_make_sdl_backend();
-
-// The backend this build was configured with.
+// The backend this build was configured with (nullptr in the stub build).
 WindowBackend* host_make_backend();
 
 // True when this build selected the raylib backend. Useful for logging and for

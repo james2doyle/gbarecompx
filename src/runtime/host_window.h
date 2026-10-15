@@ -1,14 +1,14 @@
 // host_window.h — minimal host window + input surface.
 //
-// Soft-dependency on SDL2. When the build can find SDL2 the cpp
-// uses it; otherwise the same symbols compile as no-op stubs so
-// headless builds (CI, BIOS smoke without --window) still link.
+// The implementation delegates to the backend seam (window_backend.h); raylib
+// is the only backend (Phase 4b deleted the SDL backend). Builds with raylib
+// OFF compile the same symbols as documented no-op stubs so headless builds
+// (CI, BIOS smoke without --window) still link.
 //
 // The window owns a logical-size streaming texture matching the active GBA
 // framebuffer pixel format (RGB888). Expanded views opt into a resizable,
-// aspect-correct viewport; the faithful 240x160 path retains the historical
-// fixed SDL presentation. pump() drains the OS event queue, returns a quit flag
-// and a packed GBA KEYINPUT value (active-low, 1 = released).
+// aspect-correct viewport. pump() drains the backend event queue, returns a
+// quit flag and a packed GBA KEYINPUT value (active-low, 1 = released).
 
 #pragma once
 
@@ -86,9 +86,9 @@ public:
                            int fast_forward_multiplier_default = 4);
 
     // Live window/audio controls (hotkey + launcher-driven). All no-ops when
-    // the window isn't open or this build has no SDL2.
-    // Tri-state fullscreen mode: 0 windowed, 1 borderless
-    // (SDL_WINDOW_FULLSCREEN_DESKTOP), 2 exclusive (SDL_WINDOW_FULLSCREEN).
+    // the window isn't open or this build has no backend.
+    // Tri-state fullscreen mode: 0 windowed, 1 borderless (desktop), 2
+    // exclusive.
     // Out-of-range values clamp to 0..2. fullscreen() reports the current mode.
     void set_fullscreen(int mode);
     int  fullscreen() const;
@@ -118,7 +118,7 @@ public:
      // sleep; default off.
     void set_frame_interp(bool enabled);
     bool frame_interp() const;
-    // LCD shader tunables (raylib-only capability; SDL reports defaults).
+    // LCD shader tunables (raylib-only capability; the stub reports defaults).
     // Driven by --lcd-shader/--lcd-boost/--lcd-dither (and later the settings
     // menu); default off/1.0/1.0. Closed-window guards return the defaults.
     void set_lcd_shader(bool enabled);
@@ -139,8 +139,9 @@ public:
     bool audio_enabled() const;
     void set_resize_driven_view(bool enabled);
 #if defined(GBARECOMP_RUNTIME_UI)
-    // Attach the capability-only shared model. HostWindow presents it through
-    // Dear ImGui's SDL_Renderer2 backend over the existing game renderer.
+    // Compile-compatibility shim (no-op): the seam stopped naming recomp-ui
+    // types in Phase 4b — the generic menu is the in-game surface, and
+    // recomp-ui's runtime UI is not ported to the raylib path.
     void set_runtime_ui(RecompRuntimeUi* ui);
 #endif
     // ---- touch (touch_input.h) ---------------------------------------------
@@ -207,7 +208,7 @@ public:
 
     // Push `count` int16_t mono samples (32.768 kHz) into the audio
     // output queue. Backend converts to the host device's format.
-    // No-op if audio init failed or this build has no SDL2.
+    // No-op if audio init failed or this build has no audio device.
     void push_audio_samples(const int16_t* samples, std::size_t count);
 
     // Service the native window-system queue without consuming input events.
@@ -219,21 +220,16 @@ public:
     using Events = WindowBackend::Events;
     Events pump();
 
-    // The V2 facade when the active backend implements it (raylib builds);
-    // nullptr for the flat SDL backend. Cached at open; this is the target
-    // every delegating method above prefers (the flat generation is the
-    // fallback until Phase 4b deletes it). The generic menu and the other
-    // V2-only paths are host policy on top of this (plan §3.4 / Phase 3d).
-    WindowBackendV2* backend_v2() const;
+    // The active backend (the facade). Historical name: it dates from the
+    // two-generation transition; kept so app call sites stay untouched. Null
+    // when the window is closed or the build has no backend (raylib OFF).
+    WindowBackend* backend_v2() const;
 
 private:
     bool open_ = false;
-    // Platform backend (SDL or raylib). Typed at the seam, not as a concrete
-    // implementation, so selecting a backend is a factory decision only.
+    // The backend. Typed at the seam, not as a concrete implementation, so
+    // selecting a backend is a factory decision only.
     WindowBackend* impl_ = nullptr;
-    // The V2 facade half of impl_ when it implements one (raylib builds),
-    // cached at open/close so the delegation never re-casts per call.
-    WindowBackendV2* v2_ = nullptr;
     // Backend selection: null = host_make_backend() (the compile-time choice).
     BackendFactory factory_ = nullptr;
     int orientation_policy_ = 0;

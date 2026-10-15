@@ -3355,7 +3355,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     // the host's apply hook — deliberately unwired for now (the legacy
     // in-game menu did not persist either); see BRINGUP.
     HostMenu host_menu;
-    WindowBackendV2* menu_backend = win.backend_v2();
+    WindowBackend* menu_backend = win.backend_v2();
     const bool menu_available =
         menu_backend != nullptr && menu_backend->caps().menu;
     bool menu_pointer_down = false;

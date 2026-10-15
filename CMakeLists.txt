@@ -59,27 +59,11 @@ else()
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SDL2 — soft dependency. When present we build host_window.cpp with the
-# real SDL backend; otherwise it compiles as a no-op stub. CI and headless
-# environments stay buildable either way.
-#
-# Avoid `find_package(SDL2 CONFIG)` on MSYS2: that target's
-# INTERFACE_INCLUDE_DIRECTORIES is `-isystem /mingw64/include`, which
-# breaks libstdc++'s `#include_next <stdlib.h>` chain.
-# Avoid `C:/...` HINTS too: CMake-on-MSYS records them but mangles the
-# emitted -I flag with the build dir prefix.
-# ─────────────────────────────────────────────────────────────────────────────
-set(GBARECOMP_SDL2_OK FALSE)
-set(GBARECOMP_MINGW_PREFIX_UNIX "/c/msys64/mingw64" CACHE PATH
-    "MSYS2 mingw64 install root, in Unix form, used for finding SDL2")
-
-# Release builds bake SDL2 + libstdc++ + libgcc + libwinpthread into
-# the executable so the shipped .exe has no DLL dependencies on a
-# vanilla Windows install. Dev / debug builds keep the dynamic SDL2
-# link so iteration is fast.
+# Release builds bake libstdc++ + libgcc + libwinpthread into the executable
+# so the shipped .exe has no DLL dependencies on a vanilla Windows install
+# (Phase 4b retired the SDL half; the raylib cross-build is issue #3's R2).
 option(GBARECOMP_STATIC_RELEASE
-    "Statically link SDL2 + the mingw C++ runtime into release exes"
+    "Statically link the mingw C++ runtime into release exes"
     OFF)
 option(GBARECOMP_SELFHEAL_RECOMPILE_DEFAULT
     "Enable runtime self-heal overlay compilation by default"
@@ -94,77 +78,6 @@ option(GBARECOMP_SELFHEAL_RECOMPILE_DEFAULT
 option(GBA_COSIM
     "Build the first-divergence co-simulation oracle (state hash + TCP park/step)"
     OFF)
-
-if(ANDROID AND TARGET SDL2::SDL2)
-    # Android applications provide SDL from the parent Gradle/CMake project.
-    # Reusing that target keeps SDLActivity's libSDL2.so as the single backend.
-    set(GBARECOMP_SDL2_OK TRUE)
-    set(SDL2_LIBRARIES SDL2::SDL2)
-    get_target_property(SDL2_INCLUDE_DIRS SDL2::SDL2
-                        INTERFACE_INCLUDE_DIRECTORIES)
-    message(STATUS "gbarecomp: using parent-provided Android SDL2 target")
-else()
-find_path(SDL2_INCLUDE_DIR
-    NAMES SDL.h
-    PATH_SUFFIXES SDL2 SDL2/include
-    HINTS ${GBARECOMP_MINGW_PREFIX_UNIX}/include
-)
-if(GBARECOMP_STATIC_RELEASE)
-    # Pin the static archives directly. CMake's find_library would
-    # prefer libSDL2.dll.a on a default MSYS2 install. Try the Unix
-    # form first (works under msys2 shells), fall back to the native
-    # Windows path (works under PowerShell / cmd).
-    set(SDL2_STATIC_LIB_CANDIDATES
-        ${GBARECOMP_MINGW_PREFIX_UNIX}/lib/libSDL2.a
-        C:/msys64/mingw64/lib/libSDL2.a)
-    set(SDL2_LIBRARY "")
-    foreach(_cand IN LISTS SDL2_STATIC_LIB_CANDIDATES)
-        if(EXISTS "${_cand}")
-            set(SDL2_LIBRARY      "${_cand}")
-            string(REPLACE "libSDL2.a" "libSDL2main.a"
-                   SDL2_MAIN_LIBRARY "${_cand}")
-            break()
-        endif()
-    endforeach()
-    if(SDL2_LIBRARY STREQUAL "" OR NOT EXISTS "${SDL2_MAIN_LIBRARY}")
-        message(FATAL_ERROR
-            "GBARECOMP_STATIC_RELEASE=ON but libSDL2.a / libSDL2main.a "
-            "not found. Searched: ${SDL2_STATIC_LIB_CANDIDATES}")
-    endif()
-    # SDL2 static depends on a list of Windows system libs that
-    # libSDL2.dll already pulls in transitively when dynamic.
-    # (From `pkg-config --static --libs sdl2`.)
-    # Use full paths to libSDL2.a + libSDL2main.a — `-lSDL2` would let
-    # the linker prefer libSDL2.dll.a (dynamic import) over libSDL2.a.
-    set(SDL2_STATIC_SYSDEPS
-        -lmingw32
-        ${SDL2_MAIN_LIBRARY}
-        ${SDL2_LIBRARY}
-        -lm
-        -lkernel32 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32
-        -lversion -luuid -ladvapi32 -lsetupapi -lshell32 -ldinput8
-        -mwindows)
-else()
-    find_library(SDL2_LIBRARY
-        NAMES SDL2
-        HINTS ${GBARECOMP_MINGW_PREFIX_UNIX}/lib
-    )
-endif()
-
-if(SDL2_INCLUDE_DIR AND SDL2_LIBRARY)
-    set(GBARECOMP_SDL2_OK TRUE)
-    set(SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIR})
-    if(GBARECOMP_STATIC_RELEASE)
-        set(SDL2_LIBRARIES ${SDL2_STATIC_SYSDEPS})
-    else()
-        set(SDL2_LIBRARIES ${SDL2_LIBRARY})
-    endif()
-    message(STATUS "gbarecomp: SDL2 found — inc=${SDL2_INCLUDE_DIR} lib=${SDL2_LIBRARY} static=${GBARECOMP_STATIC_RELEASE}")
-else()
-    message(STATUS "gbarecomp: SDL2 NOT found — host_window will stub out (inc=${SDL2_INCLUDE_DIR} lib=${SDL2_LIBRARY})")
-endif()
-
-endif()
 
 if(GBARECOMP_STATIC_RELEASE)
     # NOTE: -static / -static-libgcc / -static-libstdc++ MUST be set
@@ -211,12 +124,12 @@ if(GBARECOMP_USE_RAYLIB)
 endif()
 
 # RaylibBackend. Built unconditionally so the seam stays compile-checked (and
-# unit-testable) in the default SDL-only configuration; GBARECOMP_USE_RAYLIB is
-# only defined when raylib was actually fetched, and every raylib call site is
-# guarded by it. One source, two configurations.
+# unit-testable) in the stub (raylib OFF) configuration; GBARECOMP_USE_RAYLIB
+# is only defined when raylib was actually fetched, and every raylib call site
+# is guarded by it. One source, two configurations.
 # The audio DRC/RAB implementation, in its own archive so that linking the
-# audio code does not drag in host_window.cpp (SDL + ImGui + the ROM-derived
-# dispatch table). See src/runtime/recomp_audio_drc.cpp for why.
+# audio code does not drag in host_window.cpp (and the ROM-derived dispatch
+# table). See src/runtime/recomp_audio_drc.cpp for why.
 # Screen color grading (ColorLut) in its own archive, same reason as the
 # audio DRC above: it is pure CPU code with no windowing dependency, and the
 # raylib backend needs it without dragging in host_window.cpp. See
@@ -240,7 +153,7 @@ target_link_libraries(gbarecomp_audio_drc PUBLIC Threads::Threads)
 
 # Phase 3c — host-side wiring for the generic menu (plan §3.4): build the
 # default rows from a backend's settings, apply MenuResult back to the
-# backend, suppress game input while open. Backend-neutral (WindowBackendV2).
+# backend, suppress game input while open. Backend-neutral (the seam facade).
 add_library(gbarecomp_host_menu STATIC src/runtime/host_menu.cpp)
 target_include_directories(gbarecomp_host_menu PUBLIC src/runtime)
 target_link_libraries(gbarecomp_host_menu PUBLIC gbarecomp_menu_model)
@@ -315,7 +228,6 @@ function(gbarecomp_stage_mingw_runtime target_name)
     endif()
 
     foreach(runtime_dll IN ITEMS
-            SDL2.dll
             libgcc_s_seh-1.dll
             libstdc++-6.dll
             libwinpthread-1.dll)
@@ -579,15 +491,6 @@ if(GBARECOMP_RUNTIME_UI_ROOT AND
         target_compile_definitions(gbarecomp_runtime PRIVATE
             GBARECOMP_MOD_UI=1)
     endif()
-    if(GBARECOMP_SDL2_OK)
-        # The runtime owns the SDL_Renderer2 adapter; the game's existing
-        # game_launcher_ui target supplies the one shared ImGui core and SDL2
-        # platform backend. The central helper is idempotent, preventing
-        # duplicate renderer-backend symbols.
-        set(RECOMP_UI_ROOT "${GBARECOMP_RUNTIME_UI_ROOT}")
-        include("${GBARECOMP_RUNTIME_UI_ROOT}/recomp_ui.cmake")
-        recomp_target_runtime_ui_sdlrenderer2(gbarecomp_runtime)
-    endif()
     # Shared presentation blend primitive (issue #9 strategy #1): compiled
     # into the runtime so HostWindow blends CPU-side on cached memory. Pure
     # arithmetic, no SDL; has its own upstream test (recomp-frame-blend).
@@ -605,29 +508,20 @@ target_compile_definitions(gbarecomp_runtime PRIVATE
 target_link_libraries(gbarecomp_runtime PUBLIC
     gbarecomp_gba gbarecomp_debug gbarecomp_recompile_core
     gbarecomp_heal_gate
-    # The SDL backend in host_window.cpp calls rab_*; the implementation now
-    # lives in its own archive rather than inside host_window.cpp.
+    # The window backend calls rab_*; the implementation lives in its own
+    # archive rather than inside host_window.cpp.
     gbarecomp_audio_drc
     # Same for the screen color LUT (color_lut.cpp is pure CPU, no windowing).
     gbarecomp_color_lut
     # And the touch hub (pure logic, no windowing).
     gbarecomp_touch_input)
 set_property(TARGET gbarecomp_runtime PROPERTY POSITION_INDEPENDENT_CODE ON)
-if(GBARECOMP_SDL2_OK)
-    target_compile_definitions(gbarecomp_runtime PUBLIC GBARECOMP_HAVE_SDL2)
-    # Use plain -I (not -isystem) for SDL2 headers. -isystem on a path
-    # that overlaps libstdc++'s search ordering breaks
-    # `#include_next <stdlib.h>`.
-    target_include_directories(gbarecomp_runtime PUBLIC ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(gbarecomp_runtime PUBLIC ${SDL2_LIBRARIES})
-endif()
-# Raylib (NativeActivity) Android builds have no SDL to ask for the
-# app-private files directory; the applicationId is baked in instead (see
-# mobile_internal_storage_path()). Empty = unavailable, same as SDL-less
-# non-Android builds. SDL builds never read it.
+# Android builds have no platform API to ask for the app-private files
+# directory; the applicationId is baked in instead (see
+# mobile_internal_storage_path()). Empty = unavailable on non-Android.
 set(GBARECOMP_ANDROID_PACKAGE "" CACHE STRING
     "Android applicationId for SDL-less raylib builds (internal-storage path)")
-if(ANDROID AND NOT GBARECOMP_SDL2_OK AND GBARECOMP_ANDROID_PACKAGE)
+if(ANDROID AND GBARECOMP_ANDROID_PACKAGE)
     target_compile_definitions(gbarecomp_runtime PUBLIC
         GBARECOMP_ANDROID_PACKAGE=${GBARECOMP_ANDROID_PACKAGE})
 endif()
@@ -1063,10 +957,6 @@ add_executable(ini_section_tests tests/runtime/ini_section_test.cpp)
 target_include_directories(ini_section_tests PRIVATE src/runtime)
 add_test(NAME ini_section_tests COMMAND ini_section_tests)
 
-add_executable(window_backend_tests tests/runtime/window_backend_test.cpp)
-target_include_directories(window_backend_tests PRIVATE src/runtime)
-add_test(NAME window_backend_tests COMMAND window_backend_tests)
-
 add_executable(window_open_params_tests tests/runtime/window_open_params_test.cpp)
 target_include_directories(window_open_params_tests PRIVATE src/runtime)
 add_test(NAME window_open_params_tests COMMAND window_open_params_tests)
@@ -1074,11 +964,6 @@ add_test(NAME window_open_params_tests COMMAND window_open_params_tests)
 # Skeleton guard: compiles RaylibBackend and checks the seam is fully
 # implemented. Compiles WITHOUT raylib on purpose -- proves the header and the
 # interface contract need neither SDL nor raylib on the include path.
-add_executable(raylib_backend_tests tests/runtime/raylib_backend_test.cpp)
-target_include_directories(raylib_backend_tests PRIVATE src/runtime)
-target_link_libraries(raylib_backend_tests PRIVATE gbarecomp_raylib_backend)
-add_test(NAME raylib_backend_tests COMMAND raylib_backend_tests)
-
 # Phase 2 — V2 concern contract through the raylib backend's accessors
 # (Video step; Audio/Input/Fx/Overlay follow). Display-free: passes in both
 # configs, no window required.
@@ -1144,14 +1029,6 @@ add_test(NAME gamepad_map_tests COMMAND gamepad_map_tests)
 add_executable(assist_pad_binding_tests tests/runtime/assist_pad_binding_test.cpp)
 target_include_directories(assist_pad_binding_tests PRIVATE src/runtime)
 add_test(NAME assist_pad_binding_tests COMMAND assist_pad_binding_tests)
-
-add_executable(window_backend_dispatch_tests tests/runtime/window_backend_dispatch_test.cpp)
-target_include_directories(window_backend_dispatch_tests PRIVATE src/runtime)
-add_test(NAME window_backend_dispatch_tests COMMAND window_backend_dispatch_tests)
-
-add_executable(window_backend_virtual_dispatch_tests tests/runtime/window_backend_virtual_dispatch_test.cpp)
-target_include_directories(window_backend_virtual_dispatch_tests PRIVATE src/runtime)
-add_test(NAME window_backend_virtual_dispatch_tests COMMAND window_backend_virtual_dispatch_tests)
 
 add_executable(backend_v2_types_tests tests/runtime/backend_v2_types_test.cpp)
 target_include_directories(backend_v2_types_tests PRIVATE src/runtime)

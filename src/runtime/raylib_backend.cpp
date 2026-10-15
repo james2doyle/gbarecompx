@@ -65,7 +65,6 @@ struct RecompFrameBlend;
 #include "window_open_params.h"
 
 #if defined(GBARECOMP_RUNTIME_UI)
-#include "recomp_runtime_ui.h"
 #endif
 
 // Cumulative idle-elision skip telemetry (runtime_bus_bridge.cpp). C
@@ -206,7 +205,6 @@ struct RaylibBackend::Impl {
     int fullscreen = 0;
     bool anchor_top = false;
     bool pad_visible = false;
-    RecompRuntimeUi* runtime_ui = nullptr;
     void (*host_overlay)(HostOverlay*) = nullptr;
     std::uint32_t view_margin_left = 0, view_margin_right = 0;
     std::uint32_t view_margin_top = 0, view_margin_bottom = 0;
@@ -1923,10 +1921,6 @@ public:
         s.touch_enabled = touch_on;
         s.touch_gba_bits = touch_buttons;
 
-#if defined(GBARECOMP_RUNTIME_UI)
-        if (impl_->runtime_ui && recomp_runtime_ui_is_open(impl_->runtime_ui))
-            s.suppress_game_input = true;
-#endif
         // The generic menu (V2): the flag derives from the presented
         // MenuModel's open state (plan §3.4).
         if (impl_->menu_open) s.suppress_game_input = true;
@@ -2404,12 +2398,6 @@ RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
 RaylibBackend::~RaylibBackend() = default;
 
 // ── lifecycle ────────────────────────────────────────────────────────────
-bool RaylibBackend::open(const WindowBackendOpenParams& params) {
-    return open(params.scale, params.base_w, params.base_h, params.title,
-                params.screen, params.linear_filter, params.sharp_filter,
-                params.resize_driven_view, params.freely_resizable_window);
-}
-
 Result RaylibBackend::open(const OpenParams& params) {
     if (impl_->open) return {Err::AlreadyOpen, "backend already open"};
     // Headless needs a platform that has no OS window at all (raylib's
@@ -2632,11 +2620,13 @@ Result RaylibBackend::open(const OpenParams& params) {
         }
     }
 
-    // OpenParams::Mode maps onto the flat fullscreen modes (raylib has no
-    // exclusive-fullscreen equivalent; see set_fullscreen). Applied after
-    // init so the window state exists; the stub build records state only.
-    if (params.mode == OpenParams::Mode::Borderless) set_fullscreen(1);
-    else if (params.mode == OpenParams::Mode::Fullscreen) set_fullscreen(2);
+    // OpenParams::Mode maps onto the video fullscreen modes (raylib has no
+    // exclusive-fullscreen equivalent; see Video::set_fullscreen). Applied
+    // after init so the window state exists; the stub build records state only.
+    if (params.mode == OpenParams::Mode::Borderless)
+        impl_->video->set_fullscreen(1);
+    else if (params.mode == OpenParams::Mode::Fullscreen)
+        impl_->video->set_fullscreen(2);
 
     // Frame blending is CPU-side on cached scratch (see present()): the shared
     // primitive needs ordinary cached ARGB8888, never a mapped texture, and
@@ -2652,26 +2642,6 @@ Result RaylibBackend::open(const OpenParams& params) {
     // Stub build: state only, no window. Documented in raylib_backend.h.
     return {};
 #endif
-}
-
-bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
-                         const char* screen, bool linear_filter,
-                         bool sharp_filter, bool resize_driven_view,
-                         bool freely_resizable_window) {
-    // Flat-generation compatibility: the old open was idempotent (an open
-    // backend returned true); V2 reports Err::AlreadyOpen. Deleted in 4b.
-    OpenParams p;
-    p.scale = scale;
-    p.base_w = base_w;
-    p.base_h = base_h;
-    p.title = title;
-    p.display = screen;
-    p.linear_filter = linear_filter;
-    p.sharp_filter = sharp_filter;
-    p.resize_driven_view = resize_driven_view;
-    p.resizable = freely_resizable_window;
-    const Result r = open(p);
-    return r.ok() || r.code == Err::AlreadyOpen;
 }
 
 Caps RaylibBackend::caps() const {
@@ -2697,9 +2667,9 @@ Caps RaylibBackend::caps() const {
 #endif  // GBARECOMP_USE_RAYLIB
     c.audio = impl_->audio_ready;  // the device came up at open()
     c.vsync_report = impl_->vsync_probed;
-    // raylib has no rumble-capability query. The flat predicate returned
-    // false (the "assume true when a pad is present" intent never landed);
-    // keep the same truth here — input().rumble() no-ops safely anyway.
+    // raylib has no rumble-capability query; the retired flat predicate also
+    // answered false (the "assume true when a pad is present" intent never
+    // landed). input().rumble() no-ops safely anyway.
     c.rumble = false;
     // No cross-platform system vibrator in raylib core (haptics ride the
     // gamepad motors); the Android port is where a real vibrator lands.
@@ -2782,178 +2752,7 @@ Overlay& RaylibBackend::overlay() { return *impl_->overlay; }
 
 Menu& RaylibBackend::menu() { return *impl_->menu; }
 
-// ── window state: implemented (pure state) ────────────────────────────────
-void RaylibBackend::set_title(const char* title) {
-    impl_->video->set_title(title);
-}
-
-bool RaylibBackend::assist_tools_enabled() const {
-    return impl_->input->assist_tools_enabled();
-}
-
-int RaylibBackend::fast_forward_multiplier() const {
-    return impl_->input->fast_forward_multiplier();
-}
-
-void RaylibBackend::load_input_config(const char* dir, bool assist_tools_default,
-                                      int fast_forward_multiplier_default) {
-    impl_->input->load_config(dir, assist_tools_default,
-                              fast_forward_multiplier_default);
-    // [video] lcd_shader: the Fx concern's config loader — the same call the
-    // V2 path makes through fx().load_config(dir) (Phase 4a).
-    impl_->fx->load_config(dir);
-}
-
-void RaylibBackend::set_volume(int pct) { impl_->audio->set_volume(pct); }
-
-int RaylibBackend::window_scale() const { return impl_->video->scale(); }
-
-void RaylibBackend::set_linear_filter(bool enabled) {
-    impl_->video->set_linear_filter(enabled);
-}
-
-bool RaylibBackend::linear_filter_enabled() const {
-    return impl_->video->linear_filter();
-}
-
-void RaylibBackend::set_resize_driven_view(bool enabled) {
-    impl_->video->set_resize_driven_view(enabled);
-}
-
-void RaylibBackend::set_view_margins(std::uint32_t left, std::uint32_t right,
-                                     std::uint32_t top,
-                                     std::uint32_t bottom) {
-    impl_->video->set_view_margins(left, right, top, bottom);
-}
-
-float RaylibBackend::px_per_mm_value() const {
-    return impl_->video->px_per_mm();
-}
-
-void RaylibBackend::set_presentation_anchor_top(bool anchor_top) {
-    impl_->video->set_presentation_anchor_top(anchor_top);
-}
-
-void RaylibBackend::set_host_overlay(void (*overlay)(HostOverlay*)) {
-    impl_->overlay->set_host_overlay(overlay);
-}
-
-void RaylibBackend::set_fps_readout(bool on) {
-    impl_->video->set_fps_readout(on);
-}
-bool RaylibBackend::fps_readout_value() const {
-    return impl_->video->fps_readout();
-}
-
-void RaylibBackend::set_frame_interp(bool enabled) {
-    FxSettings s = impl_->fx->settings();
-    s.frame_interp = enabled;
-    impl_->fx->apply(s);
-    // The flat setter's blend-history reset was unconditional;
-    // apply() fires it only on a real toggle, so keep it here.
-    impl_->fx->reset_frame_blend();
-}
-
-bool RaylibBackend::frame_interp() const {
-    return impl_->fx->settings().frame_interp;
-}
-
-void RaylibBackend::set_frame_blend(bool enabled) {
-    FxSettings s = impl_->fx->settings();
-    s.frame_blend = enabled ? 1.0f : 0.0f;
-    impl_->fx->apply(s);
-    impl_->fx->reset_frame_blend();  // same unconditional reset
-}
-
-bool RaylibBackend::frame_blend_value() const {
-    return impl_->fx->settings().frame_blend != 0.0f;
-}
-
-void RaylibBackend::reset_frame_blend() {
-    impl_->fx->reset_frame_blend();
-}
-
-void RaylibBackend::set_audio_enabled(bool enabled) {
-    impl_->audio->set_enabled(enabled);
-}
-
-bool RaylibBackend::audio_enabled() const { return impl_->audio->enabled(); }
-
-void RaylibBackend::adjust_scale(int delta) {
-    impl_->video->adjust_scale(delta);
-}
-
-int RaylibBackend::volume_percent() const { return impl_->audio->volume(); }
-
-void RaylibBackend::set_fullscreen(int mode) {
-    impl_->video->set_fullscreen(mode);
-}
-
-int RaylibBackend::fullscreen_mode() const {
-    return impl_->video->fullscreen();
-}
-
-void RaylibBackend::set_runtime_ui(::RecompRuntimeUi* ui) {
-    impl_->runtime_ui = ui;
-}
-
-void RaylibBackend::set_lcd_shader(bool enabled) {
-    FxSettings s = impl_->fx->settings();
-    s.lcd = enabled;
-    impl_->fx->apply(s);
-}
-
-bool RaylibBackend::lcd_shader_enabled() const {
-    return impl_->fx->settings().lcd;
-}
-
-void RaylibBackend::set_lcd_boost(float boost) {
-    FxSettings s = impl_->fx->settings();
-    s.lcd_boost = boost;
-    impl_->fx->apply(s);
-}
-
-float RaylibBackend::lcd_boost_value() const {
-    return impl_->fx->settings().lcd_boost;
-}
-
-void RaylibBackend::set_lcd_dither(float dither) {
-    FxSettings s = impl_->fx->settings();
-    s.lcd_dither = dither;
-    impl_->fx->apply(s);
-}
-
-float RaylibBackend::lcd_dither_value() const {
-    return impl_->fx->settings().lcd_dither;
-}
-
-void RaylibBackend::set_lcd_deband(float deband) {
-    FxSettings s = impl_->fx->settings();
-    s.lcd_deband = deband;
-    impl_->fx->apply(s);
-}
-
-float RaylibBackend::lcd_deband_value() const {
-    return impl_->fx->settings().lcd_deband;
-}
-
 // ── touch / virtual pad ──────────────────────────────────────────────────
-void RaylibBackend::configure_touch(bool policy, std::uint32_t claims,
-                                    int pad_default, bool emulate_touch,
-                                    int pad_idle_hide_seconds) {
-    TouchConfig cfg;
-    cfg.policy = policy;
-    cfg.claims = claims;
-    cfg.pad_default = pad_default;
-    cfg.emulate_touch = emulate_touch;
-    cfg.pad_idle_hide_seconds = pad_idle_hide_seconds;
-    impl_->overlay->configure_touch(cfg);
-}
-
-void RaylibBackend::set_touch_config_dir(const char* dir) {
-    impl_->overlay->set_config_dir(dir);
-}
-
 // Pad geometry inputs from backend state. Pure: the same values pump()
 // builds, so layout and hit-testing can never disagree with what is drawn.
 PadLayoutInputs RaylibBackend::pad_layout_inputs(
@@ -2974,7 +2773,8 @@ PadLayoutInputs RaylibBackend::pad_layout_inputs(
 }
 
 // Persist the player's pad choice + toggle position next to the config dir.
-// Mirrors save_touch_config() on the SDL side: the old [Touch] section is
+// Same shape as the retired SDL backend's save_touch_config: the old [Touch]
+// section is
 // dropped and rewritten, so repeated saves never accumulate duplicates, and
 // only actually-saved choices are written.
 void RaylibBackend::save_touch_config(const RaylibBackend::Impl* impl) {
@@ -3008,10 +2808,6 @@ void RaylibBackend::save_touch_config(const RaylibBackend::Impl* impl) {
     }
 }
 
-void RaylibBackend::set_touch_pad_visible(bool visible) {
-    impl_->overlay->set_touch_pad_visible(visible);
-}
-
 void RaylibBackend::apply_touch_pad_visible(RaylibBackend::Impl* impl, bool visible) {
     visible = visible && impl->touch_controls;
     if (impl->pad_visible == visible && impl->pad_choice_saved) return;
@@ -3028,46 +2824,6 @@ void RaylibBackend::apply_touch_pad_visible(RaylibBackend::Impl* impl, bool visi
     std::fprintf(stderr, "raylib_backend: touch pad %s\n",
                  visible ? "shown" : "hidden");
 }
-
-bool RaylibBackend::touch_pad_visible_value() const {
-    return impl_->overlay->touch_pad_visible();
-}
-
-// ── gamepad ──────────────────────────────────────────────────────────────
-bool RaylibBackend::gamepad_connected() const {
-    return impl_->input->gamepad_connected();
-}
-
-bool RaylibBackend::gamepad_supports_rumble() const {
-#if defined(GBARECOMP_USE_RAYLIB)
-    // raylib has no rumble-capability query; assume true when a pad is present
-    // and let GamepadSetVibration no-op on hardware that lacks motors.
-#endif
-    return false;
-}
-
-void RaylibBackend::gamepad_rumble(float low_frequency,
-                                   float high_frequency,
-                                   std::uint32_t duration_ms) {
-    impl_->input->rumble(low_frequency, high_frequency, duration_ms);
-}
-
-// ── haptics ──────────────────────────────────────────────────────────────
-void RaylibBackend::haptic_pulse(int duration_ms, float strength) {
-    impl_->input->haptic_pulse(duration_ms, strength);
-}
-
-// ── frame / geometry ─────────────────────────────────────────────────────
-bool RaylibBackend::set_surface_size(int base_w, int base_h) {
-    return impl_->video->set_surface_size(base_w, base_h);
-}
-
-bool RaylibBackend::drawable_size(int* width, int* height) const {
-    return impl_->video->drawable_size(width, height);
-}
-
-// ── input: polling snapshot -> pure translation ─────────────────────────
-void RaylibBackend::pump_events(Events& out) { out = pump(); }
 
 RaylibBackend::Events RaylibBackend::pump() {
     // V2 composition (plan §3.2): read() fills the levels; translate_input
@@ -3095,25 +2851,6 @@ bool RaylibBackend::wait_for_foreground() {
 #endif
     std::fprintf(stderr, "raylib_backend: already in foreground\n");
     return true;
-}
-
-void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
-    impl_->video->present(rgb888, fresh);
-}
-
-bool RaylibBackend::copy_presented_frame(std::vector<std::uint8_t>& out,
-                                         int& w, int& h) const {
-    return impl_->video->readback(out, w, h);
-}
-
-void RaylibBackend::push_audio_samples(const std::int16_t* samples,
-                                       std::size_t count) {
-    impl_->audio->push(samples, count);
-}
-
-void RaylibBackend::interp_display_tick(const std::uint8_t* rgb888,
-                                        std::uint64_t deadline_ns) {
-    impl_->video->interp_display_tick(rgb888, deadline_ns);
 }
 
 }  // namespace gbarecomp

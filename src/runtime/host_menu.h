@@ -4,7 +4,7 @@
 // builds the default rows from the backend's current settings, translates
 // frame input into navigation and the presentation call, and applies accepted
 // changes back to the backend. Backend-neutral: everything goes through the
-// V2 facade (WindowBackendV2), so the same wiring serves raylib and the
+// V2 facade (WindowBackend), so the same wiring serves raylib and the
 // host-loop fakes.
 //
 // Frame contract (matches Menu::present — after backend.pump() and before
@@ -46,20 +46,20 @@ public:
 
     // Rebuild the default rows from the backend's current settings. Resets
     // the model (including any game-appended rows).
-    void build(WindowBackendV2& backend);
+    void build(WindowBackend& backend);
 
     // Open/close policy. The trigger is host-side (Phase 3d). open()/toggle()
     // re-seed the values from the backend first.
-    void open(WindowBackendV2& backend);
+    void open(WindowBackend& backend);
     void close();
-    void toggle(WindowBackendV2& backend);
+    void toggle(WindowBackend& backend);
 
     // One host-loop step: navigation from `ev.menu_keyinput` (the
     // pre-suppression levels; newly-pressed edges only, so a held direction
     // does not scroll at frame rate), then the presentation via
     // backend.menu().present(model, pointer). Applies whatever either
     // produced. Never opens the menu by itself.
-    void frame(WindowBackendV2& backend, const Events& ev,
+    void frame(WindowBackend& backend, const Events& ev,
                const PointerState& pointer);
 
     // While open, the host must suppress game input for the frame (§3.4).
@@ -82,7 +82,7 @@ public:
     // game-appended rows, run extra actions. Never called for navigation that
     // changed nothing, or for the framework-owned Resume action. A settings
     // change applied with this hook set also shows the "Saved" status.
-    void set_apply_hook(void (*fn)(void* user, WindowBackendV2& backend,
+    void set_apply_hook(void (*fn)(void* user, WindowBackend& backend,
                                    const MenuResult& result),
                         void* user) {
         apply_hook_ = fn;
@@ -92,7 +92,7 @@ public:
     // Apply one MenuResult (public so hosts can feed results they produce
     // themselves, e.g. hotkey-driven changes). Returns true when a change or
     // action was handled.
-    bool apply(WindowBackendV2& backend, const MenuResult& result);
+    bool apply(WindowBackend& backend, const MenuResult& result);
 
 private:
     // A result row is addressable when it exists in the model AND fits the
@@ -125,7 +125,7 @@ private:
     std::uint16_t prev_keys_ = 0x03FF;
     void (*rebuild_hook_)(void*, MenuModel&) = nullptr;
     void* rebuild_user_ = nullptr;
-    void (*apply_hook_)(void*, WindowBackendV2&, const MenuResult&) = nullptr;
+    void (*apply_hook_)(void*, WindowBackend&, const MenuResult&) = nullptr;
     void* apply_user_ = nullptr;
 };
 
