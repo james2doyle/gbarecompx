@@ -12,6 +12,10 @@ build-*/
 **/generated/*.cpp
 **/generated/*.h
 **/generated/*.json
+# ...except the monolith-guard fixture: a hand-written synthetic stale
+# monolith (not ROM-derived), required by runtime_monolith_guard on a
+# fresh clone. Keep it tracked.
+!tests/cmake/runtime_monolith_guard/generated/*
 
 # Editor / OS noise
 .vscode/
