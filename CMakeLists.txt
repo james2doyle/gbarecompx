@@ -234,7 +234,8 @@ target_include_directories(gbarecomp_audio_drc PUBLIC src/runtime)
 find_package(Threads REQUIRED)
 target_link_libraries(gbarecomp_audio_drc PUBLIC Threads::Threads)
 
-add_library(gbarecomp_raylib_backend STATIC src/runtime/raylib_backend.cpp)
+add_library(gbarecomp_raylib_backend STATIC src/runtime/raylib_backend.cpp
+    src/runtime/raylib_api.cpp src/runtime/host_clock.cpp)
 target_include_directories(gbarecomp_raylib_backend PUBLIC src/runtime)
 target_link_libraries(gbarecomp_raylib_backend PUBLIC gbarecomp_audio_drc
     gbarecomp_color_lut gbarecomp_touch_input)

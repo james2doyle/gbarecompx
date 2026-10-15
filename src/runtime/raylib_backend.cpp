@@ -1,8 +1,9 @@
 // raylib_backend.cpp — raylib implementation of the WindowBackend seam.
 //
-// Skeleton stage: pure state is implemented; everything needing a live raylib
-// window/renderer/audio stream is a stub returning the WindowBackend default.
-// No SDL anywhere in this translation unit — that is the point.
+// Every raylib call goes through RaylibApi (raylib_api.h) and time goes
+// through Clock (host_clock.h), so tests can inject failures and a
+// deterministic clock; the real implementations forward 1:1. No SDL anywhere
+// in this translation unit — that is the point.
 
 #include "raylib_backend.h"
 
@@ -24,6 +25,7 @@
 
 #if defined(GBARECOMP_USE_RAYLIB)
 #include <raylib.h>
+#include "raylib_api.h"
 #endif
 #if defined(__ANDROID__)
 #include <EGL/egl.h>
@@ -38,6 +40,7 @@
 #include "gamepad_map.h"
 #include "glfw_pad_quirks.h"
 #include "haptic_pacing.h"
+#include "host_clock.h"
 #include "ini_section.h"
 #include "input_translate.h"
 #include "interp_pacing.h"
@@ -147,6 +150,12 @@ static_assert(kRayKeyRightAlt == KEY_RIGHT_ALT, "keymap drift");
 // raylib handles live here so raylib.h never reaches raylib_backend.h.
 struct RaylibBackend::Impl {
     bool open = false;
+
+    // Injected dependencies (real by default; tests inject fakes):
+    // `api` is the raylib surface (raylib_api.h) — non-null only in raylib
+    // builds; `clock` is the time source (host_clock.h), real in both.
+    RaylibApi* api = nullptr;
+    Clock* clock = nullptr;
 
     // Real, implemented state.
     std::string title;
@@ -352,7 +361,7 @@ struct RaylibBackend::Impl {
 void RaylibBackend::release_sharp_target(RaylibBackend::Impl* impl) {
     if (impl->sharp_ready) {
 #if defined(GBARECOMP_USE_RAYLIB)
-        UnloadRenderTexture(impl->sharp_target);
+        impl->api->UnloadRenderTexture(impl->sharp_target);
         impl->sharp_target = RenderTexture2D{};
 #endif
         impl->sharp_ready = false;
@@ -368,12 +377,12 @@ bool RaylibBackend::ensure_sharp_target(RaylibBackend::Impl* impl, int factor) {
     if (impl->sharp_ready && impl->sharp_w == w && impl->sharp_h == h)
         return true;
     release_sharp_target(impl);
-    impl->sharp_target = LoadRenderTexture(w, h);
+    impl->sharp_target = impl->api->LoadRenderTexture(w, h);
     if (impl->sharp_target.id == 0) return false;
     impl->sharp_ready = true;
     impl->sharp_w = w;
     impl->sharp_h = h;
-    SetTextureFilter(impl->sharp_target.texture, TEXTURE_FILTER_POINT);
+    impl->api->SetTextureFilter(impl->sharp_target.texture, TEXTURE_FILTER_POINT);
     return true;
 #else
     (void)impl;
@@ -384,7 +393,7 @@ bool RaylibBackend::ensure_sharp_target(RaylibBackend::Impl* impl, int factor) {
 
 void RaylibBackend::refresh_interp_mode(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
-    const int hz = GetMonitorRefreshRate(GetCurrentMonitor());
+    const int hz = impl->api->GetMonitorRefreshRate(impl->api->GetCurrentMonitor());
     if (hz <= 0) return;
     const std::uint64_t period =
         1000000000ull / static_cast<std::uint64_t>(hz);
@@ -393,7 +402,7 @@ void RaylibBackend::refresh_interp_mode(RaylibBackend::Impl* impl) {
     impl->interp_tick_ns = 0;
     std::fprintf(stderr,
                  "raylib_backend: interp display=%d@%dHz period=%lluns\n",
-                 GetCurrentMonitor(), hz,
+                 impl->api->GetCurrentMonitor(), hz,
                  static_cast<unsigned long long>(period));
 #else
     (void)impl;
@@ -406,16 +415,16 @@ void RaylibBackend::refresh_interp_mode(RaylibBackend::Impl* impl) {
 void RaylibBackend::load_lcd_shader(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     if (impl->lcd_shader_ready) return;
-    if (!impl->open || !IsWindowReady()) return;
+    if (!impl->open || !impl->api->IsWindowReady()) return;
     impl->lcd_shader_handle =
-        LoadShaderFromMemory(nullptr, gbarecomp::lcd_shader_fragment_source());
-    if (!IsShaderValid(impl->lcd_shader_handle)) {
+        impl->api->LoadShaderFromMemory(nullptr, gbarecomp::lcd_shader_fragment_source());
+    if (!impl->api->IsShaderValid(impl->lcd_shader_handle)) {
         std::fprintf(stderr, "raylib_backend: LCD shader failed to compile\n");
         impl->lcd_shader_handle = Shader{};
         return;
     }
     impl->lcd_boost_loc =
-        GetShaderLocation(impl->lcd_shader_handle, "boost");
+        impl->api->GetShaderLocation(impl->lcd_shader_handle, "boost");
     impl->lcd_shader_ready = true;
     std::fprintf(stderr, "raylib_backend: LCD shader enabled\n");
 #else
@@ -426,7 +435,7 @@ void RaylibBackend::load_lcd_shader(RaylibBackend::Impl* impl) {
 void RaylibBackend::unload_lcd_shader(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     if (!impl->lcd_shader_ready) return;
-    UnloadShader(impl->lcd_shader_handle);
+    impl->api->UnloadShader(impl->lcd_shader_handle);
     impl->lcd_shader_handle = Shader{};
     impl->lcd_boost_loc = -1;
     impl->lcd_shader_ready = false;
@@ -440,16 +449,16 @@ void RaylibBackend::unload_lcd_shader(RaylibBackend::Impl* impl) {
 void RaylibBackend::load_dither_shader(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     if (impl->dither_ready) return;
-    if (!impl->open || !IsWindowReady()) return;
+    if (!impl->open || !impl->api->IsWindowReady()) return;
     impl->dither_handle =
-        LoadShaderFromMemory(nullptr, gbarecomp::dither_fragment_source());
-    if (!IsShaderValid(impl->dither_handle)) {
+        impl->api->LoadShaderFromMemory(nullptr, gbarecomp::dither_fragment_source());
+    if (!impl->api->IsShaderValid(impl->dither_handle)) {
         std::fprintf(stderr,
                      "raylib_backend: dither shader failed to compile\n");
         impl->dither_handle = Shader{};
         return;
     }
-    impl->dither_loc = GetShaderLocation(impl->dither_handle, "dither");
+    impl->dither_loc = impl->api->GetShaderLocation(impl->dither_handle, "dither");
     impl->dither_ready = true;
     std::fprintf(stderr, "raylib_backend: dither shader enabled\n");
 #else
@@ -460,7 +469,7 @@ void RaylibBackend::load_dither_shader(RaylibBackend::Impl* impl) {
 void RaylibBackend::unload_dither_shader(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     if (!impl->dither_ready) return;
-    UnloadShader(impl->dither_handle);
+    impl->api->UnloadShader(impl->dither_handle);
     impl->dither_handle = Shader{};
     impl->dither_loc = -1;
     impl->dither_ready = false;
@@ -473,17 +482,17 @@ void RaylibBackend::unload_dither_shader(RaylibBackend::Impl* impl) {
 void RaylibBackend::load_deband_shader(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     if (impl->deband_ready) return;
-    if (!impl->open || !IsWindowReady()) return;
+    if (!impl->open || !impl->api->IsWindowReady()) return;
     impl->deband_handle =
-        LoadShaderFromMemory(nullptr, gbarecomp::deband_fragment_source());
-    if (!IsShaderValid(impl->deband_handle)) {
+        impl->api->LoadShaderFromMemory(nullptr, gbarecomp::deband_fragment_source());
+    if (!impl->api->IsShaderValid(impl->deband_handle)) {
         std::fprintf(stderr,
                      "raylib_backend: deband shader failed to compile\n");
         impl->deband_handle = Shader{};
         return;
     }
-    impl->deband_loc = GetShaderLocation(impl->deband_handle, "deband");
-    impl->deband_texel_loc = GetShaderLocation(impl->deband_handle, "texel");
+    impl->deband_loc = impl->api->GetShaderLocation(impl->deband_handle, "deband");
+    impl->deband_texel_loc = impl->api->GetShaderLocation(impl->deband_handle, "texel");
     impl->deband_ready = true;
     std::fprintf(stderr, "raylib_backend: deband shader enabled\n");
 #else
@@ -494,7 +503,7 @@ void RaylibBackend::load_deband_shader(RaylibBackend::Impl* impl) {
 void RaylibBackend::unload_deband_shader(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     if (!impl->deband_ready) return;
-    UnloadShader(impl->deband_handle);
+    impl->api->UnloadShader(impl->deband_handle);
     impl->deband_handle = Shader{};
     impl->deband_loc = -1;
     impl->deband_texel_loc = -1;
@@ -511,7 +520,7 @@ void RaylibBackend::unload_deband_shader(RaylibBackend::Impl* impl) {
 void RaylibBackend::release_post_targets(RaylibBackend::Impl* impl) {
     if (impl->post_a_ready) {
 #if defined(GBARECOMP_USE_RAYLIB)
-        UnloadRenderTexture(impl->post_a_target);
+        impl->api->UnloadRenderTexture(impl->post_a_target);
         impl->post_a_target = RenderTexture2D{};
 #endif
         impl->post_a_ready = false;
@@ -519,7 +528,7 @@ void RaylibBackend::release_post_targets(RaylibBackend::Impl* impl) {
     }
     if (impl->post_b_ready) {
 #if defined(GBARECOMP_USE_RAYLIB)
-        UnloadRenderTexture(impl->post_b_target);
+        impl->api->UnloadRenderTexture(impl->post_b_target);
         impl->post_b_target = RenderTexture2D{};
 #endif
         impl->post_b_ready = false;
@@ -538,11 +547,11 @@ bool RaylibBackend::ensure_post_target(RaylibBackend::Impl* impl, int which,
         if (impl->post_a_ready && impl->post_a_w == w && impl->post_a_h == h)
             return true;
         if (impl->post_a_ready) {
-            UnloadRenderTexture(impl->post_a_target);
+            impl->api->UnloadRenderTexture(impl->post_a_target);
             impl->post_a_target = RenderTexture2D{};
             impl->post_a_ready = false;
         }
-        impl->post_a_target = LoadRenderTexture(w, h);
+        impl->post_a_target = impl->api->LoadRenderTexture(w, h);
         if (impl->post_a_target.id == 0) return false;
         impl->post_a_ready = true;
         impl->post_a_w = w;
@@ -552,11 +561,11 @@ bool RaylibBackend::ensure_post_target(RaylibBackend::Impl* impl, int which,
     if (impl->post_b_ready && impl->post_b_w == w && impl->post_b_h == h)
         return true;
     if (impl->post_b_ready) {
-        UnloadRenderTexture(impl->post_b_target);
+        impl->api->UnloadRenderTexture(impl->post_b_target);
         impl->post_b_target = RenderTexture2D{};
         impl->post_b_ready = false;
     }
-    impl->post_b_target = LoadRenderTexture(w, h);
+    impl->post_b_target = impl->api->LoadRenderTexture(w, h);
     if (impl->post_b_target.id == 0) return false;
     impl->post_b_ready = true;
     impl->post_b_w = w;
@@ -660,10 +669,11 @@ inline int find_standard_pad() {
 // stack; labels are skipped, exactly as on SDL without the runtime UI).
 class RaylibOverlay final : public HostOverlay {
 public:
-    RaylibOverlay(int dw, int dh, const PresentationLayout& layout, int base_w,
-                  int base_h, float px_per_mm, int in_l, int in_t, int in_r,
-                  int in_b, std::uint32_t now_ms)
-        : dw_(dw), dh_(dh), layout_(layout), base_w_(base_w),
+    RaylibOverlay(RaylibApi* api, int dw, int dh,
+                  const PresentationLayout& layout, int base_w, int base_h,
+                  float px_per_mm, int in_l, int in_t, int in_r, int in_b,
+                  std::uint32_t now_ms)
+        : api_(api), dw_(dw), dh_(dh), layout_(layout), base_w_(base_w),
           base_h_(base_h), mm_(px_per_mm), now_ms_(now_ms) {
         insets_.left = in_l;
         insets_.top = in_t;
@@ -696,7 +706,7 @@ public:
         float ax, ay, bx, by;
         to_drawable(x0, y0, space, &ax, &ay);
         to_drawable(x1, y1, space, &bx, &by);
-        DrawLineEx({ax, ay}, {bx, by}, thickness, to_ray(color));
+        api_->DrawLineEx({ax, ay}, {bx, by}, thickness, to_ray(color));
     }
 
     void polyline(const OverlayPoint* points, std::size_t count,
@@ -717,9 +727,9 @@ public:
         if (rounding > 0.5f) {
             const float roundness = std::clamp(
                 rounding / (0.5f * std::min(w * s, h * s)), 0.0f, 1.0f);
-            DrawRectangleRounded(r, roundness, 8, to_ray(color));
+            api_->DrawRectangleRounded(r, roundness, 8, to_ray(color));
         } else {
-            DrawRectangleV({dx, dy}, {w * s, h * s}, to_ray(color));
+            api_->DrawRectangleV({dx, dy}, {w * s, h * s}, to_ray(color));
         }
     }
 
@@ -733,12 +743,12 @@ public:
         if (rounding > 0.5f) {
             // raylib 6 rounded-rectangle lines carry no thickness; the plain
             // outline is the honest mapping (same as SdlOverlay's 1px lines).
-            DrawRectangleRoundedLines(r,
+            api_->DrawRectangleRoundedLines(r,
                                       std::clamp(rounding / (0.5f * std::min(w * s, h * s)),
                                                  0.0f, 1.0f),
                                       8, to_ray(color));
         } else {
-            DrawRectangleLinesEx(r, thickness, to_ray(color));
+            api_->DrawRectangleLinesEx(r, thickness, to_ray(color));
         }
     }
 
@@ -746,7 +756,7 @@ public:
                      OverlaySpace space) override {
         float dx, dy;
         to_drawable(cx, cy, space, &dx, &dy);
-        DrawCircleV({dx, dy}, radius * view_scale(space), to_ray(color));
+        api_->DrawCircleV({dx, dy}, radius * view_scale(space), to_ray(color));
     }
 
     void stroke_circle(float cx, float cy, float radius, float thickness,
@@ -755,7 +765,7 @@ public:
         to_drawable(cx, cy, space, &dx, &dy);
         const float s = view_scale(space);
         const float outer = radius * s;
-        DrawRing({dx, dy}, std::max(0.0f, outer - thickness), outer, 0.0f,
+        api_->DrawRing({dx, dy}, std::max(0.0f, outer - thickness), outer, 0.0f,
                  360.0f, 32, to_ray(color));
     }
 
@@ -770,7 +780,7 @@ public:
         to_drawable(cx, cy, space, &dx, &dy);
         const float s = view_scale(space);
         const float outer = radius * s;
-        DrawRing({dx, dy}, std::max(0.0f, outer - thickness), outer,
+        api_->DrawRing({dx, dy}, std::max(0.0f, outer - thickness), outer,
                  start_turns * 360.0f - 90.0f, end_turns * 360.0f - 90.0f, 24,
                  to_ray(color));
     }
@@ -790,6 +800,7 @@ private:
                static_cast<float>(base_w_);
     }
 
+    RaylibApi* api_ = nullptr;
     int dw_, dh_, base_w_, base_h_;
     PresentationLayout layout_{};
     float mm_ = 0.0f;
@@ -833,7 +844,13 @@ void RaylibBackend::audio_callback(void* framesOut, unsigned int frameCount) {
 }
 #endif
 
-RaylibBackend::RaylibBackend() : impl_(new Impl) {
+RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
+#if defined(GBARECOMP_USE_RAYLIB)
+    impl_->api = api ? api : &real_raylib_api();
+#else
+    (void)api;  // stub builds call no raylib
+#endif
+    impl_->clock = clock ? clock : &real_host_clock();
     // Same layout as the SDL backend's kDefaultBinds/kHotkeyDefaults, so the
     // backend is usable before any config file is read.
     raylib_default_bindings(impl_->input_bindings);
@@ -928,13 +945,13 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     // present stacks up to one display period onto every pacer wait (8.3ms
     // at 120Hz, beating against the 16.74ms guest period: measured 52-57/s
     // vs the 59.7 target, 2026-10-14). Tearing exposure matches SDL default.
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    impl_->api->SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 #else
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT |
+    impl_->api->SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT |
                    FLAG_MSAA_4X_HINT);
 #endif
-    InitWindow(win_w, win_h, impl_->title.c_str());
-    if (!IsWindowReady()) {
+    impl_->api->InitWindow(win_w, win_h, impl_->title.c_str());
+    if (!impl_->api->IsWindowReady()) {
         std::fprintf(stderr,
                      "raylib_backend: InitWindow(%dx%d) failed\n",
                      win_w, win_h);
@@ -957,15 +974,15 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     impl_->surface.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8;
     impl_->surface.mipmaps = 1;
     impl_->surface.data = impl_->surface_pixels.data();
-    impl_->texture = LoadTextureFromImage(impl_->surface);
+    impl_->texture = impl_->api->LoadTextureFromImage(impl_->surface);
     if (impl_->texture.id == 0) {
         std::fprintf(stderr, "raylib_backend: LoadTextureFromImage failed\n");
-        CloseWindow();
+        impl_->api->CloseWindow();
         impl_->open = false;
         return false;
     }
     impl_->texture_ready = true;
-    SetTextureFilter(impl_->texture, rp.linear_filter
+    impl_->api->SetTextureFilter(impl_->texture, rp.linear_filter
                                         ? TEXTURE_FILTER_BILINEAR
                                         : TEXTURE_FILTER_POINT);
 #if defined(__ANDROID__)
@@ -995,7 +1012,7 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     // stacks with the pacer's wait AND the vsync block, running the guest
     // clock slow with audio underrun on 120Hz panels (2026-10-14 intro lag).
     // Vsync stays everywhere (tearing guard + caps uncapped presents).
-    SetTargetFPS(60);
+    impl_->api->SetTargetFPS(60);
 #endif
 
     // The GL context exists from here on, so an env-enabled LCD shader can
@@ -1008,7 +1025,7 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     // takes from renderer flags; see refresh below).
     impl_->interp_vsync = true;
     {
-        const int hz = GetMonitorRefreshRate(GetCurrentMonitor());
+        const int hz = impl_->api->GetMonitorRefreshRate(impl_->api->GetCurrentMonitor());
         impl_->interp_period_ns =
             hz > 0 ? 1000000000ull / static_cast<std::uint64_t>(hz) : 16666666u;
         impl_->interp_tick_ns = 0;
@@ -1017,18 +1034,18 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     // ---- audio ----
     // RAB resamples the GBA's standardized 65536 Hz mono feed to the rate we
     // ask raylib for. We choose that rate, so no device-rate query is needed.
-    if (IsAudioDeviceReady()) {
+    if (impl_->api->IsAudioDeviceReady()) {
         impl_->audio_dev_open = false;   // someone else owns it; leave it alone
     } else {
-        InitAudioDevice();               // returns void; check state after
-        impl_->audio_dev_open = IsAudioDeviceReady();
+        impl_->api->InitAudioDevice();               // returns void; check state after
+        impl_->audio_dev_open = impl_->api->IsAudioDeviceReady();
     }
     if (impl_->audio_dev_open) {
         constexpr int kStreamRate = 48000;
         constexpr int kStreamBufferFrames = 4096;
-        SetAudioStreamBufferSizeDefault(kStreamBufferFrames);
-        impl_->stream = LoadAudioStream(kStreamRate, 32, 1);  // 32-bit float
-        if (IsAudioStreamValid(impl_->stream)) {
+        impl_->api->SetAudioStreamBufferSizeDefault(kStreamBufferFrames);
+        impl_->stream = impl_->api->LoadAudioStream(kStreamRate, 32, 1);  // 32-bit float
+        if (impl_->api->IsAudioStreamValid(impl_->stream)) {
             rab_config cfg;
             rab_config_defaults(&cfg);
             cfg.channels = 1;
@@ -1045,18 +1062,18 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
                     std::fprintf(stderr,
                                  "raylib_backend: audio slot held by another "
                                  "backend; opening without audio\n");
-                    StopAudioStream(impl_->stream);
-                    UnloadAudioStream(impl_->stream);
+                    impl_->api->StopAudioStream(impl_->stream);
+                    impl_->api->UnloadAudioStream(impl_->stream);
                     rab_free(&impl_->bridge);
                     impl_->bridge_ready = false;
                 } else {
-                    SetAudioStreamCallback(impl_->stream,
+                    impl_->api->SetAudioStreamCallback(impl_->stream,
                                            &RaylibBackend::audio_callback);
-                    PlayAudioStream(impl_->stream);
+                    impl_->api->PlayAudioStream(impl_->stream);
                     impl_->audio_ready = true;
                 }
             } else {
-                UnloadAudioStream(impl_->stream);
+                impl_->api->UnloadAudioStream(impl_->stream);
             }
         }
     }
@@ -1091,19 +1108,19 @@ void RaylibBackend::close() {
     unload_dither_shader(impl_.get());
     unload_deband_shader(impl_.get());
     if (impl_->audio_ready) {
-        StopAudioStream(impl_->stream);
-        UnloadAudioStream(impl_->stream);
+        impl_->api->StopAudioStream(impl_->stream);
+        impl_->api->UnloadAudioStream(impl_->stream);
         impl_->audio_ready = false;
     }
     if (impl_->bridge_ready) {
         rab_free(&impl_->bridge);
         impl_->bridge_ready = false;
     }
-    if (impl_->audio_dev_open) CloseAudioDevice();
+    if (impl_->audio_dev_open) impl_->api->CloseAudioDevice();
 
     if (impl_->open) {
         if (impl_->texture_ready) {
-            UnloadTexture(impl_->texture);
+            impl_->api->UnloadTexture(impl_->texture);
             impl_->texture_ready = false;
         }
         release_sharp_target(impl_.get());
@@ -1112,7 +1129,7 @@ void RaylibBackend::close() {
         impl_->surface.data = nullptr;
         impl_->surface_pixels.clear();
         impl_->surface_pixels.shrink_to_fit();
-        CloseWindow();
+        impl_->api->CloseWindow();
     }
 #endif
     impl_->open = false;
@@ -1124,7 +1141,7 @@ bool RaylibBackend::is_open() const { return impl_->open; }
 void RaylibBackend::set_title(const char* title) {
     if (title) impl_->title = title;
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (impl_->open && IsWindowReady()) SetWindowTitle(impl_->title.c_str());
+    if (impl_->open && impl_->api->IsWindowReady()) impl_->api->SetWindowTitle(impl_->title.c_str());
 #endif
 }
 
@@ -1207,8 +1224,8 @@ void RaylibBackend::set_linear_filter(bool enabled) {
     }
     impl_->linear_filter = enabled;
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (impl_->open && IsWindowReady() && impl_->texture_ready)
-        SetTextureFilter(impl_->texture, enabled ? TEXTURE_FILTER_BILINEAR
+    if (impl_->open && impl_->api->IsWindowReady() && impl_->texture_ready)
+        impl_->api->SetTextureFilter(impl_->texture, enabled ? TEXTURE_FILTER_BILINEAR
                                                  : TEXTURE_FILTER_POINT);
 #endif
 }
@@ -1283,7 +1300,7 @@ int RaylibBackend::volume_percent() const { return impl_->volume; }
 void RaylibBackend::set_fullscreen(int mode) {
     impl_->fullscreen = std::clamp(mode, 0, 2);
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (impl_->open && IsWindowReady()) {
+    if (impl_->open && impl_->api->IsWindowReady()) {
         // Mirror the SDL mapping: 0 windowed, 1 borderless desktop,
         // 2 exclusive fullscreen. raylib has only FLAG_FULLSCREEN_MODE, so
         // both non-zero modes land on the same state -- raylib has no
@@ -1292,8 +1309,8 @@ void RaylibBackend::set_fullscreen(int mode) {
         //
         // Windowed CLEARS the flag; it must never hide the window. Hiding here
         // is what made a default-configured launch invisible.
-        if (impl_->fullscreen == 0) ClearWindowState(FLAG_FULLSCREEN_MODE);
-        else SetWindowState(FLAG_FULLSCREEN_MODE);
+        if (impl_->fullscreen == 0) impl_->api->ClearWindowState(FLAG_FULLSCREEN_MODE);
+        else impl_->api->SetWindowState(FLAG_FULLSCREEN_MODE);
     }
 #endif
 }
@@ -1313,7 +1330,7 @@ void RaylibBackend::set_lcd_shader(bool enabled) {
     // before open (or via config) compiles at open(). The program is kept
     // after disabling so toggling never hitches on a recompile -- close()
     // is what releases it.
-    if (enabled && impl_->open && IsWindowReady()) load_lcd_shader(impl_.get());
+    if (enabled && impl_->open && impl_->api->IsWindowReady()) load_lcd_shader(impl_.get());
 #else
     (void)enabled;
 #endif
@@ -1493,9 +1510,9 @@ bool RaylibBackend::touch_pad_visible_value() const { return impl_->pad_visible;
 // ── gamepad ──────────────────────────────────────────────────────────────
 bool RaylibBackend::gamepad_connected() const {
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !IsWindowReady()) return false;
+    if (!impl_->open || !impl_->api->IsWindowReady()) return false;
 #if defined(__ANDROID__)
-    return IsGamepadAvailable(0);
+    return impl_->api->IsGamepadAvailable(0);
 #else
     // Standard-mapped pad selection lives behind find_standard_pad()
     // (see above): raylib slot 0 is routinely a phantom.
@@ -1524,7 +1541,7 @@ void RaylibBackend::gamepad_rumble(float low_frequency, float high_frequency,
     // range (see find_standard_pad) cannot rumble through this API.
     const int slot = impl_->pad_raylib_slot;
     if (slot < 0) return;
-    SetGamepadVibration(slot, low, high, duration_ms / 1000.0f);
+    impl_->api->SetGamepadVibration(slot, low, high, duration_ms / 1000.0f);
 #else
     (void)low_frequency; (void)high_frequency; (void)duration_ms;
 #endif
@@ -1540,9 +1557,9 @@ void RaylibBackend::haptic_pulse(int duration_ms, float strength) {
     // vibrator when that port lands.
     if (!haptic_should_play(duration_ms)) return;
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !IsWindowReady() || !IsGamepadAvailable(0)) return;
+    if (!impl_->open || !impl_->api->IsWindowReady() || !impl_->api->IsGamepadAvailable(0)) return;
     const float s = haptic_clamp_strength(strength);
-    SetGamepadVibration(0, s, s, duration_ms / 1000.0f);
+    impl_->api->SetGamepadVibration(0, s, s, duration_ms / 1000.0f);
 #else
     (void)strength;
 #endif
@@ -1561,8 +1578,8 @@ bool RaylibBackend::set_surface_size(int base_w, int base_h) {
     // Recreate the streaming texture at the new size, mirroring
     // destroy_sharp_texture()/recreate on the SDL side. surface_pixels must
     // outlive Image::data, so re-point after reassigning.
-    if (impl_->open && IsWindowReady() && impl_->texture_ready) {
-        UnloadTexture(impl_->texture);
+    if (impl_->open && impl_->api->IsWindowReady() && impl_->texture_ready) {
+        impl_->api->UnloadTexture(impl_->texture);
         impl_->texture_ready = false;
         impl_->surface_pixels.assign(
             static_cast<std::size_t>(base_w) * base_h * 3u, 0);
@@ -1572,7 +1589,7 @@ bool RaylibBackend::set_surface_size(int base_w, int base_h) {
         impl_->surface.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8;
         impl_->surface.mipmaps = 1;
         impl_->surface.data = impl_->surface_pixels.data();
-        impl_->texture = LoadTextureFromImage(impl_->surface);
+        impl_->texture = impl_->api->LoadTextureFromImage(impl_->surface);
         if (impl_->texture.id == 0) {
             std::fprintf(stderr,
                          "raylib_backend: set_surface_size texture %dx%d failed\n",
@@ -1580,7 +1597,7 @@ bool RaylibBackend::set_surface_size(int base_w, int base_h) {
             return false;
         }
         impl_->texture_ready = true;
-        SetTextureFilter(impl_->texture, impl_->linear_filter
+        impl_->api->SetTextureFilter(impl_->texture, impl_->linear_filter
                                             ? TEXTURE_FILTER_BILINEAR
                                             : TEXTURE_FILTER_POINT);
     }
@@ -1594,9 +1611,9 @@ bool RaylibBackend::set_surface_size(int base_w, int base_h) {
 
 bool RaylibBackend::drawable_size(int* width, int* height) const {
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !IsWindowReady()) return false;
-    if (width) *width = GetScreenWidth();
-    if (height) *height = GetScreenHeight();
+    if (!impl_->open || !impl_->api->IsWindowReady()) return false;
+    if (width) *width = impl_->api->GetScreenWidth();
+    if (height) *height = impl_->api->GetScreenHeight();
     return width && height && *width > 0 && *height > 0;
 #else
     if (width) *width = 0;
@@ -1610,7 +1627,7 @@ void RaylibBackend::pump_events(Events& out) { out = pump(); }
 
 RaylibBackend::Events RaylibBackend::pump() {
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !IsWindowReady()) return Events{};
+    if (!impl_->open || !impl_->api->IsWindowReady()) return Events{};
 
     // raylib is PULL-based: there is no KEYDOWN event with a repeat flag, so
     // every edge in Events is recovered by translate_input() from prior-pump
@@ -1618,15 +1635,15 @@ RaylibBackend::Events RaylibBackend::pump() {
     // snapshot; all policy lives in input_translate.h, tested without a
     // display.
     InputSnapshot s;
-    s.now_ms = static_cast<std::uint32_t>(GetTime() * 1000.0);
-    s.close_requested = WindowShouldClose();
+    s.now_ms = impl_->clock->millis();
+    s.close_requested = impl_->api->WindowShouldClose();
 
     unsigned mods = kModNone;
-    if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+    if (impl_->api->IsKeyDown(KEY_LEFT_SHIFT) || impl_->api->IsKeyDown(KEY_RIGHT_SHIFT))
         mods |= kModShift;
-    if (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL))
+    if (impl_->api->IsKeyDown(KEY_LEFT_CONTROL) || impl_->api->IsKeyDown(KEY_RIGHT_CONTROL))
         mods |= kModCtrl;
-    if (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT))
+    if (impl_->api->IsKeyDown(KEY_LEFT_ALT) || impl_->api->IsKeyDown(KEY_RIGHT_ALT))
         mods |= kModAlt;
     s.mods = mods;
 
@@ -1635,7 +1652,7 @@ RaylibBackend::Events RaylibBackend::pump() {
     // config file means.
     const InputBindings& b = impl_->input_bindings;
     auto poll = [&](HostKey k) {
-        if (k != kHostKeyNone && IsKeyDown(k)) s.hold(k);
+        if (k != kHostKeyNone && impl_->api->IsKeyDown(k)) s.hold(k);
     };
     for (int bit = 0; bit < 10; ++bit) poll(b.gba_key[bit]);
     for (int i = 0; i < 9; ++i) poll(b.slot_key[i]);
@@ -1652,7 +1669,7 @@ RaylibBackend::Events RaylibBackend::pump() {
 #if defined(__ANDROID__)
     // No GLFW on Android: raylib's own (capped, unfiltered) slots are all
     // there is.
-    s.pad_connected = IsGamepadAvailable(0);
+    s.pad_connected = impl_->api->IsGamepadAvailable(0);
     if (s.pad_connected) {
         static const struct {
             int ray_button;
@@ -1678,7 +1695,7 @@ RaylibBackend::Events RaylibBackend::pump() {
         };
         GamepadSnapshot pad;
         for (const auto& m : kPadMap) {
-            if (IsGamepadButtonDown(0, m.ray_button)) {
+            if (impl_->api->IsGamepadButtonDown(0, m.ray_button)) {
                 s.hold_pad_button(m.pad_button);
                 pad.buttons |= m.gba_bit;
             }
@@ -1687,20 +1704,20 @@ RaylibBackend::Events RaylibBackend::pump() {
         // units (-32768..32767), so scale. Triggers rest at -1 and press to
         // +1, which lands on the same side of the 16000 threshold as SDL's
         // 0..32767 range does.
-        const float lx = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
-        const float ly = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+        const float lx = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+        const float ly = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
         pad.stick_x = static_cast<int>(lx * 32767.0f);
         pad.stick_y = static_cast<int>(ly * 32767.0f);
         s.hold_pad_axis(kPadAxisLeftX, pad.stick_x);
         s.hold_pad_axis(kPadAxisLeftY, pad.stick_y);
         s.hold_pad_axis(kPadAxisRightX, static_cast<int>(
-            GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_X) * 32767.0f));
+            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_X) * 32767.0f));
         s.hold_pad_axis(kPadAxisRightY, static_cast<int>(
-            GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_Y) * 32767.0f));
+            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_Y) * 32767.0f));
         s.hold_pad_axis(kPadAxisLeftTrigger, static_cast<int>(
-            GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_TRIGGER) * 32767.0f));
+            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_TRIGGER) * 32767.0f));
         s.hold_pad_axis(kPadAxisRightTrigger, static_cast<int>(
-            GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_TRIGGER) * 32767.0f));
+            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_TRIGGER) * 32767.0f));
         // gamepad_to_keyinput() returns ACTIVE-LOW; the snapshot carries
         // ACTIVE-HIGH pressed bits (see input_translate.h), so invert once.
         s.pad_gba_bits =
@@ -1781,8 +1798,8 @@ RaylibBackend::Events RaylibBackend::pump() {
     // Mouse gyro stand-in (WarioWare-style twist): horizontal delta while the
     // left button is held. Same quantity as SDL_GetRelativeMouseState. Gated
     // off below whenever touch can drive the game.
-    s.mouse_left = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-    s.mouse_dx = static_cast<int>(GetMouseDelta().x);
+    s.mouse_left = impl_->api->IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    s.mouse_dx = static_cast<int>(impl_->api->GetMouseDelta().x);
 
     // ---- touch ----
     // Poll raylib touch points + emulated mouse into TouchTracks, hit-test
@@ -1797,8 +1814,8 @@ RaylibBackend::Events RaylibBackend::pump() {
     if (touch_on) {
         TouchHub& hub = TouchHub::instance();
         TouchPresentation pres;
-        pres.drawable_width = GetScreenWidth();
-        pres.drawable_height = GetScreenHeight();
+        pres.drawable_width = impl_->api->GetScreenWidth();
+        pres.drawable_height = impl_->api->GetScreenHeight();
         pres.layout = impl->last_layout;
         pres.view_width = impl->base_w;
         pres.view_height = impl->base_h;
@@ -1863,13 +1880,13 @@ RaylibBackend::Events RaylibBackend::pump() {
         // drag feeds the same track path as a finger, id -1).
         struct LivePoint { int id; float x, y; TouchSource source; };
         std::vector<LivePoint> live;
-        const int n_touch = GetTouchPointCount();
+        const int n_touch = impl_->api->GetTouchPointCount();
         for (int i = 0; i < n_touch; ++i)
-            live.push_back({GetTouchPointId(i), GetTouchPosition(i).x,
-                            GetTouchPosition(i).y, TouchSource::Finger});
-        if (impl->touch_emulation && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-            live.push_back({-1, static_cast<float>(GetMouseX()),
-                            static_cast<float>(GetMouseY()),
+            live.push_back({impl_->api->GetTouchPointId(i), impl_->api->GetTouchPosition(i).x,
+                            impl_->api->GetTouchPosition(i).y, TouchSource::Finger});
+        if (impl->touch_emulation && impl_->api->IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+            live.push_back({-1, static_cast<float>(impl_->api->GetMouseX()),
+                            static_cast<float>(impl_->api->GetMouseY()),
                             TouchSource::Mouse});
         if (!live.empty()) {
             // Any finger activity refreshes the pad idle timer and reveals a
@@ -1962,9 +1979,9 @@ RaylibBackend::Events RaylibBackend::pump() {
         }
         // Desktop stand-ins for multi-finger taps (same bindings as SDL:
         // right = two-finger, middle = three-finger).
-        if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) ||
-            IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE)) {
-            const bool right = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+        if (impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) ||
+            impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE)) {
+            const bool right = impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
             Gesture g;
             g.kind = right ? GestureKind::TwoFingerTap
                            : GestureKind::ThreeFingerTap;
@@ -1972,9 +1989,9 @@ RaylibBackend::Events RaylibBackend::pump() {
             g.t_ms = now_ms;
             g.source = TouchSource::Mouse;
             g.drawable_x = g.start_drawable_x =
-                static_cast<float>(GetMouseX());
+                static_cast<float>(impl_->api->GetMouseX());
             g.drawable_y = g.start_drawable_y =
-                static_cast<float>(GetMouseY());
+                static_cast<float>(impl_->api->GetMouseY());
             g.start_in_view = presentation_point_to_logical(
                 impl->last_layout, impl->base_w, impl->base_h, g.drawable_x,
                 g.drawable_y, &g.view_x, &g.view_y);
@@ -1983,8 +2000,8 @@ RaylibBackend::Events RaylibBackend::pump() {
             hub.submit_gesture(g);
         }
         // Platform Back (Android Back key; desktop Backspace when emulating).
-        if (IsKeyPressed(KEY_BACK) ||
-            (impl->touch_emulation && IsKeyPressed(KEY_BACKSPACE))) {
+        if (impl_->api->IsKeyPressed(KEY_BACK) ||
+            (impl->touch_emulation && impl_->api->IsKeyPressed(KEY_BACKSPACE))) {
             Gesture g;
             g.kind = GestureKind::Back;
             g.t_ms = now_ms;
@@ -2029,7 +2046,7 @@ bool RaylibBackend::wait_for_foreground() {
     // port is where this grows a real wait.
     if (!impl_->open) return false;
 #if defined(GBARECOMP_USE_RAYLIB)
-    if (!IsWindowReady()) return false;
+    if (!impl_->api->IsWindowReady()) return false;
 #endif
     std::fprintf(stderr, "raylib_backend: already in foreground\n");
     return true;
@@ -2103,7 +2120,7 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
     }
 #endif
 
-    UpdateTexture(impl_->texture, rgb888);
+    impl_->api->UpdateTexture(impl_->texture, rgb888);
 
     // Remember the exact bytes handed to the GPU for the `presented` command.
     {
@@ -2113,8 +2130,8 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
                                 impl_->base_h * 3u);
     }
 
-    const int dw = GetScreenWidth();
-    const int dh = GetScreenHeight();
+    const int dw = impl_->api->GetScreenWidth();
+    const int dh = impl_->api->GetScreenHeight();
     // The fit policy is the portable one from presentation_layout.h, shared with
     // the SDL backend -- no second aspect rule to drift.
     const PresentationLayout layout =
@@ -2123,8 +2140,8 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
     impl_->last_drawable_w = dw;
     impl_->last_drawable_h = dh;
 
-    BeginDrawing();
-    ClearBackground(GetColor(0x070B14));  // matches the SDL clear color
+    impl_->api->BeginDrawing();
+    impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));  // matches the SDL clear color
     if (layout.width > 0 && layout.height > 0) {
         const Rectangle src{0.0f, 0.0f,
                             static_cast<float>(impl_->base_w),
@@ -2168,14 +2185,14 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
                                                impl_->base_h)
                 : 0;
         if (sharp_factor >= 2 && ensure_sharp_target(impl_.get(), sharp_factor)) {
-            BeginTextureMode(impl_->sharp_target);
-            ClearBackground(BLANK);
-            DrawTexturePro(impl_->texture, src,
+            impl_->api->BeginTextureMode(impl_->sharp_target);
+            impl_->api->ClearBackground(BLANK);
+            impl_->api->DrawTexturePro(impl_->texture, src,
                            {0.0f, 0.0f,
                             static_cast<float>(impl_->sharp_w),
                             static_cast<float>(impl_->sharp_h)},
                            {0.0f, 0.0f}, 0.0f, WHITE);
-            EndTextureMode();
+            impl_->api->EndTextureMode();
             // RenderTexture storage is Y-flipped relative to the screen.
             stage_tex = &impl_->sharp_target.texture;
             stage_rect = Rectangle{
@@ -2188,7 +2205,7 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
         // was bound before.
         auto upload_boost = [&] {
             if (impl_->lcd_boost_loc >= 0)
-                SetShaderValue(impl_->lcd_shader_handle,
+                impl_->api->SetShaderValue(impl_->lcd_shader_handle,
                                impl_->lcd_boost_loc, &impl_->lcd_boost,
                                SHADER_UNIFORM_FLOAT);
         };
@@ -2203,35 +2220,35 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
         const Texture2D* pass_tex = stage_tex;
         Rectangle pass_rect = stage_rect;
         if (deband) {
-            BeginTextureMode(impl_->post_a_target);
-            ClearBackground(GetColor(0x070B14));
-            BeginShaderMode(impl_->deband_handle);
+            impl_->api->BeginTextureMode(impl_->post_a_target);
+            impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));
+            impl_->api->BeginShaderMode(impl_->deband_handle);
             if (impl_->deband_loc >= 0)
-                SetShaderValue(impl_->deband_handle, impl_->deband_loc,
+                impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_loc,
                                &impl_->lcd_deband, SHADER_UNIFORM_FLOAT);
             if (impl_->deband_texel_loc >= 0) {
                 const float texel[2] = {
                     1.0f / static_cast<float>(impl_->base_w),
                     1.0f / static_cast<float>(impl_->base_h)};
-                SetShaderValue(impl_->deband_handle, impl_->deband_texel_loc,
+                impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_texel_loc,
                                texel, SHADER_UNIFORM_VEC2);
             }
-            DrawTexturePro(*pass_tex, pass_rect, dst, {0.0f, 0.0f}, 0.0f,
+            impl_->api->DrawTexturePro(*pass_tex, pass_rect, dst, {0.0f, 0.0f}, 0.0f,
                            WHITE);
-            EndShaderMode();
-            EndTextureMode();
+            impl_->api->EndShaderMode();
+            impl_->api->EndTextureMode();
             pass_tex = &impl_->post_a_target.texture;
             pass_rect = Rectangle{0.0f, 0.0f, static_cast<float>(dw),
                                   -static_cast<float>(dh)};
         }
         if (dither) {
             const bool second = deband;
-            BeginTextureMode(second ? impl_->post_b_target
+            impl_->api->BeginTextureMode(second ? impl_->post_b_target
                                    : impl_->post_a_target);
-            ClearBackground(GetColor(0x070B14));
-            BeginShaderMode(impl_->dither_handle);
+            impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));
+            impl_->api->BeginShaderMode(impl_->dither_handle);
             if (impl_->dither_loc >= 0)
-                SetShaderValue(impl_->dither_handle, impl_->dither_loc,
+                impl_->api->SetShaderValue(impl_->dither_handle, impl_->dither_loc,
                                &impl_->lcd_dither, SHADER_UNIFORM_FLOAT);
             // NOTE: pass_rect is already fullscreen when chaining (a previous
             // pass wrote the whole target), so dst would double-letterbox.
@@ -2241,10 +2258,10 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
                 second ? Rectangle{0.0f, 0.0f, static_cast<float>(dw),
                                    static_cast<float>(dh)}
                        : dst;
-            DrawTexturePro(*pass_tex, pass_rect, chain_dst, {0.0f, 0.0f},
+            impl_->api->DrawTexturePro(*pass_tex, pass_rect, chain_dst, {0.0f, 0.0f},
                            0.0f, WHITE);
-            EndShaderMode();
-            EndTextureMode();
+            impl_->api->EndShaderMode();
+            impl_->api->EndTextureMode();
             pass_tex = second ? &impl_->post_b_target.texture
                               : &impl_->post_a_target.texture;
             pass_rect = Rectangle{0.0f, 0.0f, static_cast<float>(dw),
@@ -2258,13 +2275,13 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
             const Rectangle final_dst =
                 (deband || dither) ? screen : dst;
             if (lcd) {
-                BeginShaderMode(impl_->lcd_shader_handle);
+                impl_->api->BeginShaderMode(impl_->lcd_shader_handle);
                 upload_boost();
-                DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
+                impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
                                0.0f, WHITE);
-                EndShaderMode();
+                impl_->api->EndShaderMode();
             } else {
-                DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
+                impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
                                0.0f, WHITE);
             }
         }
@@ -2285,10 +2302,11 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
             impl_->touch_controls, impl_->touch_policy, impl_->touch_emulation);
         if (impl_->host_overlay || overlay_shown || toggle_shown ||
             touch_on_this_frame) {
-            RaylibOverlay ov(dw, dh, impl_->last_layout, impl_->base_w,
-                             impl_->base_h, impl_->px_per_mm, impl_->safe_left,
-                             impl_->safe_top, impl_->safe_right,
-                             impl_->safe_bottom, touch_clock_ms());
+            RaylibOverlay ov(impl_->api, dw, dh, impl_->last_layout,
+                             impl_->base_w, impl_->base_h, impl_->px_per_mm,
+                             impl_->safe_left, impl_->safe_top,
+                             impl_->safe_right, impl_->safe_bottom,
+                             touch_clock_ms());
             if (impl_->host_overlay) impl_->host_overlay(&ov);
             if (overlay_shown || toggle_shown) {
                 const PadLayout pad = compute_pad_layout(
@@ -2313,13 +2331,13 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
             // whose draw_engine_long_press returns early.
         }
     }
-    EndDrawing();
+    impl_->api->EndDrawing();
 
 #if defined(__ANDROID__)
     // Present-rate log: presents/sec per ~10 s window (see Impl fields).
     ++impl_->rate_presents;
     {
-        const double now_s = GetTime();
+        const double now_s = impl_->clock->seconds();
         if (impl_->rate_window_start_s == 0.0)
             impl_->rate_window_start_s = now_s;
         const double span_s = now_s - impl_->rate_window_start_s;
@@ -2343,11 +2361,11 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
 
     // FPS readout (DisplayPerf hotkey): presents/sec, refreshed twice a
     // second in the title bar; the base title is restored when toggled off.
-    // Same policy as the SDL backend, with GetTime() standing in for
-    // SDL_GetTicks().
+    // Same policy as the SDL backend, with the Clock (raylib GetTime) standing
+    // in for SDL_GetTicks().
     if (impl_->fps_readout) {
         ++impl_->fps_presents;
-        const double now_s = GetTime();
+        const double now_s = impl_->clock->seconds();
         if (impl_->fps_window_start_s == 0.0) impl_->fps_window_start_s = now_s;
         const double span_s = now_s - impl_->fps_window_start_s;
         if (span_s >= 0.5) {
@@ -2355,7 +2373,7 @@ void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
             std::snprintf(buf, sizeof(buf), "%s — %.1f fps",
                           impl_->title.c_str(),
                           impl_->fps_presents / span_s);
-            SetWindowTitle(buf);
+            impl_->api->SetWindowTitle(buf);
             impl_->fps_window_start_s = now_s;
             impl_->fps_presents = 0;
         }
@@ -2415,7 +2433,7 @@ void RaylibBackend::interp_display_tick(const std::uint8_t* rgb888,
     // shared interp_pacing.h; this only supplies the clock, the sleep and the
     // present. Mirrors the SDL backend's interp_display_tick.
     if (!rgb888 || !impl_->frame_interp_enabled) return;
-    if (!impl_->open || !IsWindowReady()) return;
+    if (!impl_->open || !impl_->api->IsWindowReady()) return;
     Impl* impl = impl_.get();
     if ((++impl->interp_mode_counter % 600u) == 0u)
         refresh_interp_mode(impl);

@@ -13,8 +13,10 @@
 //     Completeness is guarded instead by raylib_backend_test.cpp, which calls
 //     every method through a WindowBackend& and asserts the *result*, so a
 //     newly-added method that still returns its default fails there.
-//   * Pure state (volume, scale, filter flags, ...) is real and implemented.
-//     Anything needing a window/renderer/audio stream is a clearly marked stub.
+//   * Pure state (volume, scale, filter flags, ...) is real; the
+//     window/renderer/audio paths are implemented and raylib-guarded (stub
+//     builds get honest no-ops). Every raylib call goes through RaylibApi
+//     (raylib_api.h); time goes through Clock (host_clock.h).
 //
 // The shared logic (gamepad->GBA mapping, pacing, audio queue policy, INI
 // scanning, clamps) comes from the platform-neutral helpers, so a raylib backend
@@ -35,9 +37,15 @@
 
 namespace gbarecomp {
 
+struct Clock;
+struct RaylibApi;
+
 class RaylibBackend final : public WindowBackend {
 public:
-    RaylibBackend();
+    // Dependencies are injectable for tests (Phase 2 tail / Phase 5): a fake
+    // RaylibApi injects failures, a fake Clock makes host loops deterministic.
+    // Nullptr (the default) uses the real raylib surface / real clock.
+    explicit RaylibBackend(RaylibApi* api = nullptr, Clock* clock = nullptr);
     ~RaylibBackend() override;
 
     RaylibBackend(const RaylibBackend&) = delete;
@@ -121,9 +129,9 @@ public:
     void set_lcd_deband(float deband) override;
     float lcd_deband_value() const override;
 
-    // ---- STUBS: need a real raylib window/renderer/audio stream ----------
-    // Each returns the WindowBackend default so behaviour is honest rather
-    // than silently wrong. Implemented in raylib_backend.cpp.
+    // ---- window/renderer/audio surface -----------------------------------
+    // raylib-guarded bodies; stub builds return the WindowBackend default so
+    // behaviour is honest rather than silently wrong.
 
     // Draining the raylib input queue into the host-neutral Events struct.
     void pump_events(Events& out) override;
