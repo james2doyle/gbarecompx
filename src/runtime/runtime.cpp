@@ -30,6 +30,7 @@
 #include "gba_ppu.h"
 #include "gba_rom_header.h"
 #include "host_platform.h"
+#include "host_menu.h"
 #include "host_window.h"
 #include "touch_input.h"
 #include "runtime_arm.h"
@@ -3346,6 +3347,19 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         pacer.emplace();  // paces to the GBA's 59.7275 Hz
     }
 
+    // Generic V2 menu (plan §3.4): the raylib backend presents it; the SDL
+    // backend keeps the recomp-ui path until Phase 4 deletes it. The host
+    // owns the model and the trigger policy (Phase 3d): engine touch gestures
+    // (unclaimed long-press, three-finger tap, Back) open it, Back closes it,
+    // and the presentation runs once per frame after pump(). Persistence is
+    // the host's apply hook — deliberately unwired for now (the legacy
+    // in-game menu did not persist either); see BRINGUP.
+    HostMenu host_menu;
+    WindowBackendV2* menu_backend = win.backend_v2();
+    const bool menu_available =
+        menu_backend != nullptr && menu_backend->caps().menu;
+    bool menu_pointer_down = false;
+
     // Host-window save-state slots: the ROM path with a .stateN extension.
     // Shift+F1..F9 writes slots 1..9 and F1..F9 restores them; a runtime menu
     // may additionally expose slot 10 without changing the established
@@ -3612,6 +3626,41 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         if (!args.window) return;
         capture_rewind_point();
         auto ev = win.pump();
+        if (menu_available) {
+            // Engine touch gestures (plan §3d): the host policy opens the
+            // generic menu on any engine action and lets Back close it. The
+            // SDL backend consumes these inside its own pump; on raylib they
+            // reach the host here.
+            for (const Gesture& g : TouchHub::instance().take_host_actions()) {
+                if (!host_menu.suppress_game_input()) {
+                    host_menu.open(*menu_backend);
+                    // The opening finger must not keep acting on the game.
+                    TouchHub::instance().cancel_all(touch_clock_ms());
+                } else if (g.kind == GestureKind::Back) {
+                    host_menu.close();
+                }
+            }
+            // Pointer for menu taps: the first active touch/mouse point (the
+            // hub sees both; on-screen pad buttons are routed away from it).
+            PointerState pointer;
+            const std::vector<TouchPointSnapshot> pts =
+                TouchHub::instance().points();
+            if (!pts.empty()) {
+                pointer.x = pts[0].drawable_x;
+                pointer.y = pts[0].drawable_y;
+                pointer.down = true;
+                pointer.touch = true;
+            }
+            pointer.pressed = pointer.down && !menu_pointer_down;
+            pointer.released = !pointer.down && menu_pointer_down;
+            menu_pointer_down = pointer.down;
+
+            host_menu.frame(*menu_backend, ev, pointer);
+            // The backend derives its own suppression from the presented
+            // model, but that present happens after this mask: mask here too
+            // so the opening frame's trigger input cannot reach the game.
+            if (host_menu.suppress_game_input()) ev.keyinput = 0x03FFu;
+        }
         if (observer) {
             // Observe-mode TCP savestate requests run here, at a present
             // boundary on the guest thread.

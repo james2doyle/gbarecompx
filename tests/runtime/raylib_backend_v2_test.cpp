@@ -14,6 +14,7 @@
 // "vacuous test" finding.
 #include "raylib_backend.h"
 #include "raylib_keymap.h"
+#include "touch_input.h"
 #include "window_backend.h"
 
 #include <cstdint>
@@ -38,6 +39,8 @@ using gbarecomp::Err;
 using gbarecomp::Events;
 using gbarecomp::Fx;
 using gbarecomp::FxSettings;
+using gbarecomp::Gesture;
+using gbarecomp::GestureKind;
 using gbarecomp::Input;
 using gbarecomp::InputSnapshot;
 using gbarecomp::kRayKeyX;
@@ -48,6 +51,7 @@ using gbarecomp::PointerState;
 using gbarecomp::RaylibBackend;
 using gbarecomp::Result;
 using gbarecomp::TouchConfig;
+using gbarecomp::TouchHub;
 using gbarecomp::Video;
 using gbarecomp::WindowBackendV2;
 using gbarecomp::menu_close;
@@ -450,6 +454,22 @@ void facade_lifecycle_contract() {
             v2.input().read(snap);
             CHECK(!snap.suppress_game_input);
             menu_close(menu);
+        }
+
+        // Engine host actions are NOT drained by the backend (plan §3d):
+        // the host policy consumes them (open/close the generic menu). A
+        // submitted gesture must survive input().read() — with touch enabled
+        // so the read's touch block actually runs.
+        {
+            TouchConfig tc;
+            tc.emulate_touch = true;
+            v2.overlay().configure_touch(tc);
+            Gesture g;
+            g.kind = GestureKind::ThreeFingerTap;
+            TouchHub::instance().submit_gesture(g);
+            InputSnapshot snap;
+            v2.input().read(snap);
+            CHECK(!TouchHub::instance().take_host_actions().empty());
         }
 
         v2.close();

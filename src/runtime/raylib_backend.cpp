@@ -46,6 +46,7 @@
 #include "input_translate.h"
 #include "interp_pacing.h"
 #include "lcd_shader.h"
+#include "long_press_ring.h"
 #include "menu_draw.h"
 #include "presentation_layout.h"
 #if defined(GBARECOMP_HAVE_FRAME_BLEND)
@@ -1153,10 +1154,23 @@ public:
                     if (toggle_shown)
                         draw_pad_toggle(ov, pad, toggle_held, impl_->pad_visible);
                 }
-                // Engine long-press ring: skipped. It needs the settings-menu
-                // plumbing (open_runtime_menu_from_touch), which this backend does
-                // not have yet -- same as the SDL backend without RUNTIME_UI,
-                // whose draw_engine_long_press returns early.
+                // Engine long-press cue (plan §3d): rings while an unclaimed
+                // long press is arming — the same 150 ms/650 ms policy as the
+                // SDL backend's draw_engine_long_press. The host consumes the
+                // fired gesture and opens the menu; the backend only draws
+                // the cue. Hidden while the menu is open.
+                if (!impl_->menu_open &&
+                    !TouchHub::instance().claimed(kTouchClaimLongPress)) {
+                    const TouchHub& hub = TouchHub::instance();
+                    const std::vector<TouchPointSnapshot> pts = hub.points();
+                    LongPressRing rings[10];
+                    const int n = collect_long_press_rings(
+                        pts.data(), static_cast<int>(pts.size()),
+                        touch_clock_ms(), hub.gesture_config().long_press_ms,
+                        rings, 10);
+                    for (int i = 0; i < n; ++i)
+                        draw_long_press_ring(ov, rings[i], impl_->px_per_mm);
+                }
             }
         }
 
@@ -1895,10 +1909,10 @@ public:
                 g.t_ms = now_ms;
                 hub.submit_gesture(g);
             }
-            // Long-press engine actions while the finger is still held. The
-            // raylib backend has no settings-menu plumbing yet, so actions are
-            // drained and dropped -- same as the SDL backend without RUNTIME_UI.
-            (void)hub.take_host_actions();
+            // Engine host actions (unclaimed long-press, three-finger tap,
+            // Back) are NOT drained here: the host policy consumes them
+            // (plan §3d) — the runtime drains them after pump() and opens or
+            // closes the generic menu.
             for (const auto& [id, track] : impl->touches) {
                 if (!track.active) continue;
                 if (track.pad) touch_buttons |= track.buttons;

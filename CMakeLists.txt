@@ -508,6 +508,11 @@ add_library(gbarecomp_runtime STATIC
 )
 gbarecomp_target_link_host_stack(gbarecomp_runtime INTERFACE)
 
+# Host wiring for the generic menu (plan §3.4 / Phase 3d): runtime.cpp owns
+# the model and the trigger policy, so the runtime links it. Pure — no
+# backend, no raylib.
+target_link_libraries(gbarecomp_runtime PUBLIC gbarecomp_host_menu)
+
 # The backend factory (in gbarecomp_runtime) selects RaylibBackend when raylib
 # was fetched. Linked here, after the target exists -- CMake resolves
 # target_link_libraries at configure time.
@@ -1112,6 +1117,12 @@ add_executable(host_menu_tests tests/runtime/host_menu_test.cpp)
 target_include_directories(host_menu_tests PRIVATE src/runtime tests/runtime)
 target_link_libraries(host_menu_tests PRIVATE gbarecomp_host_menu)
 add_test(NAME host_menu_tests COMMAND host_menu_tests)
+
+# Phase 3d — the engine long-press cue (ring collector + drawing) over a
+# recording HostOverlay. Pure; no window, no raylib.
+add_executable(long_press_ring_tests tests/runtime/long_press_ring_test.cpp)
+target_include_directories(long_press_ring_tests PRIVATE src/runtime)
+add_test(NAME long_press_ring_tests COMMAND long_press_ring_tests)
 
 # NOTE: the backend-selection and closed-window HostWindow tests deliberately
 # live in the APP build (root CMakeLists: ffta_backend_select_tests,

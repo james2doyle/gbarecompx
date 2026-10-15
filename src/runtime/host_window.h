@@ -211,6 +211,11 @@ public:
     using Events = WindowBackend::Events;
     Events pump();
 
+    // The V2 facade when the active backend implements it (raylib builds);
+    // nullptr for the flat SDL backend. The generic menu and the other
+    // V2-only paths are host policy on top of this (plan §3.4 / Phase 3d).
+    WindowBackendV2* backend_v2() const;
+
 private:
     bool open_ = false;
     // Platform backend (SDL or raylib). Typed at the seam, not as a concrete

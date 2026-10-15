@@ -3668,6 +3668,10 @@ HostWindow::Events HostWindow::pump() {
     return static_cast<WindowBackend*>(impl_)->pump();
 }
 
+WindowBackendV2* HostWindow::backend_v2() const {
+    return dynamic_cast<WindowBackendV2*>(impl_);
+}
+
 
 
 }  // namespace gbarecomp
@@ -3771,6 +3775,8 @@ HostWindow::Events HostWindow::pump() {
     ev.quit = true;
     return ev;
 }
+
+WindowBackendV2* HostWindow::backend_v2() const { return nullptr; }
 
 }  // namespace gbarecomp
 
