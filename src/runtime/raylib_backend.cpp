@@ -157,6 +157,10 @@ struct RaylibBackend::Impl {
     RaylibApi* api = nullptr;
     Clock* clock = nullptr;
 
+    // V2 concern implementations (created by the ctor; the flat methods
+    // forward into them).
+    std::unique_ptr<Video> video;
+
     // Real, implemented state.
     std::string title;
     bool assist_tools = true;
@@ -808,6 +812,569 @@ private:
     std::uint32_t now_ms_ = 0;
 };
 #endif
+// ── V2 concern: Video ───────────────────────────────────────────
+// The V2 `Video` interface (window_backend.h) over the backend's Impl
+// state. The flat generation's Video methods forward here one-line; nested
+// so the private static helpers (sharp target, post targets, shader
+// programs, interp mode) stay reachable. Bodies are the flat bodies
+// verbatim, with Impl* members respelled from impl_.get().
+class RaylibBackend::VideoImpl final : public Video {
+public:
+    explicit VideoImpl(Impl* impl) : impl_(impl) {}
+
+    void present(const std::uint8_t* rgb888, bool fresh) override {
+        (void)fresh;   // the SDL path only uses `fresh` to pick a blend variant
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!rgb888 || !impl_->open || !impl_->texture_ready) return;
+
+        // Present-time color grading (opt-in). Raw is passthrough: the raw frame
+        // is uploaded untouched, so verify/frame-hash are unaffected. Mirrors the
+        // SDL backend, including recording the GRADED bytes as presented.
+        if (impl_->color_lut && !impl_->color_lut->is_passthrough() &&
+            impl_->graded_fb.size() ==
+                static_cast<std::size_t>(impl_->base_w) * impl_->base_h * 3u) {
+            impl_->color_lut->map_rgb888(rgb888, impl_->graded_fb.data(),
+                                         impl_->base_w, impl_->base_h);
+            rgb888 = impl_->graded_fb.data();
+        }
+
+#if defined(GBARECOMP_HAVE_FRAME_BLEND)
+        // Presentation frame blending (issue #9 #1). Verbatim mirror of the SDL
+        // backend's block: RGB888 -> ARGB8888, blend in place, back to RGB888 for
+        // upload. Fresh frames blend (when on) and advance history; repeats blend
+        // against UNCHANGED history (interp holding presents). Everything off
+        // skips this block, so the upload below stays byte-identical to before —
+        // and, like SDL, the BLENDED bytes are what copy_presented_frame serves.
+        {
+            const bool do_blend =
+                impl_->frame_blend_enabled && impl_->frame_blend;
+            // Holding blends only while blending is on: with blending off, repeats
+            // upload raw (a stale-valid history from an earlier blend-on period
+            // must never smear into them).
+            const bool do_hold = !fresh && impl_->frame_blend_enabled &&
+                                 impl_->frame_interp_enabled && impl_->frame_blend;
+            if ((do_blend || do_hold) && impl_->frame_blend) {
+                const std::size_t px =
+                    static_cast<std::size_t>(impl_->base_w) * impl_->base_h;
+                if (impl_->blend_argb.size() != px * 4u ||
+                    impl_->blend_rgb.size() != px * 3u) {
+                    impl_->blend_argb.assign(px * 4u, 0);
+                    impl_->blend_rgb.assign(px * 3u, 0);
+                    recomp_frame_blend_reset(impl_->frame_blend);
+                }
+                const uint8_t* src = rgb888;
+                uint8_t* argb = impl_->blend_argb.data();
+                for (std::size_t i = 0; i < px; ++i) {
+                    argb[i * 4u + 0u] = src[i * 3u + 2u];  // B
+                    argb[i * 4u + 1u] = src[i * 3u + 1u];  // G
+                    argb[i * 4u + 2u] = src[i * 3u + 0u];  // R
+                    argb[i * 4u + 3u] = 0xFF;              // A (opaque; untouched)
+                }
+                if (do_hold)
+                    recomp_frame_blend_apply_holding(
+                        impl_->frame_blend, argb, impl_->base_w, impl_->base_h,
+                        static_cast<size_t>(impl_->base_w) * 4u);
+                else
+                    recomp_frame_blend_apply(impl_->frame_blend, argb,
+                                             impl_->base_w, impl_->base_h,
+                                             static_cast<size_t>(impl_->base_w) *
+                                                 4u);
+                uint8_t* dst = impl_->blend_rgb.data();
+                for (std::size_t i = 0; i < px; ++i) {
+                    dst[i * 3u + 0u] = argb[i * 4u + 2u];
+                    dst[i * 3u + 1u] = argb[i * 4u + 1u];
+                    dst[i * 3u + 2u] = argb[i * 4u + 0u];
+                }
+                rgb888 = dst;
+            }
+        }
+#endif
+
+        impl_->api->UpdateTexture(impl_->texture, rgb888);
+
+        // Remember the exact bytes handed to the GPU for the `presented` command.
+        {
+            std::lock_guard<std::mutex> lk(impl_->last_upload_mu);
+            impl_->last_upload.assign(
+                rgb888, rgb888 + static_cast<std::size_t>(impl_->base_w) *
+                                    impl_->base_h * 3u);
+        }
+
+        const int dw = impl_->api->GetScreenWidth();
+        const int dh = impl_->api->GetScreenHeight();
+        // The fit policy is the portable one from presentation_layout.h, shared with
+        // the SDL backend -- no second aspect rule to drift.
+        const PresentationLayout layout =
+            compute_presentation_layout(dw, dh, impl_->base_w, impl_->base_h);
+        impl_->last_layout = layout;
+        impl_->last_drawable_w = dw;
+        impl_->last_drawable_h = dh;
+
+        impl_->api->BeginDrawing();
+        impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));  // matches the SDL clear color
+        if (layout.width > 0 && layout.height > 0) {
+            const Rectangle src{0.0f, 0.0f,
+                                static_cast<float>(impl_->base_w),
+                                static_cast<float>(impl_->base_h)};
+            const Rectangle dst{static_cast<float>(layout.x),
+                                static_cast<float>(layout.y),
+                                static_cast<float>(layout.width),
+                                static_cast<float>(layout.height)};
+            // Independent stages, evaluated separately so every knob works alone:
+            // sharp prescale, deband pass, dither pass, LCD pass. Dither is
+            // screen-space, so it runs at drawable resolution through a
+            // fullscreen post target — never inside the game/sharp targets.
+            // Deband samples game texels through the same geometry. The overlay
+            // below stays unshaded too (pad UI must remain legible).
+            const bool lcd = impl_->lcd_shader && impl_->lcd_shader_ready;
+            // Deband stands alone: active whenever threshold > 0, grid or not.
+            // Lazily compiled — config can enable it after open().
+            bool deband = impl_->lcd_deband > 0.0f;
+            if (deband) {
+                load_deband_shader(impl_);
+                deband = impl_->deband_ready;
+            }
+            // Dither stands alone: active whenever strength > 0, grid or not.
+            // Lazily compiled — config can enable it after open().
+            bool dither = impl_->lcd_dither > 0.0f;
+            if (dither) {
+                load_dither_shader(impl_);
+                dither = impl_->dither_ready;
+            }
+            // Sharp prescale: integer pre-upscale into a render target, then blit
+            // to the screen. Exact scales and factor<2 keep the crisp direct path
+            // (compute_sharp_prescale_factor returns 0 there).
+            // Resolve the stage to blit: the sharp target when engaged, else the
+            // game texture. Any prescale failure falls back to direct — a missing
+            // prescale must never drop a frame.
+            const Texture2D* stage_tex = &impl_->texture;
+            Rectangle stage_rect = src;
+            const int sharp_factor =
+                impl_->sharp_filter
+                    ? compute_sharp_prescale_factor(layout, impl_->base_w,
+                                                   impl_->base_h)
+                    : 0;
+            if (sharp_factor >= 2 && ensure_sharp_target(impl_, sharp_factor)) {
+                impl_->api->BeginTextureMode(impl_->sharp_target);
+                impl_->api->ClearBackground(BLANK);
+                impl_->api->DrawTexturePro(impl_->texture, src,
+                               {0.0f, 0.0f,
+                                static_cast<float>(impl_->sharp_w),
+                                static_cast<float>(impl_->sharp_h)},
+                               {0.0f, 0.0f}, 0.0f, WHITE);
+                impl_->api->EndTextureMode();
+                // RenderTexture storage is Y-flipped relative to the screen.
+                stage_tex = &impl_->sharp_target.texture;
+                stage_rect = Rectangle{
+                    0.0f, 0.0f,
+                    static_cast<float>(impl_->sharp_w),
+                    -static_cast<float>(impl_->sharp_h)};
+            }
+            // Uniform upload goes inside the shader window: the program is
+            // current there, so the value lands on our program, not whatever
+            // was bound before.
+            auto upload_boost = [&] {
+                if (impl_->lcd_boost_loc >= 0)
+                    impl_->api->SetShaderValue(impl_->lcd_shader_handle,
+                                   impl_->lcd_boost_loc, &impl_->lcd_boost,
+                                   SHADER_UNIFORM_FLOAT);
+            };
+            // A failed post target degrades gracefully: drop that pass, keep the
+            // rest, never drop the frame.
+            if (deband && !ensure_post_target(impl_, 0, dw, dh)) deband = false;
+            if (dither && !ensure_post_target(impl_, deband ? 1 : 0, dw, dh))
+                dither = false;
+            // First active pass reads the stage (sharp target or game texture);
+            // each pass feeds the next; the screen blit reads the last stage.
+            // No passes: direct blit, byte-identical to before any of this.
+            const Texture2D* pass_tex = stage_tex;
+            Rectangle pass_rect = stage_rect;
+            if (deband) {
+                impl_->api->BeginTextureMode(impl_->post_a_target);
+                impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));
+                impl_->api->BeginShaderMode(impl_->deband_handle);
+                if (impl_->deband_loc >= 0)
+                    impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_loc,
+                                   &impl_->lcd_deband, SHADER_UNIFORM_FLOAT);
+                if (impl_->deband_texel_loc >= 0) {
+                    const float texel[2] = {
+                        1.0f / static_cast<float>(impl_->base_w),
+                        1.0f / static_cast<float>(impl_->base_h)};
+                    impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_texel_loc,
+                                   texel, SHADER_UNIFORM_VEC2);
+                }
+                impl_->api->DrawTexturePro(*pass_tex, pass_rect, dst, {0.0f, 0.0f}, 0.0f,
+                               WHITE);
+                impl_->api->EndShaderMode();
+                impl_->api->EndTextureMode();
+                pass_tex = &impl_->post_a_target.texture;
+                pass_rect = Rectangle{0.0f, 0.0f, static_cast<float>(dw),
+                                      -static_cast<float>(dh)};
+            }
+            if (dither) {
+                const bool second = deband;
+                impl_->api->BeginTextureMode(second ? impl_->post_b_target
+                                       : impl_->post_a_target);
+                impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));
+                impl_->api->BeginShaderMode(impl_->dither_handle);
+                if (impl_->dither_loc >= 0)
+                    impl_->api->SetShaderValue(impl_->dither_handle, impl_->dither_loc,
+                                   &impl_->lcd_dither, SHADER_UNIFORM_FLOAT);
+                // NOTE: pass_rect is already fullscreen when chaining (a previous
+                // pass wrote the whole target), so dst would double-letterbox.
+                // Both passes render the layout rect into a fullscreen target, so
+                // every stage after the first is fullscreen-to-fullscreen.
+                const Rectangle chain_dst =
+                    second ? Rectangle{0.0f, 0.0f, static_cast<float>(dw),
+                                       static_cast<float>(dh)}
+                           : dst;
+                impl_->api->DrawTexturePro(*pass_tex, pass_rect, chain_dst, {0.0f, 0.0f},
+                               0.0f, WHITE);
+                impl_->api->EndShaderMode();
+                impl_->api->EndTextureMode();
+                pass_tex = second ? &impl_->post_b_target.texture
+                                  : &impl_->post_a_target.texture;
+                pass_rect = Rectangle{0.0f, 0.0f, static_cast<float>(dw),
+                                      -static_cast<float>(dh)};
+            }
+            {
+                const Rectangle screen{0.0f, 0.0f, static_cast<float>(dw),
+                                       static_cast<float>(dh)};
+                // After any target pass the stage is fullscreen; direct blits
+                // keep the layout rect.
+                const Rectangle final_dst =
+                    (deband || dither) ? screen : dst;
+                if (lcd) {
+                    impl_->api->BeginShaderMode(impl_->lcd_shader_handle);
+                    upload_boost();
+                    impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
+                                   0.0f, WHITE);
+                    impl_->api->EndShaderMode();
+                } else {
+                    impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
+                                   0.0f, WHITE);
+                }
+            }
+        }
+
+        // Host chrome: spin-off overlay hook, on-screen pad + toggle. Same
+        // gating as the SDL backend's render_host_layers (minus the settings
+        // menu, which needs runtime-UI plumbing this backend doesn't have yet).
+        // Drawn in drawable pixels inside the same Begin/EndDrawing, so no
+        // viewport juggling is needed.
+        {
+            const bool overlay_shown = pad_overlay_shown(
+                impl_->pad_visible, impl_->touch_controls, impl_->pad_idle_hidden);
+            const bool toggle_shown = pad_toggle_shown(
+                impl_->touch_policy, impl_->touch_controls, impl_->touch_emulation,
+                impl_->pad_idle_hidden);
+            const bool touch_on_this_frame = touch_input_enabled(
+                impl_->touch_controls, impl_->touch_policy, impl_->touch_emulation);
+            if (impl_->host_overlay || overlay_shown || toggle_shown ||
+                touch_on_this_frame) {
+                RaylibOverlay ov(impl_->api, dw, dh, impl_->last_layout,
+                                 impl_->base_w, impl_->base_h, impl_->px_per_mm,
+                                 impl_->safe_left, impl_->safe_top,
+                                 impl_->safe_right, impl_->safe_bottom,
+                                 touch_clock_ms());
+                if (impl_->host_overlay) impl_->host_overlay(&ov);
+                if (overlay_shown || toggle_shown) {
+                    const PadLayout pad = compute_pad_layout(
+                        pad_layout_inputs(impl_, dw, dh));
+                    std::uint16_t held = 0;
+                    bool toggle_held = false;
+                    bool ff_held = false;
+                    for (const auto& [id, track] : impl_->touches) {
+                        if (!track.active) continue;
+                        if (track.pad) held |= track.buttons;
+                        if (track.toggle) toggle_held = true;
+                        if (track.ff) ff_held = true;
+                    }
+                    if (overlay_shown)
+                        draw_touch_pad(ov, pad, held, impl_->px_per_mm, ff_held);
+                    if (toggle_shown)
+                        draw_pad_toggle(ov, pad, toggle_held, impl_->pad_visible);
+                }
+                // Engine long-press ring: skipped. It needs the settings-menu
+                // plumbing (open_runtime_menu_from_touch), which this backend does
+                // not have yet -- same as the SDL backend without RUNTIME_UI,
+                // whose draw_engine_long_press returns early.
+            }
+        }
+        impl_->api->EndDrawing();
+
+#if defined(__ANDROID__)
+        // Present-rate log: presents/sec per ~10 s window (see Impl fields).
+        ++impl_->rate_presents;
+        {
+            const double now_s = impl_->clock->seconds();
+            if (impl_->rate_window_start_s == 0.0)
+                impl_->rate_window_start_s = now_s;
+            const double span_s = now_s - impl_->rate_window_start_s;
+            if (span_s >= 10.0) {
+                unsigned long long iters = 0, cycles = 0, ops = 0;
+                gbarecomp_idle_skip_stats(&iters, &cycles, &ops);
+                std::fprintf(stderr,
+                             "raylib_backend: presents=%u rate=%.1f/s "
+                             "idle-skipped=%llu iters (%llu cyc, %llu ops)\n",
+                             impl_->rate_presents,
+                             impl_->rate_presents / span_s,
+                             iters - impl_->rate_idle_iters,
+                             cycles - impl_->rate_idle_cycles, ops);
+                impl_->rate_idle_iters = iters;
+                impl_->rate_idle_cycles = cycles;
+                impl_->rate_window_start_s = now_s;
+                impl_->rate_presents = 0;
+            }
+        }
+#endif
+
+        // FPS readout (DisplayPerf hotkey): presents/sec, refreshed twice a
+        // second in the title bar; the base title is restored when toggled off.
+        // Same policy as the SDL backend, with the Clock (raylib GetTime) standing
+        // in for SDL_GetTicks().
+        if (impl_->fps_readout) {
+            ++impl_->fps_presents;
+            const double now_s = impl_->clock->seconds();
+            if (impl_->fps_window_start_s == 0.0) impl_->fps_window_start_s = now_s;
+            const double span_s = now_s - impl_->fps_window_start_s;
+            if (span_s >= 0.5) {
+                char buf[192];
+                std::snprintf(buf, sizeof(buf), "%s — %.1f fps",
+                              impl_->title.c_str(),
+                              impl_->fps_presents / span_s);
+                impl_->api->SetWindowTitle(buf);
+                impl_->fps_window_start_s = now_s;
+                impl_->fps_presents = 0;
+            }
+        }
+
+        // Post-processing passes beyond the LCD grid belong here too (the spin-off
+        // hook: a game draws custom shapes through set_host_overlay, full-screen
+        // shader work lands on the blit above).
+#else
+        (void)rgb888;
+#endif
+    }
+
+    void interp_display_tick(const std::uint8_t* rgb888,
+                                            std::uint64_t deadline_ns) override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        // Display-paced interpolation: subdivide the guest wait at display rate.
+        // Policy (when to hold, how to sleep, how boundaries advance) is the
+        // shared interp_pacing.h; this only supplies the clock, the sleep and the
+        // present. Mirrors the SDL backend's interp_display_tick.
+        if (!rgb888 || !impl_->frame_interp_enabled) return;
+        if (!impl_->open || !impl_->api->IsWindowReady()) return;
+        Impl* impl = impl_;
+        if ((++impl->interp_mode_counter % 600u) == 0u)
+            refresh_interp_mode(impl);
+        const std::uint64_t now_ns = raylib_steady_now_ns();
+        if (impl->interp_tick_ns == 0 ||
+            now_ns >= impl->interp_tick_ns + impl->interp_period_ns * 2u)
+            impl->interp_tick_ns = now_ns;  // (re)anchor when unset or far adrift
+        // A vsync-blocked present lands one full display period from now; if that
+        // is past the guest deadline, presenting would hand the guest an extra
+        // display period. Hold the last frame and sleep out the remainder instead.
+        if (interp_should_hold_for_deadline(impl->interp_vsync,
+                                            impl->interp_period_ns, now_ns,
+                                            deadline_ns)) {
+            raylib_sleep_until_ns(
+                interp_clamp_wake_ns(deadline_ns, now_ns, deadline_ns));
+            return;
+        }
+        const InterpSleep sleep_kind =
+            interp_sleep_kind(impl->interp_vsync, impl->interp_period_ns,
+                              impl->interp_tick_ns, now_ns, deadline_ns);
+        if (sleep_kind == InterpSleep::kFixed) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } else if (sleep_kind == InterpSleep::kBoundary) {
+            raylib_sleep_until_ns(interp_clamp_wake_ns(impl->interp_tick_ns, now_ns,
+                                                       deadline_ns));
+        }
+        present(rgb888, false);
+        const std::uint64_t after_ns = raylib_steady_now_ns();
+        impl->interp_tick_ns = interp_advance_tick_ns(impl->interp_vsync,
+                                                      impl->interp_period_ns,
+                                                      impl->interp_tick_ns,
+                                                      after_ns);
+        // Presents/sec report (~600-tick windows): the only remote proof the tick
+        // loop is actually subdividing waits at display rate.
+        if (++impl->interp_tick_count == 1u)
+            impl->interp_rate_window_ns = after_ns;
+        else if (impl->interp_tick_count >= 600u) {
+            const std::uint64_t span_ns = after_ns - impl->interp_rate_window_ns;
+            if (span_ns > 0u) {
+                std::fprintf(stderr,
+                             "raylib_backend: interp ticks=%u rate=%.1f/s\n",
+                             impl->interp_tick_count,
+                             static_cast<double>(impl->interp_tick_count) * 1e9 /
+                                 static_cast<double>(span_ns));
+            }
+            impl->interp_tick_count = 0;
+        }
+#else
+        (void)rgb888; (void)deadline_ns;
+#endif
+    }
+
+    bool readback(std::vector<std::uint8_t>& out,
+                                             int& w, int& h) const override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!impl_->open) return false;
+        std::lock_guard<std::mutex> lk(impl_->last_upload_mu);
+        if (impl_->last_upload.size() !=
+            static_cast<std::size_t>(impl_->base_w) * impl_->base_h * 3u)
+            return false;
+        out = impl_->last_upload;
+        w = impl_->base_w;
+        h = impl_->base_h;
+        return true;
+#else
+        (void)out; (void)w; (void)h;
+        return false;
+#endif
+    }
+
+    float refresh_hz() const override {
+        // The display period probed at open (interp_period_ns; the 60 Hz
+        // placeholder until then). Caps::vsync_report gates meaningfulness.
+        return 1.0e9f / static_cast<float>(impl_->interp_period_ns);
+    }
+
+    bool drawable_size(int* width, int* height) const override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!impl_->open || !impl_->api->IsWindowReady()) return false;
+        if (width) *width = impl_->api->GetScreenWidth();
+        if (height) *height = impl_->api->GetScreenHeight();
+        return width && height && *width > 0 && *height > 0;
+#else
+        if (width) *width = 0;
+        if (height) *height = 0;
+        return false;
+#endif
+    }
+
+    bool set_surface_size(int base_w, int base_h) override {
+        if (base_w < 1 || base_h < 1) return false;
+        if (base_w == impl_->base_w && base_h == impl_->base_h) return true;
+        impl_->base_w = base_w;
+        impl_->base_h = base_h;
+#if defined(GBARECOMP_USE_RAYLIB)
+        // The prescale factor depends on the surface size; drop the cached target
+        // so the next present recomputes it.
+        release_sharp_target(impl_);
+        // Recreate the streaming texture at the new size, mirroring
+        // destroy_sharp_texture()/recreate on the SDL side. surface_pixels must
+        // outlive Image::data, so re-point after reassigning.
+        if (impl_->open && impl_->api->IsWindowReady() && impl_->texture_ready) {
+            impl_->api->UnloadTexture(impl_->texture);
+            impl_->texture_ready = false;
+            impl_->surface_pixels.assign(
+                static_cast<std::size_t>(base_w) * base_h * 3u, 0);
+            impl_->surface = Image{};
+            impl_->surface.width = base_w;
+            impl_->surface.height = base_h;
+            impl_->surface.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8;
+            impl_->surface.mipmaps = 1;
+            impl_->surface.data = impl_->surface_pixels.data();
+            impl_->texture = impl_->api->LoadTextureFromImage(impl_->surface);
+            if (impl_->texture.id == 0) {
+                std::fprintf(stderr,
+                             "raylib_backend: set_surface_size texture %dx%d failed\n",
+                             base_w, base_h);
+                return false;
+            }
+            impl_->texture_ready = true;
+            impl_->api->SetTextureFilter(impl_->texture, impl_->linear_filter
+                                                ? TEXTURE_FILTER_BILINEAR
+                                                : TEXTURE_FILTER_POINT);
+        }
+#endif
+        // The graded framebuffer tracks the surface size, not the window size.
+        if (impl_->color_lut && !impl_->color_lut->is_passthrough())
+            impl_->graded_fb.assign(
+                static_cast<std::size_t>(base_w) * base_h * 3u, 0);
+        return true;
+    }
+
+    void set_title(const char* title) override {
+        if (title) impl_->title = title;
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (impl_->open && impl_->api->IsWindowReady()) impl_->api->SetWindowTitle(impl_->title.c_str());
+#endif
+    }
+
+    int scale() const override { return impl_->scale; }
+
+    void adjust_scale(int delta) override {
+        // Clamp is the shared policy; the SDL backend does the same.
+        impl_->scale = std::clamp(impl_->scale + delta, 1, 8);
+    }
+
+    void set_linear_filter(bool enabled) override {
+        // Sharp and linear are mutually exclusive (sharp wins at resolve time);
+        // enabling linear clears sharp, mirroring the SDL backend.
+        if (enabled && impl_->sharp_filter) {
+            impl_->sharp_filter = false;
+            release_sharp_target(impl_);
+        }
+        impl_->linear_filter = enabled;
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (impl_->open && impl_->api->IsWindowReady() && impl_->texture_ready)
+            impl_->api->SetTextureFilter(impl_->texture, enabled ? TEXTURE_FILTER_BILINEAR
+                                                     : TEXTURE_FILTER_POINT);
+#endif
+    }
+
+    bool linear_filter() const override { return impl_->linear_filter; }
+
+    void set_resize_driven_view(bool enabled) override {
+        impl_->resize_driven_view = enabled;
+    }
+
+    void set_view_margins(std::uint32_t left, std::uint32_t right,
+                                         std::uint32_t top,
+                                         std::uint32_t bottom) override {
+        impl_->view_margin_left = left;
+        impl_->view_margin_right = right;
+        impl_->view_margin_top = top;
+        impl_->view_margin_bottom = bottom;
+    }
+
+    void set_fullscreen(int mode) override {
+        impl_->fullscreen = std::clamp(mode, 0, 2);
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (impl_->open && impl_->api->IsWindowReady()) {
+            // Mirror the SDL mapping: 0 windowed, 1 borderless desktop,
+            // 2 exclusive fullscreen. raylib has only FLAG_FULLSCREEN_MODE, so
+            // both non-zero modes land on the same state -- raylib has no
+            // exclusive-fullscreen equivalent. `fullscreen_mode()` still reports
+            // the requested value, so host behaviour is unchanged.
+            //
+            // Windowed CLEARS the flag; it must never hide the window. Hiding here
+            // is what made a default-configured launch invisible.
+            if (impl_->fullscreen == 0) impl_->api->ClearWindowState(FLAG_FULLSCREEN_MODE);
+            else impl_->api->SetWindowState(FLAG_FULLSCREEN_MODE);
+        }
+#endif
+    }
+
+    int fullscreen() const override { return impl_->fullscreen; }
+
+    float px_per_mm() const override { return impl_->px_per_mm; }
+
+    void set_presentation_anchor_top(bool anchor_top) override {
+        impl_->anchor_top = anchor_top;
+    }
+
+    void set_fps_readout(bool on) override { impl_->fps_readout = on; }
+
+    bool fps_readout() const override { return impl_->fps_readout; }
+
+private:
+    Impl* impl_;
+};
 
 // raylib's AudioCallback is `void (*)(void *framesOut, unsigned int frames)` --
 // it carries NO userdata (open upstream limitation: raysan5/raylib#3911). SDL
@@ -851,6 +1418,7 @@ RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
     (void)api;  // stub builds call no raylib
 #endif
     impl_->clock = clock ? clock : &real_host_clock();
+    impl_->video = std::make_unique<VideoImpl>(impl_.get());
     // Same layout as the SDL backend's kDefaultBinds/kHotkeyDefaults, so the
     // backend is usable before any config file is read.
     raylib_default_bindings(impl_->input_bindings);
@@ -1137,12 +1705,11 @@ void RaylibBackend::close() {
 }
 bool RaylibBackend::is_open() const { return impl_->open; }
 
+Video& RaylibBackend::video() { return *impl_->video; }
+
 // ── window state: implemented (pure state) ────────────────────────────────
 void RaylibBackend::set_title(const char* title) {
-    if (title) impl_->title = title;
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (impl_->open && impl_->api->IsWindowReady()) impl_->api->SetWindowTitle(impl_->title.c_str());
-#endif
+    impl_->video->set_title(title);
 }
 
 bool RaylibBackend::assist_tools_enabled() const { return impl_->assist_tools; }
@@ -1213,50 +1780,44 @@ void RaylibBackend::set_volume(int pct) {
     impl_->volume = std::clamp(pct, 0, 100);
 }
 
-int RaylibBackend::window_scale() const { return impl_->scale; }
+int RaylibBackend::window_scale() const { return impl_->video->scale(); }
 
 void RaylibBackend::set_linear_filter(bool enabled) {
-    // Sharp and linear are mutually exclusive (sharp wins at resolve time);
-    // enabling linear clears sharp, mirroring the SDL backend.
-    if (enabled && impl_->sharp_filter) {
-        impl_->sharp_filter = false;
-        release_sharp_target(impl_.get());
-    }
-    impl_->linear_filter = enabled;
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (impl_->open && impl_->api->IsWindowReady() && impl_->texture_ready)
-        impl_->api->SetTextureFilter(impl_->texture, enabled ? TEXTURE_FILTER_BILINEAR
-                                                 : TEXTURE_FILTER_POINT);
-#endif
+    impl_->video->set_linear_filter(enabled);
 }
 
-bool RaylibBackend::linear_filter_enabled() const { return impl_->linear_filter; }
+bool RaylibBackend::linear_filter_enabled() const {
+    return impl_->video->linear_filter();
+}
 
 void RaylibBackend::set_resize_driven_view(bool enabled) {
-    impl_->resize_driven_view = enabled;
+    impl_->video->set_resize_driven_view(enabled);
 }
 
 void RaylibBackend::set_view_margins(std::uint32_t left, std::uint32_t right,
                                      std::uint32_t top,
                                      std::uint32_t bottom) {
-    impl_->view_margin_left = left;
-    impl_->view_margin_right = right;
-    impl_->view_margin_top = top;
-    impl_->view_margin_bottom = bottom;
+    impl_->video->set_view_margins(left, right, top, bottom);
 }
 
-float RaylibBackend::px_per_mm_value() const { return impl_->px_per_mm; }
+float RaylibBackend::px_per_mm_value() const {
+    return impl_->video->px_per_mm();
+}
 
 void RaylibBackend::set_presentation_anchor_top(bool anchor_top) {
-    impl_->anchor_top = anchor_top;
+    impl_->video->set_presentation_anchor_top(anchor_top);
 }
 
 void RaylibBackend::set_host_overlay(void (*overlay)(HostOverlay*)) {
     impl_->host_overlay = overlay;
 }
 
-void RaylibBackend::set_fps_readout(bool on) { impl_->fps_readout = on; }
-bool RaylibBackend::fps_readout_value() const { return impl_->fps_readout; }
+void RaylibBackend::set_fps_readout(bool on) {
+    impl_->video->set_fps_readout(on);
+}
+bool RaylibBackend::fps_readout_value() const {
+    return impl_->video->fps_readout();
+}
 
 void RaylibBackend::set_frame_interp(bool enabled) {
     impl_->frame_interp_enabled = enabled;
@@ -1291,31 +1852,18 @@ void RaylibBackend::set_audio_enabled(bool enabled) {
 bool RaylibBackend::audio_enabled() const { return impl_->audio_enabled; }
 
 void RaylibBackend::adjust_scale(int delta) {
-    // Clamp is the shared policy; the SDL backend does the same.
-    impl_->scale = std::clamp(impl_->scale + delta, 1, 8);
+    impl_->video->adjust_scale(delta);
 }
 
 int RaylibBackend::volume_percent() const { return impl_->volume; }
 
 void RaylibBackend::set_fullscreen(int mode) {
-    impl_->fullscreen = std::clamp(mode, 0, 2);
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (impl_->open && impl_->api->IsWindowReady()) {
-        // Mirror the SDL mapping: 0 windowed, 1 borderless desktop,
-        // 2 exclusive fullscreen. raylib has only FLAG_FULLSCREEN_MODE, so
-        // both non-zero modes land on the same state -- raylib has no
-        // exclusive-fullscreen equivalent. `fullscreen_mode()` still reports
-        // the requested value, so host behaviour is unchanged.
-        //
-        // Windowed CLEARS the flag; it must never hide the window. Hiding here
-        // is what made a default-configured launch invisible.
-        if (impl_->fullscreen == 0) impl_->api->ClearWindowState(FLAG_FULLSCREEN_MODE);
-        else impl_->api->SetWindowState(FLAG_FULLSCREEN_MODE);
-    }
-#endif
+    impl_->video->set_fullscreen(mode);
 }
 
-int RaylibBackend::fullscreen_mode() const { return impl_->fullscreen; }
+int RaylibBackend::fullscreen_mode() const {
+    return impl_->video->fullscreen();
+}
 
 void RaylibBackend::set_runtime_ui(::RecompRuntimeUi* ui) {
     impl_->runtime_ui = ui;
@@ -1567,59 +2115,11 @@ void RaylibBackend::haptic_pulse(int duration_ms, float strength) {
 
 // ── frame / geometry ─────────────────────────────────────────────────────
 bool RaylibBackend::set_surface_size(int base_w, int base_h) {
-    if (base_w < 1 || base_h < 1) return false;
-    if (base_w == impl_->base_w && base_h == impl_->base_h) return true;
-    impl_->base_w = base_w;
-    impl_->base_h = base_h;
-#if defined(GBARECOMP_USE_RAYLIB)
-    // The prescale factor depends on the surface size; drop the cached target
-    // so the next present recomputes it.
-    release_sharp_target(impl_.get());
-    // Recreate the streaming texture at the new size, mirroring
-    // destroy_sharp_texture()/recreate on the SDL side. surface_pixels must
-    // outlive Image::data, so re-point after reassigning.
-    if (impl_->open && impl_->api->IsWindowReady() && impl_->texture_ready) {
-        impl_->api->UnloadTexture(impl_->texture);
-        impl_->texture_ready = false;
-        impl_->surface_pixels.assign(
-            static_cast<std::size_t>(base_w) * base_h * 3u, 0);
-        impl_->surface = Image{};
-        impl_->surface.width = base_w;
-        impl_->surface.height = base_h;
-        impl_->surface.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8;
-        impl_->surface.mipmaps = 1;
-        impl_->surface.data = impl_->surface_pixels.data();
-        impl_->texture = impl_->api->LoadTextureFromImage(impl_->surface);
-        if (impl_->texture.id == 0) {
-            std::fprintf(stderr,
-                         "raylib_backend: set_surface_size texture %dx%d failed\n",
-                         base_w, base_h);
-            return false;
-        }
-        impl_->texture_ready = true;
-        impl_->api->SetTextureFilter(impl_->texture, impl_->linear_filter
-                                            ? TEXTURE_FILTER_BILINEAR
-                                            : TEXTURE_FILTER_POINT);
-    }
-#endif
-    // The graded framebuffer tracks the surface size, not the window size.
-    if (impl_->color_lut && !impl_->color_lut->is_passthrough())
-        impl_->graded_fb.assign(
-            static_cast<std::size_t>(base_w) * base_h * 3u, 0);
-    return true;
+    return impl_->video->set_surface_size(base_w, base_h);
 }
 
 bool RaylibBackend::drawable_size(int* width, int* height) const {
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !impl_->api->IsWindowReady()) return false;
-    if (width) *width = impl_->api->GetScreenWidth();
-    if (height) *height = impl_->api->GetScreenHeight();
-    return width && height && *width > 0 && *height > 0;
-#else
-    if (width) *width = 0;
-    if (height) *height = 0;
-    return false;
-#endif
+    return impl_->video->drawable_size(width, height);
 }
 
 // ── input: polling snapshot -> pure translation ─────────────────────────
@@ -2053,356 +2553,12 @@ bool RaylibBackend::wait_for_foreground() {
 }
 
 void RaylibBackend::present(const std::uint8_t* rgb888, bool fresh) {
-    (void)fresh;   // the SDL path only uses `fresh` to pick a blend variant
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!rgb888 || !impl_->open || !impl_->texture_ready) return;
-
-    // Present-time color grading (opt-in). Raw is passthrough: the raw frame
-    // is uploaded untouched, so verify/frame-hash are unaffected. Mirrors the
-    // SDL backend, including recording the GRADED bytes as presented.
-    if (impl_->color_lut && !impl_->color_lut->is_passthrough() &&
-        impl_->graded_fb.size() ==
-            static_cast<std::size_t>(impl_->base_w) * impl_->base_h * 3u) {
-        impl_->color_lut->map_rgb888(rgb888, impl_->graded_fb.data(),
-                                     impl_->base_w, impl_->base_h);
-        rgb888 = impl_->graded_fb.data();
-    }
-
-#if defined(GBARECOMP_HAVE_FRAME_BLEND)
-    // Presentation frame blending (issue #9 #1). Verbatim mirror of the SDL
-    // backend's block: RGB888 -> ARGB8888, blend in place, back to RGB888 for
-    // upload. Fresh frames blend (when on) and advance history; repeats blend
-    // against UNCHANGED history (interp holding presents). Everything off
-    // skips this block, so the upload below stays byte-identical to before —
-    // and, like SDL, the BLENDED bytes are what copy_presented_frame serves.
-    {
-        const bool do_blend =
-            impl_->frame_blend_enabled && impl_->frame_blend;
-        // Holding blends only while blending is on: with blending off, repeats
-        // upload raw (a stale-valid history from an earlier blend-on period
-        // must never smear into them).
-        const bool do_hold = !fresh && impl_->frame_blend_enabled &&
-                             impl_->frame_interp_enabled && impl_->frame_blend;
-        if ((do_blend || do_hold) && impl_->frame_blend) {
-            const std::size_t px =
-                static_cast<std::size_t>(impl_->base_w) * impl_->base_h;
-            if (impl_->blend_argb.size() != px * 4u ||
-                impl_->blend_rgb.size() != px * 3u) {
-                impl_->blend_argb.assign(px * 4u, 0);
-                impl_->blend_rgb.assign(px * 3u, 0);
-                recomp_frame_blend_reset(impl_->frame_blend);
-            }
-            const uint8_t* src = rgb888;
-            uint8_t* argb = impl_->blend_argb.data();
-            for (std::size_t i = 0; i < px; ++i) {
-                argb[i * 4u + 0u] = src[i * 3u + 2u];  // B
-                argb[i * 4u + 1u] = src[i * 3u + 1u];  // G
-                argb[i * 4u + 2u] = src[i * 3u + 0u];  // R
-                argb[i * 4u + 3u] = 0xFF;              // A (opaque; untouched)
-            }
-            if (do_hold)
-                recomp_frame_blend_apply_holding(
-                    impl_->frame_blend, argb, impl_->base_w, impl_->base_h,
-                    static_cast<size_t>(impl_->base_w) * 4u);
-            else
-                recomp_frame_blend_apply(impl_->frame_blend, argb,
-                                         impl_->base_w, impl_->base_h,
-                                         static_cast<size_t>(impl_->base_w) *
-                                             4u);
-            uint8_t* dst = impl_->blend_rgb.data();
-            for (std::size_t i = 0; i < px; ++i) {
-                dst[i * 3u + 0u] = argb[i * 4u + 2u];
-                dst[i * 3u + 1u] = argb[i * 4u + 1u];
-                dst[i * 3u + 2u] = argb[i * 4u + 0u];
-            }
-            rgb888 = dst;
-        }
-    }
-#endif
-
-    impl_->api->UpdateTexture(impl_->texture, rgb888);
-
-    // Remember the exact bytes handed to the GPU for the `presented` command.
-    {
-        std::lock_guard<std::mutex> lk(impl_->last_upload_mu);
-        impl_->last_upload.assign(
-            rgb888, rgb888 + static_cast<std::size_t>(impl_->base_w) *
-                                impl_->base_h * 3u);
-    }
-
-    const int dw = impl_->api->GetScreenWidth();
-    const int dh = impl_->api->GetScreenHeight();
-    // The fit policy is the portable one from presentation_layout.h, shared with
-    // the SDL backend -- no second aspect rule to drift.
-    const PresentationLayout layout =
-        compute_presentation_layout(dw, dh, impl_->base_w, impl_->base_h);
-    impl_->last_layout = layout;
-    impl_->last_drawable_w = dw;
-    impl_->last_drawable_h = dh;
-
-    impl_->api->BeginDrawing();
-    impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));  // matches the SDL clear color
-    if (layout.width > 0 && layout.height > 0) {
-        const Rectangle src{0.0f, 0.0f,
-                            static_cast<float>(impl_->base_w),
-                            static_cast<float>(impl_->base_h)};
-        const Rectangle dst{static_cast<float>(layout.x),
-                            static_cast<float>(layout.y),
-                            static_cast<float>(layout.width),
-                            static_cast<float>(layout.height)};
-        // Independent stages, evaluated separately so every knob works alone:
-        // sharp prescale, deband pass, dither pass, LCD pass. Dither is
-        // screen-space, so it runs at drawable resolution through a
-        // fullscreen post target — never inside the game/sharp targets.
-        // Deband samples game texels through the same geometry. The overlay
-        // below stays unshaded too (pad UI must remain legible).
-        const bool lcd = impl_->lcd_shader && impl_->lcd_shader_ready;
-        // Deband stands alone: active whenever threshold > 0, grid or not.
-        // Lazily compiled — config can enable it after open().
-        bool deband = impl_->lcd_deband > 0.0f;
-        if (deband) {
-            load_deband_shader(impl_.get());
-            deband = impl_->deband_ready;
-        }
-        // Dither stands alone: active whenever strength > 0, grid or not.
-        // Lazily compiled — config can enable it after open().
-        bool dither = impl_->lcd_dither > 0.0f;
-        if (dither) {
-            load_dither_shader(impl_.get());
-            dither = impl_->dither_ready;
-        }
-        // Sharp prescale: integer pre-upscale into a render target, then blit
-        // to the screen. Exact scales and factor<2 keep the crisp direct path
-        // (compute_sharp_prescale_factor returns 0 there).
-        // Resolve the stage to blit: the sharp target when engaged, else the
-        // game texture. Any prescale failure falls back to direct — a missing
-        // prescale must never drop a frame.
-        const Texture2D* stage_tex = &impl_->texture;
-        Rectangle stage_rect = src;
-        const int sharp_factor =
-            impl_->sharp_filter
-                ? compute_sharp_prescale_factor(layout, impl_->base_w,
-                                               impl_->base_h)
-                : 0;
-        if (sharp_factor >= 2 && ensure_sharp_target(impl_.get(), sharp_factor)) {
-            impl_->api->BeginTextureMode(impl_->sharp_target);
-            impl_->api->ClearBackground(BLANK);
-            impl_->api->DrawTexturePro(impl_->texture, src,
-                           {0.0f, 0.0f,
-                            static_cast<float>(impl_->sharp_w),
-                            static_cast<float>(impl_->sharp_h)},
-                           {0.0f, 0.0f}, 0.0f, WHITE);
-            impl_->api->EndTextureMode();
-            // RenderTexture storage is Y-flipped relative to the screen.
-            stage_tex = &impl_->sharp_target.texture;
-            stage_rect = Rectangle{
-                0.0f, 0.0f,
-                static_cast<float>(impl_->sharp_w),
-                -static_cast<float>(impl_->sharp_h)};
-        }
-        // Uniform upload goes inside the shader window: the program is
-        // current there, so the value lands on our program, not whatever
-        // was bound before.
-        auto upload_boost = [&] {
-            if (impl_->lcd_boost_loc >= 0)
-                impl_->api->SetShaderValue(impl_->lcd_shader_handle,
-                               impl_->lcd_boost_loc, &impl_->lcd_boost,
-                               SHADER_UNIFORM_FLOAT);
-        };
-        // A failed post target degrades gracefully: drop that pass, keep the
-        // rest, never drop the frame.
-        if (deband && !ensure_post_target(impl_.get(), 0, dw, dh)) deband = false;
-        if (dither && !ensure_post_target(impl_.get(), deband ? 1 : 0, dw, dh))
-            dither = false;
-        // First active pass reads the stage (sharp target or game texture);
-        // each pass feeds the next; the screen blit reads the last stage.
-        // No passes: direct blit, byte-identical to before any of this.
-        const Texture2D* pass_tex = stage_tex;
-        Rectangle pass_rect = stage_rect;
-        if (deband) {
-            impl_->api->BeginTextureMode(impl_->post_a_target);
-            impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));
-            impl_->api->BeginShaderMode(impl_->deband_handle);
-            if (impl_->deband_loc >= 0)
-                impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_loc,
-                               &impl_->lcd_deband, SHADER_UNIFORM_FLOAT);
-            if (impl_->deband_texel_loc >= 0) {
-                const float texel[2] = {
-                    1.0f / static_cast<float>(impl_->base_w),
-                    1.0f / static_cast<float>(impl_->base_h)};
-                impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_texel_loc,
-                               texel, SHADER_UNIFORM_VEC2);
-            }
-            impl_->api->DrawTexturePro(*pass_tex, pass_rect, dst, {0.0f, 0.0f}, 0.0f,
-                           WHITE);
-            impl_->api->EndShaderMode();
-            impl_->api->EndTextureMode();
-            pass_tex = &impl_->post_a_target.texture;
-            pass_rect = Rectangle{0.0f, 0.0f, static_cast<float>(dw),
-                                  -static_cast<float>(dh)};
-        }
-        if (dither) {
-            const bool second = deband;
-            impl_->api->BeginTextureMode(second ? impl_->post_b_target
-                                   : impl_->post_a_target);
-            impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));
-            impl_->api->BeginShaderMode(impl_->dither_handle);
-            if (impl_->dither_loc >= 0)
-                impl_->api->SetShaderValue(impl_->dither_handle, impl_->dither_loc,
-                               &impl_->lcd_dither, SHADER_UNIFORM_FLOAT);
-            // NOTE: pass_rect is already fullscreen when chaining (a previous
-            // pass wrote the whole target), so dst would double-letterbox.
-            // Both passes render the layout rect into a fullscreen target, so
-            // every stage after the first is fullscreen-to-fullscreen.
-            const Rectangle chain_dst =
-                second ? Rectangle{0.0f, 0.0f, static_cast<float>(dw),
-                                   static_cast<float>(dh)}
-                       : dst;
-            impl_->api->DrawTexturePro(*pass_tex, pass_rect, chain_dst, {0.0f, 0.0f},
-                           0.0f, WHITE);
-            impl_->api->EndShaderMode();
-            impl_->api->EndTextureMode();
-            pass_tex = second ? &impl_->post_b_target.texture
-                              : &impl_->post_a_target.texture;
-            pass_rect = Rectangle{0.0f, 0.0f, static_cast<float>(dw),
-                                  -static_cast<float>(dh)};
-        }
-        {
-            const Rectangle screen{0.0f, 0.0f, static_cast<float>(dw),
-                                   static_cast<float>(dh)};
-            // After any target pass the stage is fullscreen; direct blits
-            // keep the layout rect.
-            const Rectangle final_dst =
-                (deband || dither) ? screen : dst;
-            if (lcd) {
-                impl_->api->BeginShaderMode(impl_->lcd_shader_handle);
-                upload_boost();
-                impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
-                               0.0f, WHITE);
-                impl_->api->EndShaderMode();
-            } else {
-                impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
-                               0.0f, WHITE);
-            }
-        }
-    }
-
-    // Host chrome: spin-off overlay hook, on-screen pad + toggle. Same
-    // gating as the SDL backend's render_host_layers (minus the settings
-    // menu, which needs runtime-UI plumbing this backend doesn't have yet).
-    // Drawn in drawable pixels inside the same Begin/EndDrawing, so no
-    // viewport juggling is needed.
-    {
-        const bool overlay_shown = pad_overlay_shown(
-            impl_->pad_visible, impl_->touch_controls, impl_->pad_idle_hidden);
-        const bool toggle_shown = pad_toggle_shown(
-            impl_->touch_policy, impl_->touch_controls, impl_->touch_emulation,
-            impl_->pad_idle_hidden);
-        const bool touch_on_this_frame = touch_input_enabled(
-            impl_->touch_controls, impl_->touch_policy, impl_->touch_emulation);
-        if (impl_->host_overlay || overlay_shown || toggle_shown ||
-            touch_on_this_frame) {
-            RaylibOverlay ov(impl_->api, dw, dh, impl_->last_layout,
-                             impl_->base_w, impl_->base_h, impl_->px_per_mm,
-                             impl_->safe_left, impl_->safe_top,
-                             impl_->safe_right, impl_->safe_bottom,
-                             touch_clock_ms());
-            if (impl_->host_overlay) impl_->host_overlay(&ov);
-            if (overlay_shown || toggle_shown) {
-                const PadLayout pad = compute_pad_layout(
-                    pad_layout_inputs(impl_.get(), dw, dh));
-                std::uint16_t held = 0;
-                bool toggle_held = false;
-                bool ff_held = false;
-                for (const auto& [id, track] : impl_->touches) {
-                    if (!track.active) continue;
-                    if (track.pad) held |= track.buttons;
-                    if (track.toggle) toggle_held = true;
-                    if (track.ff) ff_held = true;
-                }
-                if (overlay_shown)
-                    draw_touch_pad(ov, pad, held, impl_->px_per_mm, ff_held);
-                if (toggle_shown)
-                    draw_pad_toggle(ov, pad, toggle_held, impl_->pad_visible);
-            }
-            // Engine long-press ring: skipped. It needs the settings-menu
-            // plumbing (open_runtime_menu_from_touch), which this backend does
-            // not have yet -- same as the SDL backend without RUNTIME_UI,
-            // whose draw_engine_long_press returns early.
-        }
-    }
-    impl_->api->EndDrawing();
-
-#if defined(__ANDROID__)
-    // Present-rate log: presents/sec per ~10 s window (see Impl fields).
-    ++impl_->rate_presents;
-    {
-        const double now_s = impl_->clock->seconds();
-        if (impl_->rate_window_start_s == 0.0)
-            impl_->rate_window_start_s = now_s;
-        const double span_s = now_s - impl_->rate_window_start_s;
-        if (span_s >= 10.0) {
-            unsigned long long iters = 0, cycles = 0, ops = 0;
-            gbarecomp_idle_skip_stats(&iters, &cycles, &ops);
-            std::fprintf(stderr,
-                         "raylib_backend: presents=%u rate=%.1f/s "
-                         "idle-skipped=%llu iters (%llu cyc, %llu ops)\n",
-                         impl_->rate_presents,
-                         impl_->rate_presents / span_s,
-                         iters - impl_->rate_idle_iters,
-                         cycles - impl_->rate_idle_cycles, ops);
-            impl_->rate_idle_iters = iters;
-            impl_->rate_idle_cycles = cycles;
-            impl_->rate_window_start_s = now_s;
-            impl_->rate_presents = 0;
-        }
-    }
-#endif
-
-    // FPS readout (DisplayPerf hotkey): presents/sec, refreshed twice a
-    // second in the title bar; the base title is restored when toggled off.
-    // Same policy as the SDL backend, with the Clock (raylib GetTime) standing
-    // in for SDL_GetTicks().
-    if (impl_->fps_readout) {
-        ++impl_->fps_presents;
-        const double now_s = impl_->clock->seconds();
-        if (impl_->fps_window_start_s == 0.0) impl_->fps_window_start_s = now_s;
-        const double span_s = now_s - impl_->fps_window_start_s;
-        if (span_s >= 0.5) {
-            char buf[192];
-            std::snprintf(buf, sizeof(buf), "%s — %.1f fps",
-                          impl_->title.c_str(),
-                          impl_->fps_presents / span_s);
-            impl_->api->SetWindowTitle(buf);
-            impl_->fps_window_start_s = now_s;
-            impl_->fps_presents = 0;
-        }
-    }
-
-    // Post-processing passes beyond the LCD grid belong here too (the spin-off
-    // hook: a game draws custom shapes through set_host_overlay, full-screen
-    // shader work lands on the blit above).
-#else
-    (void)rgb888;
-#endif
+    impl_->video->present(rgb888, fresh);
 }
 
 bool RaylibBackend::copy_presented_frame(std::vector<std::uint8_t>& out,
                                          int& w, int& h) const {
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open) return false;
-    std::lock_guard<std::mutex> lk(impl_->last_upload_mu);
-    if (impl_->last_upload.size() !=
-        static_cast<std::size_t>(impl_->base_w) * impl_->base_h * 3u)
-        return false;
-    out = impl_->last_upload;
-    w = impl_->base_w;
-    h = impl_->base_h;
-    return true;
-#else
-    (void)out; (void)w; (void)h;
-    return false;
-#endif
+    return impl_->video->readback(out, w, h);
 }
 
 void RaylibBackend::push_audio_samples(const std::int16_t* samples,
@@ -2427,63 +2583,7 @@ void RaylibBackend::push_audio_samples(const std::int16_t* samples,
 
 void RaylibBackend::interp_display_tick(const std::uint8_t* rgb888,
                                         std::uint64_t deadline_ns) {
-#if defined(GBARECOMP_USE_RAYLIB)
-    // Display-paced interpolation: subdivide the guest wait at display rate.
-    // Policy (when to hold, how to sleep, how boundaries advance) is the
-    // shared interp_pacing.h; this only supplies the clock, the sleep and the
-    // present. Mirrors the SDL backend's interp_display_tick.
-    if (!rgb888 || !impl_->frame_interp_enabled) return;
-    if (!impl_->open || !impl_->api->IsWindowReady()) return;
-    Impl* impl = impl_.get();
-    if ((++impl->interp_mode_counter % 600u) == 0u)
-        refresh_interp_mode(impl);
-    const std::uint64_t now_ns = raylib_steady_now_ns();
-    if (impl->interp_tick_ns == 0 ||
-        now_ns >= impl->interp_tick_ns + impl->interp_period_ns * 2u)
-        impl->interp_tick_ns = now_ns;  // (re)anchor when unset or far adrift
-    // A vsync-blocked present lands one full display period from now; if that
-    // is past the guest deadline, presenting would hand the guest an extra
-    // display period. Hold the last frame and sleep out the remainder instead.
-    if (interp_should_hold_for_deadline(impl->interp_vsync,
-                                        impl->interp_period_ns, now_ns,
-                                        deadline_ns)) {
-        raylib_sleep_until_ns(
-            interp_clamp_wake_ns(deadline_ns, now_ns, deadline_ns));
-        return;
-    }
-    const InterpSleep sleep_kind =
-        interp_sleep_kind(impl->interp_vsync, impl->interp_period_ns,
-                          impl->interp_tick_ns, now_ns, deadline_ns);
-    if (sleep_kind == InterpSleep::kFixed) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    } else if (sleep_kind == InterpSleep::kBoundary) {
-        raylib_sleep_until_ns(interp_clamp_wake_ns(impl->interp_tick_ns, now_ns,
-                                                   deadline_ns));
-    }
-    present(rgb888, false);
-    const std::uint64_t after_ns = raylib_steady_now_ns();
-    impl->interp_tick_ns = interp_advance_tick_ns(impl->interp_vsync,
-                                                  impl->interp_period_ns,
-                                                  impl->interp_tick_ns,
-                                                  after_ns);
-    // Presents/sec report (~600-tick windows): the only remote proof the tick
-    // loop is actually subdividing waits at display rate.
-    if (++impl->interp_tick_count == 1u)
-        impl->interp_rate_window_ns = after_ns;
-    else if (impl->interp_tick_count >= 600u) {
-        const std::uint64_t span_ns = after_ns - impl->interp_rate_window_ns;
-        if (span_ns > 0u) {
-            std::fprintf(stderr,
-                         "raylib_backend: interp ticks=%u rate=%.1f/s\n",
-                         impl->interp_tick_count,
-                         static_cast<double>(impl->interp_tick_count) * 1e9 /
-                             static_cast<double>(span_ns));
-        }
-        impl->interp_tick_count = 0;
-    }
-#else
-    (void)rgb888; (void)deadline_ns;
-#endif
+    impl_->video->interp_display_tick(rgb888, deadline_ns);
 }
 
 }  // namespace gbarecomp

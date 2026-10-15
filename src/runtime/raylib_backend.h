@@ -60,6 +60,12 @@ public:
     void close() override;
     bool is_open() const override;
 
+    // ---- V2 concern accessors (Phase 2) ----------------------------------
+    // Land concern by concern; each becomes the WindowBackendV2 override when
+    // the facade arrives at the end of Phase 2. The implementation lives in
+    // Impl (VideoImpl in raylib_backend.cpp); the flat methods forward to it.
+    Video& video();
+
     // ---- window state (implemented: pure state) --------------------------
     void set_title(const char* title) override;
     bool assist_tools_enabled() const override;
@@ -155,6 +161,9 @@ public:
 
 private:
     struct Impl;
+    // V2 concern implementations (defined in raylib_backend.cpp; nested so
+    // they can reach the private static helpers below).
+    class VideoImpl;
     std::unique_ptr<Impl> impl_;
 
     // raylib's AudioCallback carries no userdata (open upstream limitation:

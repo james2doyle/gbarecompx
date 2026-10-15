@@ -1063,6 +1063,14 @@ target_include_directories(raylib_backend_tests PRIVATE src/runtime)
 target_link_libraries(raylib_backend_tests PRIVATE gbarecomp_raylib_backend)
 add_test(NAME raylib_backend_tests COMMAND raylib_backend_tests)
 
+# Phase 2 — V2 concern contract through the raylib backend's accessors
+# (Video step; Audio/Input/Fx/Overlay follow). Display-free: passes in both
+# configs, no window required.
+add_executable(raylib_backend_v2_tests tests/runtime/raylib_backend_v2_test.cpp)
+target_include_directories(raylib_backend_v2_tests PRIVATE src/runtime)
+target_link_libraries(raylib_backend_v2_tests PRIVATE gbarecomp_raylib_backend)
+add_test(NAME raylib_backend_v2_tests COMMAND raylib_backend_v2_tests)
+
 # NOTE: the backend-selection and closed-window HostWindow tests deliberately
 # live in the APP build (root CMakeLists: ffta_backend_select_tests,
 # ffta_host_window_tests), not here: this standalone framework configuration
