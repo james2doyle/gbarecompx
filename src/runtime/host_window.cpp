@@ -3249,6 +3249,8 @@ std::atomic<bool> g_settings_menu_requested{false};
 
 HostWindow::HostWindow() = default;
 
+HostWindow::HostWindow(BackendFactory factory) : factory_(factory) {}
+
 HostWindow::~HostWindow() {
     close();
 }
@@ -3260,13 +3262,39 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
                       bool resize_driven_view,
                       bool freely_resizable_window) {
     if (open_) return true;
-    WindowBackend* b = host_make_backend();
-    if (!b->open(scale, base_w, base_h, title, screen, linear_filter,
-                 sharp_filter, resize_driven_view, freely_resizable_window)) {
+    WindowBackend* b = factory_ ? factory_() : host_make_backend();
+    if (!b) return false;
+    // V2-capable backends open through the facade's single entry point (the
+    // flat 9-arg overload is the SDL generation's, deleted in 4b). The flat
+    // arguments map 1:1; mode stays Windowed because the flat contract never
+    // carried one (callers apply fullscreen afterwards).
+    WindowBackendV2* v2 = dynamic_cast<WindowBackendV2*>(b);
+    if (v2) {
+        OpenParams p;
+        p.scale = scale;
+        p.base_w = base_w;
+        p.base_h = base_h;
+        p.title = title;
+        p.display = screen;
+        p.linear_filter = linear_filter;
+        p.sharp_filter = sharp_filter;
+        p.resizable = freely_resizable_window;
+        p.resize_driven_view = resize_driven_view;
+        const Result r = v2->open(p);
+        if (!r.ok()) {
+            std::fprintf(stderr, "host_window: backend open failed (%s)\n",
+                         r.detail ? r.detail : "no detail");
+            delete b;
+            return false;
+        }
+    } else if (!b->open(scale, base_w, base_h, title, screen, linear_filter,
+                        sharp_filter, resize_driven_view,
+                        freely_resizable_window)) {
         delete b;
         return false;
     }
     impl_ = b;
+    v2_ = v2;
     open_ = true;
     g_haptic_window = this;
     return true;
@@ -3276,6 +3304,7 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
 
 void HostWindow::push_audio_samples(const int16_t* samples, std::size_t count) {
     if (!open_ || !impl_ || !samples || count == 0) return;
+    if (v2_) { v2_->audio().push(samples, count); return; }
     static_cast<WindowBackend*>(impl_)->push_audio_samples(samples, count);
 }
 
@@ -3283,21 +3312,25 @@ void HostWindow::push_audio_samples(const int16_t* samples, std::size_t count) {
 
 void HostWindow::set_title(const char* title) {
     if (!open_ || !impl_ || !title) return;
+    if (v2_) { v2_->video().set_title(title); return; }
     static_cast<WindowBackend*>(impl_)->set_title(title);
 }
 
 
 
 void HostWindow::close() {
-    if (!impl_) { open_ = false; return; }
+    if (!impl_) { open_ = false; v2_ = nullptr; return; }
     // Drop the engine-wide haptic hook FIRST so nothing can reach a backend that
     // is mid-teardown. (Previously this ran inside Backend::close(), partway
     // through, via an SDL-only `owner` pointer.)
     if (g_haptic_window == this) g_haptic_window = nullptr;
-    WindowBackend* b = static_cast<WindowBackend*>(impl_);
-    b->close();
-    delete b;
+    // Prefer the facade's close; a flat-only backend keeps its own. Backends
+    // that implement both get one final overrider, so this branch matters only
+    // for flat-only ones (the SDL generation, until 4b).
+    if (v2_) v2_->close(); else impl_->close();
+    delete static_cast<WindowBackend*>(impl_);
     impl_ = nullptr;
+    v2_ = nullptr;
     open_ = false;
 }
 
@@ -3305,6 +3338,7 @@ void HostWindow::close() {
 
 bool HostWindow::set_surface_size(int base_w, int base_h) {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->video().set_surface_size(base_w, base_h);
     return static_cast<WindowBackend*>(impl_)->set_surface_size(base_w, base_h);
 }
 
@@ -3312,6 +3346,7 @@ bool HostWindow::set_surface_size(int base_w, int base_h) {
 
 bool HostWindow::drawable_size(int* width, int* height) const {
     if (!open_ || !impl_ || !width || !height) return false;
+    if (v2_) return v2_->video().drawable_size(width, height);
     return static_cast<const WindowBackend*>(impl_)->drawable_size(width, height);
 }
 
@@ -3319,6 +3354,7 @@ bool HostWindow::drawable_size(int* width, int* height) const {
 
 void HostWindow::present(const uint8_t* rgb888, bool fresh) {
     if (!open_ || !impl_ || !rgb888) return;
+    if (v2_) { v2_->video().present(rgb888, fresh); return; }
     static_cast<WindowBackend*>(impl_)->present(rgb888, fresh);
 }
 
@@ -3328,6 +3364,14 @@ void HostWindow::load_input_config(const char* dir,
                                    bool assist_tools_default,
                                    int fast_forward_multiplier_default) {
     if (!open_ || !impl_ || !dir) return;
+    if (v2_) {
+        // The seam's two config entries: Input owns keybinds/hotkeys, Fx owns
+        // the [video] LCD block (the flat forwarder does the same pair).
+        v2_->input().load_config(dir, assist_tools_default,
+                                 fast_forward_multiplier_default);
+        v2_->fx().load_config(dir);
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->load_input_config(
         dir, assist_tools_default, fast_forward_multiplier_default);
 }
@@ -3336,16 +3380,19 @@ void HostWindow::load_input_config(const char* dir,
 
 bool HostWindow::assist_tools_enabled() const {
     if (!open_ || !impl_) return true;
+    if (v2_) return v2_->input().assist_tools_enabled();
     return static_cast<const WindowBackend*>(impl_)->assist_tools_enabled();
 }
 
 int HostWindow::fast_forward_multiplier() const {
     if (!open_ || !impl_) return 4;
+    if (v2_) return v2_->input().fast_forward_multiplier();
     return static_cast<const WindowBackend*>(impl_)->fast_forward_multiplier();
 }
 
 void HostWindow::set_fullscreen(int mode) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->video().set_fullscreen(mode); return; }
     static_cast<WindowBackend*>(impl_)->set_fullscreen(mode);
 }
 
@@ -3353,6 +3400,7 @@ void HostWindow::set_fullscreen(int mode) {
 
 int HostWindow::fullscreen() const {
     if (!open_ || !impl_) return 0;
+    if (v2_) return v2_->video().fullscreen();
     return static_cast<const WindowBackend*>(impl_)->fullscreen_mode();
 }
 
@@ -3360,6 +3408,7 @@ int HostWindow::fullscreen() const {
 
 void HostWindow::adjust_scale(int delta) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->video().adjust_scale(delta); return; }
     static_cast<WindowBackend*>(impl_)->adjust_scale(delta);
 }
 
@@ -3367,6 +3416,7 @@ void HostWindow::adjust_scale(int delta) {
 
 void HostWindow::set_volume(int pct) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->audio().set_volume(pct); return; }
     static_cast<WindowBackend*>(impl_)->set_volume(pct);
 }
 
@@ -3374,6 +3424,7 @@ void HostWindow::set_volume(int pct) {
 
 int HostWindow::volume() const {
     if (!open_ || !impl_) return 100;
+    if (v2_) return v2_->audio().volume();
     return static_cast<const WindowBackend*>(impl_)->volume_percent();
 }
 
@@ -3381,6 +3432,7 @@ int HostWindow::volume() const {
 
 int HostWindow::window_scale() const {
     if (!open_ || !impl_) return 1;
+    if (v2_) return v2_->video().scale();
     return static_cast<const WindowBackend*>(impl_)->window_scale();
 }
 
@@ -3388,6 +3440,7 @@ int HostWindow::window_scale() const {
 
 void HostWindow::set_linear_filter(bool enabled) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->video().set_linear_filter(enabled); return; }
     static_cast<WindowBackend*>(impl_)->set_linear_filter(enabled);
 }
 
@@ -3395,6 +3448,7 @@ void HostWindow::set_linear_filter(bool enabled) {
 
 bool HostWindow::linear_filter() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->video().linear_filter();
     return static_cast<const WindowBackend*>(impl_)->linear_filter_enabled();
 }
 
@@ -3402,6 +3456,15 @@ bool HostWindow::linear_filter() const {
 
 void HostWindow::set_frame_interp(bool enabled) {
     if (!open_ || !impl_) return;
+    if (v2_) {
+        FxSettings s = v2_->fx().settings();
+        s.frame_interp = enabled;
+        v2_->fx().apply(s);
+        // The flat setter's blend-history reset was unconditional; apply()
+        // fires it only on a real toggle, so keep it here (flat parity).
+        v2_->fx().reset_frame_blend();
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->set_frame_interp(enabled);
 }
 
@@ -3409,6 +3472,7 @@ void HostWindow::set_frame_interp(bool enabled) {
 
 bool HostWindow::frame_interp() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->fx().settings().frame_interp;
     return static_cast<const WindowBackend*>(impl_)->frame_interp();
 }
 
@@ -3418,6 +3482,7 @@ void HostWindow::interp_display_tick(const uint8_t* rgb888,
                                      uint64_t deadline_ns) {
 #if defined(GBARECOMP_RUNTIME_UI)
     if (!open_ || !impl_ || !rgb888) return;
+    if (v2_) { v2_->video().interp_display_tick(rgb888, deadline_ns); return; }
     static_cast<WindowBackend*>(impl_)->interp_display_tick(rgb888, deadline_ns);
 #else
     (void)rgb888;
@@ -3429,6 +3494,13 @@ void HostWindow::interp_display_tick(const uint8_t* rgb888,
 
 void HostWindow::set_frame_blend(bool enabled) {
     if (!open_ || !impl_) return;
+    if (v2_) {
+        FxSettings s = v2_->fx().settings();
+        s.frame_blend = enabled ? 1.0f : 0.0f;
+        v2_->fx().apply(s);
+        v2_->fx().reset_frame_blend();  // same unconditional reset as flat
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->set_frame_blend(enabled);
 }
 
@@ -3436,6 +3508,7 @@ void HostWindow::set_frame_blend(bool enabled) {
 
 bool HostWindow::frame_blend() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->fx().settings().frame_blend != 0.0f;
     return static_cast<const WindowBackend*>(impl_)->frame_blend_value();
 }
 
@@ -3443,6 +3516,7 @@ bool HostWindow::frame_blend() const {
 
 void HostWindow::reset_frame_blend() {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->fx().reset_frame_blend(); return; }
     static_cast<WindowBackend*>(impl_)->reset_frame_blend();
 }
 
@@ -3450,6 +3524,12 @@ void HostWindow::reset_frame_blend() {
 
 void HostWindow::set_lcd_shader(bool enabled) {
     if (!open_ || !impl_) return;
+    if (v2_) {
+        FxSettings s = v2_->fx().settings();
+        s.lcd = enabled;
+        v2_->fx().apply(s);
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->set_lcd_shader(enabled);
 }
 
@@ -3457,6 +3537,7 @@ void HostWindow::set_lcd_shader(bool enabled) {
 
 bool HostWindow::lcd_shader() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->fx().settings().lcd;
     return static_cast<const WindowBackend*>(impl_)->lcd_shader_enabled();
 }
 
@@ -3464,6 +3545,12 @@ bool HostWindow::lcd_shader() const {
 
 void HostWindow::set_lcd_boost(float boost) {
     if (!open_ || !impl_) return;
+    if (v2_) {
+        FxSettings s = v2_->fx().settings();
+        s.lcd_boost = boost;
+        v2_->fx().apply(s);
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->set_lcd_boost(boost);
 }
 
@@ -3471,6 +3558,7 @@ void HostWindow::set_lcd_boost(float boost) {
 
 float HostWindow::lcd_boost() const {
     if (!open_ || !impl_) return 1.0f;
+    if (v2_) return v2_->fx().settings().lcd_boost;
     return static_cast<const WindowBackend*>(impl_)->lcd_boost_value();
 }
 
@@ -3478,6 +3566,12 @@ float HostWindow::lcd_boost() const {
 
 void HostWindow::set_lcd_dither(float dither) {
     if (!open_ || !impl_) return;
+    if (v2_) {
+        FxSettings s = v2_->fx().settings();
+        s.lcd_dither = dither;
+        v2_->fx().apply(s);
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->set_lcd_dither(dither);
 }
 
@@ -3485,6 +3579,7 @@ void HostWindow::set_lcd_dither(float dither) {
 
 float HostWindow::lcd_dither() const {
     if (!open_ || !impl_) return 1.0f;
+    if (v2_) return v2_->fx().settings().lcd_dither;
     return static_cast<const WindowBackend*>(impl_)->lcd_dither_value();
 }
 
@@ -3492,6 +3587,12 @@ float HostWindow::lcd_dither() const {
 
 void HostWindow::set_lcd_deband(float deband) {
     if (!open_ || !impl_) return;
+    if (v2_) {
+        FxSettings s = v2_->fx().settings();
+        s.lcd_deband = deband;
+        v2_->fx().apply(s);
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->set_lcd_deband(deband);
 }
 
@@ -3499,6 +3600,7 @@ void HostWindow::set_lcd_deband(float deband) {
 
 float HostWindow::lcd_deband() const {
     if (!open_ || !impl_) return 0.0f;
+    if (v2_) return v2_->fx().settings().lcd_deband;
     return static_cast<const WindowBackend*>(impl_)->lcd_deband_value();
 }
 
@@ -3506,6 +3608,7 @@ float HostWindow::lcd_deband() const {
 
 bool HostWindow::copy_presented_frame(std::vector<uint8_t>& out, int& w, int& h) const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->video().readback(out, w, h);
     return static_cast<const WindowBackend*>(impl_)->copy_presented_frame(out, w, h);
 }
 
@@ -3513,6 +3616,7 @@ bool HostWindow::copy_presented_frame(std::vector<uint8_t>& out, int& w, int& h)
 
 void HostWindow::set_audio_enabled(bool enabled) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->audio().set_enabled(enabled); return; }
     static_cast<WindowBackend*>(impl_)->set_audio_enabled(enabled);
 }
 
@@ -3520,6 +3624,7 @@ void HostWindow::set_audio_enabled(bool enabled) {
 
 bool HostWindow::audio_enabled() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->audio().enabled();
     return static_cast<const WindowBackend*>(impl_)->audio_enabled();
 }
 
@@ -3527,6 +3632,7 @@ bool HostWindow::audio_enabled() const {
 
 void HostWindow::set_resize_driven_view(bool enabled) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->video().set_resize_driven_view(enabled); return; }
     static_cast<WindowBackend*>(impl_)->set_resize_driven_view(enabled);
 }
 
@@ -3535,6 +3641,7 @@ void HostWindow::set_resize_driven_view(bool enabled) {
 #if defined(GBARECOMP_RUNTIME_UI)
 void HostWindow::set_runtime_ui(RecompRuntimeUi* ui) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->set_runtime_ui(ui); return; }
     static_cast<WindowBackend*>(impl_)->set_runtime_ui(ui);
 }
 
@@ -3544,6 +3651,16 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
                                  int pad_default, bool emulate_touch,
                                  int pad_idle_hide_seconds) {
     if (!open_ || !impl_ ) return;
+    if (v2_) {
+        TouchConfig cfg;
+        cfg.policy = policy;
+        cfg.claims = claims;
+        cfg.pad_default = pad_default;
+        cfg.emulate_touch = emulate_touch;
+        cfg.pad_idle_hide_seconds = pad_idle_hide_seconds;
+        v2_->overlay().configure_touch(cfg);
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->configure_touch(policy, claims, pad_default,
                                                  emulate_touch, pad_idle_hide_seconds);
 }
@@ -3552,6 +3669,7 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
 
 void HostWindow::set_touch_config_dir(const char* dir) {
     if (!open_ || !impl_ || !dir) return;
+    if (v2_) { v2_->overlay().set_config_dir(dir); return; }
     static_cast<WindowBackend*>(impl_)->set_touch_config_dir(dir);
 }
 
@@ -3559,6 +3677,7 @@ void HostWindow::set_touch_config_dir(const char* dir) {
 
 bool HostWindow::touch_pad_visible() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->overlay().touch_pad_visible();
     return static_cast<const WindowBackend*>(impl_)->touch_pad_visible_value();
 }
 
@@ -3566,6 +3685,7 @@ bool HostWindow::touch_pad_visible() const {
 
 void HostWindow::set_touch_pad_visible(bool visible) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->overlay().set_touch_pad_visible(visible); return; }
     static_cast<WindowBackend*>(impl_)->set_touch_pad_visible(visible);
 }
 
@@ -3574,6 +3694,7 @@ void HostWindow::set_touch_pad_visible(bool visible) {
 void HostWindow::set_view_margins(std::uint32_t left, std::uint32_t right,
                                   std::uint32_t top, std::uint32_t bottom) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->video().set_view_margins(left, right, top, bottom); return; }
     static_cast<WindowBackend*>(impl_)->set_view_margins(left, right, top, bottom);
 }
 
@@ -3581,6 +3702,7 @@ void HostWindow::set_view_margins(std::uint32_t left, std::uint32_t right,
 
 float HostWindow::px_per_mm() const {
     if (!open_ || !impl_) return 96.0f / 25.4f;
+    if (v2_) return v2_->video().px_per_mm();
     return static_cast<const WindowBackend*>(impl_)->px_per_mm_value();
 }
 
@@ -3588,6 +3710,7 @@ float HostWindow::px_per_mm() const {
 
 void HostWindow::set_presentation_anchor_top(bool anchor_top) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->video().set_presentation_anchor_top(anchor_top); return; }
     static_cast<WindowBackend*>(impl_)->set_presentation_anchor_top(anchor_top);
 }
 
@@ -3595,6 +3718,7 @@ void HostWindow::set_presentation_anchor_top(bool anchor_top) {
 
 bool HostWindow::wait_for_foreground() {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->wait_for_foreground();
     return static_cast<WindowBackend*>(impl_)->wait_for_foreground();
 }
 
@@ -3602,6 +3726,7 @@ bool HostWindow::wait_for_foreground() {
 
 void HostWindow::haptic_pulse(int duration_ms, float strength) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->input().haptic_pulse(duration_ms, strength); return; }
     static_cast<WindowBackend*>(impl_)->haptic_pulse(duration_ms, strength);
 }
 
@@ -3613,12 +3738,17 @@ void host_haptic_pulse(int duration_ms, float strength) {
 
 bool HostWindow::gamepad_supports_rumble() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->caps().rumble;  // capability is data in V2
     return static_cast<const WindowBackend*>(impl_)->gamepad_supports_rumble();
 }
 
 void HostWindow::gamepad_rumble(float low_frequency, float high_frequency,
                                 std::uint32_t duration_ms) {
     if (!open_ || !impl_) return;
+    if (v2_) {
+        v2_->input().rumble(low_frequency, high_frequency, duration_ms);
+        return;
+    }
     static_cast<WindowBackend*>(impl_)->gamepad_rumble(low_frequency, high_frequency,
                                                 duration_ms);
 }
@@ -3636,11 +3766,13 @@ void host_request_settings_menu() {
 
 void HostWindow::set_fps_readout(bool on) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->video().set_fps_readout(on); return; }
     static_cast<WindowBackend*>(impl_)->set_fps_readout(on);
 }
 
 bool HostWindow::fps_readout() const {
     if (!open_ || !impl_) return false;
+    if (v2_) return v2_->video().fps_readout();
     return static_cast<const WindowBackend*>(impl_)->fps_readout_value();
 }
 
@@ -3648,28 +3780,30 @@ bool HostWindow::fps_readout() const {
 
 void HostWindow::set_host_overlay(void (*overlay)(HostOverlay*)) {
     if (!open_ || !impl_) return;
+    if (v2_) { v2_->overlay().set_host_overlay(overlay); return; }
     static_cast<WindowBackend*>(impl_)->set_host_overlay(overlay);
 }
 
 void HostWindow::service_events() {
     if (!open_ || !impl_) return;
+    // V2 backends poll input directly in pump() (raylib services its own event
+    // queue in EndDrawing); nothing to pre-pump. The SDL-direct call below is
+    // the flat generation's (deleted in 4b).
+    if (v2_) return;
 #if defined(GBARECOMP_HAVE_SDL2)
     SDL_PumpEvents();
-#else
-    // Raylib backends poll input directly in pump() (raylib services its own
-    // event queue in EndDrawing); nothing to pre-pump. This is the one
-    // HostWindow method that stays SDL-direct instead of joining the seam.
 #endif
 }
 
 HostWindow::Events HostWindow::pump() {
     Events ev{};
     if (!open_ || !impl_) { ev.quit = true; return ev; }
+    if (v2_) return v2_->pump();
     return static_cast<WindowBackend*>(impl_)->pump();
 }
 
 WindowBackendV2* HostWindow::backend_v2() const {
-    return dynamic_cast<WindowBackendV2*>(impl_);
+    return v2_;
 }
 
 
@@ -3682,6 +3816,7 @@ WindowBackendV2* HostWindow::backend_v2() const {
 namespace gbarecomp {
 
 HostWindow::HostWindow()  = default;
+HostWindow::HostWindow(BackendFactory factory) : factory_(factory) {}
 HostWindow::~HostWindow() = default;
 
 bool HostWindow::is_available() { return false; }

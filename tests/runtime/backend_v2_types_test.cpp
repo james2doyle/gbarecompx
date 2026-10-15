@@ -139,6 +139,7 @@ struct NoopFx final : Fx {
     FxSettings settings() const override { return stored; }
     void apply(const FxSettings& s) override { stored = s; }
     void reset_frame_blend() override {}
+    void load_config(const char*) override {}
 };
 
 struct NoopOverlay final : Overlay {

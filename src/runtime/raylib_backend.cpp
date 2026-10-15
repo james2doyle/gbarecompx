@@ -2046,31 +2046,6 @@ private:
 // landed). A set GBARECOMP_LCD_SHADER env var wins (recorded at open);
 // without an explicit env choice the file decides, so the setting survives
 // restarts. The LCD transition goes through the Fx concern's apply().
-void RaylibBackend::load_video_config(RaylibBackend::Impl* impl, const char* dir) {
-    if (!dir || impl->lcd_env_override) return;
-    const std::string base = std::string(dir) + "/";
-    bool lcd = impl->lcd_shader;
-    float boost = impl->lcd_boost;
-    float dither = impl->lcd_dither;
-    float deband = impl->lcd_deband;
-    ini_scan_section((base + "config.ini").c_str(), "video",
-                     [&lcd, &boost, &dither, &deband](const char* key,
-                                                      const char* val) {
-        apply_lcd_shader_line(key, val, &lcd);
-        apply_lcd_boost_line(key, val, &boost);
-        apply_lcd_dither_line(key, val, &dither);
-        apply_lcd_deband_line(key, val, &deband);
-    });
-    impl->lcd_boost = boost;
-    impl->lcd_dither = dither;
-    impl->lcd_deband = deband;
-    if (lcd != impl->lcd_shader) {
-        FxSettings s = impl->fx->settings();
-        s.lcd = lcd;
-        impl->fx->apply(s);
-    }
-}
-
 // ── V2 concern: Fx ──────────────────────────────────────────────
 // The V2 `Fx` interface over the backend's Impl state. settings()/apply()
 // assemble/write the FxSettings snapshot (the flat generation goes through
@@ -2112,6 +2087,39 @@ public:
 #if defined(GBARECOMP_HAVE_FRAME_BLEND)
         if (impl_->frame_blend) recomp_frame_blend_reset(impl_->frame_blend);
 #endif
+    }
+
+    // The [video] config block: ini [video] -> the LCD group (Phase 4a moved
+    // the flat forwarder's static here — Fx owns its keys, and the V2 path
+    // needs a config entry that is not input). Values apply through the
+    // private transitions, so only real changes fire; a missing/partial file
+    // leaves the built-in defaults and an env pin (GBARECOMP_LCD_SHADER)
+    // stays above config, exactly as before.
+    void load_config(const char* dir) override {
+        if (!dir || impl_->lcd_env_override) return;
+        const std::string base = std::string(dir) + "/";
+        bool lcd = impl_->lcd_shader;
+        float boost = impl_->lcd_boost;
+        float dither = impl_->lcd_dither;
+        float deband = impl_->lcd_deband;
+        ini_scan_section((base + "config.ini").c_str(), "video",
+                         [&lcd, &boost, &dither, &deband](const char* key,
+                                                          const char* val) {
+            apply_lcd_shader_line(key, val, &lcd);
+            apply_lcd_boost_line(key, val, &boost);
+            apply_lcd_dither_line(key, val, &dither);
+            apply_lcd_deband_line(key, val, &deband);
+        });
+        // Direct field writes (no clamps): the apply_*_line helpers validated
+        // the ini values, exactly as the pre-4a static did.
+        impl_->lcd_boost = boost;
+        impl_->lcd_dither = dither;
+        impl_->lcd_deband = deband;
+        if (lcd != impl_->lcd_shader) {
+            FxSettings s = settings();
+            s.lcd = lcd;
+            apply(s);
+        }
     }
 
 private:
@@ -2791,8 +2799,9 @@ void RaylibBackend::load_input_config(const char* dir, bool assist_tools_default
                                       int fast_forward_multiplier_default) {
     impl_->input->load_config(dir, assist_tools_default,
                               fast_forward_multiplier_default);
-    // [video] lcd_shader: the Fx concern's config loader.
-    load_video_config(impl_.get(), dir);
+    // [video] lcd_shader: the Fx concern's config loader — the same call the
+    // V2 path makes through fx().load_config(dir) (Phase 4a).
+    impl_->fx->load_config(dir);
 }
 
 void RaylibBackend::set_volume(int pct) { impl_->audio->set_volume(pct); }

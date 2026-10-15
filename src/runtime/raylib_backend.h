@@ -225,9 +225,6 @@ private:
     // flat setter and InputImpl::read()'s tap handling (read() has no backend
     // object to call the flat method through).
     static void apply_touch_pad_visible(Impl* impl, bool visible);
-    // The [video] config block (Fx concern's loader): ini [video] -> the LCD
-    // group, transitioning the shader flag through Fx::apply.
-    static void load_video_config(Impl* impl, const char* dir);
     // Draw (and clear) the menu frame stashed by MenuImpl::present. Called by
     // VideoImpl::present after the pad chrome — the menu is the topmost layer
     // and never runs inside a shader/scale pass (plan §3.4).

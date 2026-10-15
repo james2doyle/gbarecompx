@@ -217,9 +217,14 @@ public:
         stored = s;
     }
     void reset_frame_blend() override { ++reset_calls; }
+    void load_config(const char* dir) override {
+        ++load_config_calls;
+        config_dir = dir ? dir : "";
+    }
 
     FxSettings stored;
-    int apply_calls = 0, reset_calls = 0;
+    std::string config_dir;
+    int apply_calls = 0, reset_calls = 0, load_config_calls = 0;
 };
 
 class FakeOverlay final : public Overlay {

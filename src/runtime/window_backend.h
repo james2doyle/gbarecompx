@@ -350,6 +350,12 @@ public:
     virtual FxSettings settings() const = 0;
     virtual void apply(const FxSettings& s) = 0;
     virtual void reset_frame_blend() = 0;
+    // Per-exe config load: the [video] block in config.ini (the LCD group).
+    // This is the Fx half of HostWindow::load_input_config — the seam's two
+    // config entries are Input::load_config and this. Loaded values transition
+    // through the same change-detected apply() as the setters; a missing or
+    // partial file leaves the built-in defaults.
+    virtual void load_config(const char* dir) = 0;
 };
 
 class Overlay {

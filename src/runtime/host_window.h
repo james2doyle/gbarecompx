@@ -27,6 +27,14 @@ class HostOverlay;
 class HostWindow {
 public:
     HostWindow();
+    // Backend selection seam. The default builds the compile-selected backend
+    // (host_make_backend()); a factory overrides that per window — tests
+    // today, a future runtime selector (the seam already supports it; see
+    // host_backend_factory.h). A factory returning nullptr behaves like "no
+    // backend": open() fails and every method keeps its closed-window
+    // fallback.
+    using BackendFactory = WindowBackend* (*)();
+    explicit HostWindow(BackendFactory factory);
     ~HostWindow();
 
     HostWindow(const HostWindow&) = delete;
@@ -212,7 +220,9 @@ public:
     Events pump();
 
     // The V2 facade when the active backend implements it (raylib builds);
-    // nullptr for the flat SDL backend. The generic menu and the other
+    // nullptr for the flat SDL backend. Cached at open; this is the target
+    // every delegating method above prefers (the flat generation is the
+    // fallback until Phase 4b deletes it). The generic menu and the other
     // V2-only paths are host policy on top of this (plan §3.4 / Phase 3d).
     WindowBackendV2* backend_v2() const;
 
@@ -221,6 +231,11 @@ private:
     // Platform backend (SDL or raylib). Typed at the seam, not as a concrete
     // implementation, so selecting a backend is a factory decision only.
     WindowBackend* impl_ = nullptr;
+    // The V2 facade half of impl_ when it implements one (raylib builds),
+    // cached at open/close so the delegation never re-casts per call.
+    WindowBackendV2* v2_ = nullptr;
+    // Backend selection: null = host_make_backend() (the compile-time choice).
+    BackendFactory factory_ = nullptr;
     int orientation_policy_ = 0;
 };
 
