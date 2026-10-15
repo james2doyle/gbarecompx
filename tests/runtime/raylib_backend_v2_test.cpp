@@ -33,6 +33,7 @@
 namespace {
 
 using gbarecomp::Audio;
+using gbarecomp::Caps;
 using gbarecomp::Err;
 using gbarecomp::Events;
 using gbarecomp::Fx;
@@ -40,11 +41,13 @@ using gbarecomp::FxSettings;
 using gbarecomp::Input;
 using gbarecomp::InputSnapshot;
 using gbarecomp::kRayKeyX;
+using gbarecomp::OpenParams;
 using gbarecomp::Overlay;
 using gbarecomp::RaylibBackend;
 using gbarecomp::Result;
 using gbarecomp::TouchConfig;
 using gbarecomp::Video;
+using gbarecomp::WindowBackendV2;
 
 void video_defaults_clamps_and_shared_state() {
     RaylibBackend b;
@@ -363,6 +366,66 @@ void overlay_defaults_and_shared_state() {
     b.set_host_overlay(nullptr);
 }
 
+void facade_lifecycle_contract() {
+    RaylibBackend b;
+    WindowBackendV2& v2 = b;  // both generations on one object
+
+    // Caps invariants that hold in every config.
+    const Caps caps = v2.caps();
+    CHECK(!caps.menu);
+    CHECK(!caps.rumble && !caps.haptics);
+    CHECK(caps.reopen);         // desktop
+    CHECK(!caps.vsync_report);  // no monitor probe yet
+    CHECK(!caps.audio);         // no device yet
+    CHECK(!caps.headless);      // GLFW platform (PLATFORM_MEMORY not defined)
+#if defined(GBARECOMP_USE_RAYLIB)
+    CHECK(caps.window && caps.input && caps.touch);
+#if defined(GRAPHICS_API_OPENGL_SOFTWARE)
+    CHECK(!caps.shaders);  // rlsw compiles the shader entry points out
+#else
+    CHECK(caps.shaders);
+#endif
+#else
+    CHECK(!caps.window && !caps.input && !caps.touch && !caps.shaders);
+#endif
+
+    // Headless requires the memory platform; refused here (both configs).
+    OpenParams headless;
+    headless.mode = OpenParams::Mode::Headless;
+    const Result hr = v2.open(headless);
+    CHECK(!hr.ok() && hr.code == Err::Unsupported && hr.detail != nullptr);
+    CHECK(!v2.is_open());
+
+    // close() is idempotent on a closed backend; lifecycle calls are safe.
+    v2.close();
+    CHECK(!v2.is_open());
+    CHECK(v2.suspend() && v2.resume());
+    CHECK(!v2.wait_for_foreground());  // closed -> false
+
+    // A real open: succeeds in the state-only stub build and on a display; a
+    // display-less GLFW build fails with Err::Window. Both are legal.
+    const Result r = v2.open(OpenParams{});
+    CHECK(r.ok() || r.code == Err::Window);
+    if (r.ok()) {
+        CHECK(v2.is_open());
+        const Result again = v2.open(OpenParams{});
+        CHECK(!again.ok() && again.code == Err::AlreadyOpen);
+        CHECK(v2.wait_for_foreground());
+        v2.close();
+        CHECK(!v2.is_open());
+        // Desktop supports close -> open (Caps::reopen).
+        CHECK(v2.open(OpenParams{}).ok());
+        v2.close();
+    }
+
+    // The V2 accessors return the same objects the flat generation uses.
+    CHECK(&v2.video() == &b.video());
+    CHECK(&v2.audio() == &b.audio());
+    CHECK(&v2.input() == &b.input());
+    CHECK(&v2.fx() == &b.fx());
+    CHECK(&v2.overlay() == &b.overlay());
+}
+
 }  // namespace
 
 int main() {
@@ -375,6 +438,7 @@ int main() {
     input_safe_without_a_window();
     fx_defaults_roundtrip_and_shared_state();
     overlay_defaults_and_shared_state();
+    facade_lifecycle_contract();
 
     std::printf("raylib_backend_v2 tests: PASS\n");
     return 0;

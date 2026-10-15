@@ -40,7 +40,11 @@ namespace gbarecomp {
 struct Clock;
 struct RaylibApi;
 
-class RaylibBackend final : public WindowBackend {
+// Both generations live on this object during the transition (plan §3.1):
+// the flat class forwards into the concern implementations, and the V2
+// facade (WindowBackendV2) returns the same objects. Phase 4b deletes the
+// flat base.
+class RaylibBackend final : public WindowBackend, public WindowBackendV2 {
 public:
     // Dependencies are injectable for tests (Phase 2 tail / Phase 5): a fake
     // RaylibApi injects failures, a fake Clock makes host loops deterministic.
@@ -60,16 +64,24 @@ public:
     void close() override;
     bool is_open() const override;
 
-    // ---- V2 concern accessors (Phase 2) ----------------------------------
-    // Land concern by concern; each becomes the WindowBackendV2 override when
-    // the facade arrives at the end of Phase 2. The implementation lives in
-    // Impl (VideoImpl/AudioImpl in raylib_backend.cpp); the flat methods
-    // forward to it.
-    Video& video();
-    Audio& audio();
-    Input& input();
-    Fx& fx();
-    Overlay& overlay();
+    // ---- V2 lifecycle (plan §3.2/§3.3) ------------------------------------
+    // The single V2 entry point (AlreadyOpen/Unsupported per §3.3), the
+    // capability report, and the mobile lifecycle hooks (desktop no-ops;
+    // the Android port is where suspend/resume grow real work).
+    Result open(const OpenParams& params) override;
+    Caps caps() const override;
+    bool suspend() override;
+    bool resume() override;
+
+    // ---- V2 concern accessors --------------------------------------------
+    // Both generations see one state: the flat methods forward into the
+    // concern implementations (VideoImpl etc. in raylib_backend.cpp) and the
+    // V2 facade returns the same objects.
+    Video& video() override;
+    Audio& audio() override;
+    Input& input() override;
+    Fx& fx() override;
+    Overlay& overlay() override;
 
     // ---- window state (implemented: pure state) --------------------------
     void set_title(const char* title) override;

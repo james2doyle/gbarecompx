@@ -35,6 +35,7 @@ struct RealRaylibApi final : RaylibApi {
     int GetMonitorRefreshRate(int monitor) override {
         return ::GetMonitorRefreshRate(monitor);
     }
+    int GetMonitorCount() override { return ::GetMonitorCount(); }
 
     Texture2D LoadTextureFromImage(Image image) override {
         return ::LoadTextureFromImage(image);

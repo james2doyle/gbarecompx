@@ -164,6 +164,9 @@ struct RaylibBackend::Impl {
     std::unique_ptr<Input> input;
     std::unique_ptr<Fx> fx;
     std::unique_ptr<Overlay> overlay;
+    // True once a monitor-refresh probe returned a sane rate: Caps::
+    // vsync_report (Video::refresh_hz() is meaningful).
+    bool vsync_probed = false;
     // Touch fast-forward pill state, refreshed by InputImpl::read() each pump
     // and consumed by pump()'s post-translate overlay (the SDL sibling does
     // the same). Plain state; false whenever input is not being read.
@@ -421,6 +424,7 @@ void RaylibBackend::refresh_interp_mode(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     const int hz = impl->api->GetMonitorRefreshRate(impl->api->GetCurrentMonitor());
     if (hz <= 0 || hz > kMaxSaneHz) return;  // unprobed/absurd: keep the last period
+    impl->vsync_probed = true;
     const std::uint64_t period =
         1000000000ull / static_cast<std::uint64_t>(hz);
     if (period == impl->interp_period_ns) return;
@@ -2265,23 +2269,27 @@ bool RaylibBackend::open(const WindowBackendOpenParams& params) {
                 params.resize_driven_view, params.freely_resizable_window);
 }
 
-bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
-                         const char* screen, bool linear_filter,
-                         bool sharp_filter, bool resize_driven_view,
-                         bool freely_resizable_window) {
-    if (impl_->open) return true;
-    (void)freely_resizable_window;
+Result RaylibBackend::open(const OpenParams& params) {
+    if (impl_->open) return {Err::AlreadyOpen, "backend already open"};
+    // Headless needs a platform that has no OS window at all (raylib's
+    // PLATFORM_MEMORY); a GLFW window cannot satisfy it.
+#if !defined(PLATFORM_MEMORY)
+    if (params.mode == OpenParams::Mode::Headless)
+        return {Err::Unsupported, "headless requires the memory platform"};
+#endif
+    (void)params.resizable;  // the raylib backend never used it (see below)
 
     // Shared geometry/filter policy — identical to the SDL backend.
     const ResolvedOpenParams rp = resolve_open_params(
-        scale, base_w, base_h, linear_filter, sharp_filter);
+        params.scale, params.base_w, params.base_h, params.linear_filter,
+        params.sharp_filter);
     impl_->scale = rp.scale;
     impl_->base_w = rp.base_w;
     impl_->base_h = rp.base_h;
     impl_->linear_filter = rp.linear_filter;
     impl_->sharp_filter = rp.sharp_filter;
-    impl_->title = title ? title : "gbarecomp";
-    impl_->resize_driven_view = resize_driven_view;
+    impl_->title = params.title ? params.title : "gbarecomp";
+    impl_->resize_driven_view = params.resize_driven_view;
     impl_->open = true;
     // Fresh edge state: stale "was held" flags from a previous open would
     // swallow the first press after reopening.
@@ -2303,7 +2311,7 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     // Pure CPU with no windowing dependency, so it is set up outside the
     // raylib-guarded block below.
     impl_->color_lut = std::make_unique<runtime::ColorLut>(
-        runtime::resolve_color_settings(screen));
+        runtime::resolve_color_settings(params.display));
     if (!impl_->color_lut->is_passthrough())
         impl_->graded_fb.assign(
             static_cast<std::size_t>(rp.base_w) * rp.base_h * 3u, 0);
@@ -2357,7 +2365,7 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
                      "raylib_backend: InitWindow(%dx%d) failed\n",
                      win_w, win_h);
         impl_->open = false;
-        return false;
+        return {Err::Window, "window init failed"};
     }
     // NOTE: do NOT hide the window here. An earlier version did
     // `if (!rp.linear_filter) SetWindowState(FLAG_WINDOW_HIDDEN)`, which
@@ -2380,7 +2388,7 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
         std::fprintf(stderr, "raylib_backend: LoadTextureFromImage failed\n");
         impl_->api->CloseWindow();
         impl_->open = false;
-        return false;
+        return {Err::Renderer, "streaming texture failed"};
     }
     impl_->texture_ready = true;
     impl_->api->SetTextureFilter(impl_->texture, rp.linear_filter
@@ -2427,8 +2435,9 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     impl_->interp_vsync = true;
     {
         const int hz = impl_->api->GetMonitorRefreshRate(impl_->api->GetCurrentMonitor());
+        impl_->vsync_probed = hz > 0 && hz <= kMaxSaneHz;
         impl_->interp_period_ns =
-            (hz > 0 && hz <= kMaxSaneHz)
+            impl_->vsync_probed
                 ? 1000000000ull / static_cast<std::uint64_t>(hz)
                 : 16666666u;
         impl_->interp_tick_ns = 0;
@@ -2482,23 +2491,92 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
         }
     }
 
+    // OpenParams::Mode maps onto the flat fullscreen modes (raylib has no
+    // exclusive-fullscreen equivalent; see set_fullscreen). Applied after
+    // init so the window state exists; the stub build records state only.
+    if (params.mode == OpenParams::Mode::Borderless) set_fullscreen(1);
+    else if (params.mode == OpenParams::Mode::Fullscreen) set_fullscreen(2);
+
     // Frame blending is CPU-side on cached scratch (see present()): the shared
     // primitive needs ordinary cached ARGB8888, never a mapped texture, and
     // grading above is the portable screen work that feeds it.
-    (void)screen;
 #if defined(GBARECOMP_HAVE_FRAME_BLEND)
     // Blend history starts invalid: boot presents the first frame as drawn.
     // A NULL handle (allocation failure) is legal everywhere below and
     // simply presents unblended frames — same contract as the SDL backend.
     impl_->frame_blend = recomp_frame_blend_create();
 #endif
-    return true;
+    return {};
 #else
     // Stub build: state only, no window. Documented in raylib_backend.h.
-    (void)screen;
-    return true;
+    return {};
 #endif
 }
+
+bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
+                         const char* screen, bool linear_filter,
+                         bool sharp_filter, bool resize_driven_view,
+                         bool freely_resizable_window) {
+    // Flat-generation compatibility: the old open was idempotent (an open
+    // backend returned true); V2 reports Err::AlreadyOpen. Deleted in 4b.
+    OpenParams p;
+    p.scale = scale;
+    p.base_w = base_w;
+    p.base_h = base_h;
+    p.title = title;
+    p.display = screen;
+    p.linear_filter = linear_filter;
+    p.sharp_filter = sharp_filter;
+    p.resize_driven_view = resize_driven_view;
+    p.resizable = freely_resizable_window;
+    const Result r = open(p);
+    return r.ok() || r.code == Err::AlreadyOpen;
+}
+
+Caps RaylibBackend::caps() const {
+    Caps c;
+    // Static capability by build/platform, then live state. Valid after open
+    // (§3.3); safe to query before — it reports the build's ability.
+#if defined(GBARECOMP_USE_RAYLIB)
+#if defined(PLATFORM_MEMORY)
+    // raylib's memory platform: no OS window, no input system — but
+    // present/readback work with no display server.
+    c.headless = true;
+#else
+    c.window = true;
+    c.input = true;
+    c.touch = true;
+    c.multi_monitor = impl_->api->GetMonitorCount() > 1;
+#endif
+#if !defined(GRAPHICS_API_OPENGL_SOFTWARE)
+    // The FX pipeline actually renders; rlsw compiles the shader entry
+    // points out (plan §4.1).
+    c.shaders = true;
+#endif
+#endif  // GBARECOMP_USE_RAYLIB
+    c.audio = impl_->audio_ready;  // the device came up at open()
+    c.vsync_report = impl_->vsync_probed;
+    // raylib has no rumble-capability query. The flat predicate returned
+    // false (the "assume true when a pad is present" intent never landed);
+    // keep the same truth here — input().rumble() no-ops safely anyway.
+    c.rumble = false;
+    // No cross-platform system vibrator in raylib core (haptics ride the
+    // gamepad motors); the Android port is where a real vibrator lands.
+    c.haptics = false;
+    c.menu = false;  // Phase 3 (menu_model.h)
+#if !defined(__ANDROID__)
+    c.reopen = true;  // desktop can close -> open; Android cannot (plan §3.2)
+#endif
+    return c;
+}
+
+// Desktop has no lifecycle to suspend: no background state, no device
+// teardown, nothing to rebind — a no-op success keeps the host's
+// suspend/resume flow unconditional. The Android port (Phase 4f) is where
+// these grow real work (raylib Android cannot CloseWindow; it pauses and
+// rebinds).
+bool RaylibBackend::suspend() { return true; }
+bool RaylibBackend::resume() { return true; }
 
 void RaylibBackend::close() {
 #if defined(GBARECOMP_HAVE_FRAME_BLEND)

@@ -39,6 +39,7 @@ struct RaylibApi {
     virtual int GetScreenHeight() = 0;
     virtual int GetCurrentMonitor() = 0;
     virtual int GetMonitorRefreshRate(int monitor) = 0;
+    virtual int GetMonitorCount() = 0;
 
     // ── textures / render ───────────────────────────────────────────────
     virtual Texture2D LoadTextureFromImage(Image image) = 0;
