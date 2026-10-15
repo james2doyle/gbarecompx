@@ -1071,6 +1071,15 @@ target_include_directories(raylib_backend_v2_tests PRIVATE src/runtime)
 target_link_libraries(raylib_backend_v2_tests PRIVATE gbarecomp_raylib_backend)
 add_test(NAME raylib_backend_v2_tests COMMAND raylib_backend_v2_tests)
 
+# Phase 2 tail — §5.2 item 3 fakes + the display-free slice of the lifecycle
+# contract test. Runs the §3.3 contracts against the FakeBackend (always) and
+# the real backend (generic subset; a display-less box early-outs on
+# Err::Window).
+add_executable(backend_contract_tests tests/runtime/backend_contract_test.cpp)
+target_include_directories(backend_contract_tests PRIVATE src/runtime tests/runtime)
+target_link_libraries(backend_contract_tests PRIVATE gbarecomp_raylib_backend)
+add_test(NAME backend_contract_tests COMMAND backend_contract_tests)
+
 # NOTE: the backend-selection and closed-window HostWindow tests deliberately
 # live in the APP build (root CMakeLists: ffta_backend_select_tests,
 # ffta_host_window_tests), not here: this standalone framework configuration
