@@ -86,7 +86,7 @@ recomp_master_misses*.toml.frag
 hang_trace.csv
 recomp_cache/
 
-# Android signing material stays local (see F:\Projects\Android\README.md).
+# Android signing material stays local (see the Android project's README).
 signing.local.properties
 *.jks
 *.keystore

@@ -2,7 +2,7 @@
 
 Companion scorecard for the faithful GBA recompiler core, modeled 1:1 on the
 psxrecomp `ACCURACY_BURNDOWN.md` 7-axis framework
-(`F:\Projects\psxrecomp\_wt-tomba2\psxrecomp\ACCURACY_BURNDOWN.md`). That project
+(`C:\Projects\psxrecomp\_wt-tomba2\psxrecomp\ACCURACY_BURNDOWN.md`). That project
 owns the methodology; this doc transposes it to ARM7TDMI / GBA hardware and
 tracks the burndown across **all seven accuracy axes** for the shared engine that
 drives MinishCap + the four Gen3 Pokémon recomps.

@@ -28,10 +28,10 @@ import socket, subprocess, os, sys, time, argparse
 #   GBA_COSIM_ROM    path to the ROM
 #   GBA_COSIM_BIOS   path to gba_bios.bin
 #   GBA_COSIM_CONFIG path to game.toml
-_MC = r"F:\Projects\gbarecomp\MinishCapRecomp"
+_MC = r"C:\Projects\gbarecomp\MinishCapRecomp"
 EXE    = os.environ.get("GBA_COSIM_EXE",    os.path.join(_MC, r"build-cosim\MinishCapRecomp.exe"))
 ROM    = os.environ.get("GBA_COSIM_ROM",    os.path.join(_MC, "roms", "minishcap_usa.gba"))
-BIOS   = os.environ.get("GBA_COSIM_BIOS",   r"F:\Projects\gbarecomp\gbarecomp-wt-cosim\bios\gba_bios.bin")
+BIOS   = os.environ.get("GBA_COSIM_BIOS",   r"C:\Projects\gbarecomp\gbarecomp-wt-cosim\bios\gba_bios.bin")
 CONFIG = os.environ.get("GBA_COSIM_CONFIG", os.path.join(_MC, "game.toml"))
 CWD    = os.environ.get("GBA_COSIM_CWD",    os.path.dirname(EXE))
 LOGDIR = os.path.join(CWD, "cosim-logs")

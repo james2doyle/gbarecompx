@@ -32,7 +32,7 @@ sacred"). The current ordering reflects that:
 
 ## Phase 0 — Discovery and repo skeleton  *(done)*
 
-- [x] Both repos exist at `F:\Projects\gbarecomp\{gbarecomp,MinishCapRecomp}`.
+- [x] Both repos exist at `C:\Projects\gbarecomp\{gbarecomp,MinishCapRecomp}`.
 - [x] CMake projects for both.
 - [x] Project rule docs: `CLAUDE.md`, `PRINCIPLES.md`, `DEBUG.md`,
       `TCP.md`.

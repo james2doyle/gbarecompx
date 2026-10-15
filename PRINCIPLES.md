@@ -1,7 +1,7 @@
 # gbarecomp Project Principles
 
 These rules are platform-specific specializations of the cross-project
-recomp principles (see `F:\Projects\recomp-template\PRINCIPLES.md`).
+recomp principles (see `C:\Projects\recomp-template\PRINCIPLES.md`).
 Platform-agnostic rules still apply; this file adds GBA detail.
 
 ## Ground Truth

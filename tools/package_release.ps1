@@ -5,7 +5,7 @@
 # tree's `build/` keeps using the dynamic link; this script always
 # uses a separate `build-release/` so the two don't fight.
 #
-# Output: F:\Projects\gbarecomp\gbarecomp\gba.exe (or path of choice).
+# Output: C:\Projects\gbarecomp\gbarecomp\gba.exe (or path of choice).
 #
 # Usage:
 #   .\tools\package_release.ps1

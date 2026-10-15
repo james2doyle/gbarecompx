@@ -39,8 +39,8 @@
     <variant>-<version>-<type>-PRIVATE-rom-included.apk; never publish them.
 
 .EXAMPLE
-    .\build-apk.ps1 -GameAndroidDir F:\Projects\gbarecomp\EmeraldRecomp-android-touch\android `
-        -PrivateRom F:\roms\emerald_usa.gba -PrivateBios F:\bios\gba_bios.bin
+    .\build-apk.ps1 -GameAndroidDir C:\Projects\gbarecomp\EmeraldRecomp-android-touch\android `
+        -PrivateRom C:\roms\emerald_usa.gba -PrivateBios C:\bios\gba_bios.bin
 
 .EXAMPLE
     .\build-apk.ps1 -GameAndroidDir ..\..\..\EmeraldRecomp-android-touch\android -Release -Abis arm64-v8a

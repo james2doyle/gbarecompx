@@ -98,7 +98,7 @@
 .EXAMPLE
     .\android-validate.ps1 -Package com.mstan.emeraldrecomp `
         -Apk .\artifacts\EmeraldRecomp-debug.apk `
-        -Rom F:\roms\emerald_usa.gba -Bios F:\bios\gba_bios.bin `
+        -Rom C:\roms\emerald_usa.gba -Bios C:\bios\gba_bios.bin `
         -Launch -Rotations 'portrait,landscape,reverse-landscape,portrait' `
         -ObservePort 19892 -PullArtifacts
 #>

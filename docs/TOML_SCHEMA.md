@@ -417,7 +417,7 @@ In order of evaluation:
 After every `gba_recompile` run with a config:
 
 ```
-[gba_recompile config: F:\Projects\gbarecomp\gbarecomp\bios\gba_bios.toml]
+[gba_recompile config: C:\Projects\gbarecomp\gbarecomp\bios\gba_bios.toml]
   identity sha1:           300c20df... (verified)
   extra_func entries:      54
   data_range entries:      12

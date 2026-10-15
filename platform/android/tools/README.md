@@ -19,16 +19,16 @@ the resulting APK path(s) and size. Exits with gradle's own exit code.
 ```powershell
 # Debug build, default ABIs (arm64-v8a,x86_64), engine/UI roots as pinned
 # by the game's settings/build.gradle (or GBARECOMP_ROOT/RECOMP_UI_ROOT env).
-.\build-apk.ps1 -GameAndroidDir F:\Projects\gbarecomp\EmeraldRecomp-android-touch\android
+.\build-apk.ps1 -GameAndroidDir C:\Projects\gbarecomp\EmeraldRecomp-android-touch\android
 
 # Private build embedding a verified ROM + BIOS dump (never distribute the
 # resulting APK -- see gbarecomp-app.gradle's verifyNoPrivateAssets guard).
-.\build-apk.ps1 -GameAndroidDir F:\Projects\gbarecomp\EmeraldRecomp-android-touch\android `
-    -PrivateRom F:\roms\emerald_usa.gba -PrivateBios F:\bios\gba_bios.bin
+.\build-apk.ps1 -GameAndroidDir C:\Projects\gbarecomp\EmeraldRecomp-android-touch\android `
+    -PrivateRom C:\roms\emerald_usa.gba -PrivateBios C:\bios\gba_bios.bin
 
 # Release build, x86_64-only (fast emulator iteration), custom engine worktree.
-.\build-apk.ps1 -GameAndroidDir F:\Projects\gbarecomp\EmeraldRecomp-android-touch\android `
-    -Release -Abis x86_64 -EngineRoot F:\Projects\gbarecomp\gbarecomp-wt-cosim -Jobs 4
+.\build-apk.ps1 -GameAndroidDir C:\Projects\gbarecomp\EmeraldRecomp-android-touch\android `
+    -Release -Abis x86_64 -EngineRoot C:\Projects\gbarecomp\gbarecomp-wt-cosim -Jobs 4
 ```
 
 ## android-validate.ps1
@@ -53,8 +53,8 @@ crashed before this script attached.
 # Full pass: install, stage assets, launch, rotate through all four
 # orientations, forward the runtime's debug port, pull artifacts.
 .\android-validate.ps1 -Package com.mstan.emeraldrecomp `
-    -Apk F:\Projects\gbarecomp\EmeraldRecomp-android-touch\android\app\build\outputs\apk\debug\app-debug.apk `
-    -Rom F:\roms\emerald_usa.gba -Bios F:\bios\gba_bios.bin `
+    -Apk C:\Projects\gbarecomp\EmeraldRecomp-android-touch\android\app\build\outputs\apk\debug\app-debug.apk `
+    -Rom C:\roms\emerald_usa.gba -Bios C:\bios\gba_bios.bin `
     -Launch -Rotations 'portrait,landscape,reverse-landscape,portrait' `
     -ObservePort 19892 -PullArtifacts
 

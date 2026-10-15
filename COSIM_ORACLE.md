@@ -47,7 +47,7 @@ full-state divergence between the two backends WE SHIP.
    in hand. Gates 3/4 (inject, hash-vs-byte) also stand up on this pair alone. ⇒ The whole
    gate harness is provable before the interp backend is even wired.
 3. **recomp vs NanoBoyAdvance** — OPTIONAL later accuracy escalation, NOT a prerequisite
-   (`F:\Projects\gbarecomp\_nba_oracle\nba_oracle.cpp` + NanoBoyAdvance submodule; GPL-3.0,
+   (`C:\Projects\gbarecomp\_nba_oracle\nba_oracle.cpp` + NanoBoyAdvance submodule; GPL-3.0,
    isolated binary, TCP :19844; models Game-Pak prefetch/waitstates/open-bus + absolute
    master-cycle scheduler). If pursued: NBA free-runs today; add `stride`/`step`/`park` +
    `full_state` so it parks at the launch-fixed cycle stride.
@@ -270,7 +270,7 @@ Gate 1 must pass"):
   (`RECOMP_RTC_EPOCH`).
 - Existing hash + rings: `src/debug/tcp_debug_server.cpp` (`cmd_state_hash:566`,
   `mmio_cap`, `irq_cap`, `cyc_anchor`, `audio_cap`); serializers `src/debug/snapshot.{h,cpp}`.
-- Oracles: `F:\Projects\gbarecomp\_nba_oracle\nba_oracle.cpp` (NanoBoyAdvance, :19844);
+- Oracles: `C:\Projects\gbarecomp\_nba_oracle\nba_oracle.cpp` (NanoBoyAdvance, :19844);
   `oracle/` mGBA bridge (:19843); comparator plumbing `oracle/nba_common.py` +
   `oracle/diff_{cycle,irq,mmio,video,audio_drift}_nba.py`.
 - Fixtures (no input): BIOS chime (`tools/bios_smoke`), MinishCap title/intro, FireRed

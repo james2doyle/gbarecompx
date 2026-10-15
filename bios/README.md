@@ -32,7 +32,7 @@ verify.
 
 ## Where to put it
 
-`F:/Projects/gbarecomp/gbarecomp/bios/gba_bios.bin`
+`C:/Projects/gbarecomp/gbarecomp/bios/gba_bios.bin`
 
 The `bios_smoke` tool, the runtime, and `gba_recompile` all look here
 by default. Override with `--bios <path>` if you keep yours elsewhere.
