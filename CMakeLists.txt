@@ -230,6 +230,9 @@ add_library(gbarecomp_touch_input STATIC src/runtime/touch_input.cpp)
 target_include_directories(gbarecomp_touch_input PUBLIC src/runtime)
 
 add_library(gbarecomp_audio_drc STATIC src/runtime/recomp_audio_drc.cpp)
+
+# Phase 3a — the pure menu model (plan §3.4): no backend, no toolkit.
+add_library(gbarecomp_menu_model STATIC src/runtime/menu_model.cpp)
 target_include_directories(gbarecomp_audio_drc PUBLIC src/runtime)
 find_package(Threads REQUIRED)
 target_link_libraries(gbarecomp_audio_drc PUBLIC Threads::Threads)
@@ -1079,6 +1082,13 @@ add_executable(backend_contract_tests tests/runtime/backend_contract_test.cpp)
 target_include_directories(backend_contract_tests PRIVATE src/runtime tests/runtime)
 target_link_libraries(backend_contract_tests PRIVATE gbarecomp_raylib_backend)
 add_test(NAME backend_contract_tests COMMAND backend_contract_tests)
+
+# Phase 3a — the pure menu model suite (ports recomp-ui's runtime_ui_test
+# semantics to the V2 shape).
+add_executable(menu_model_tests tests/runtime/menu_model_test.cpp)
+target_include_directories(menu_model_tests PRIVATE src/runtime)
+target_link_libraries(menu_model_tests PRIVATE gbarecomp_menu_model)
+add_test(NAME menu_model_tests COMMAND menu_model_tests)
 
 # NOTE: the backend-selection and closed-window HostWindow tests deliberately
 # live in the APP build (root CMakeLists: ffta_backend_select_tests,
