@@ -30,8 +30,12 @@ using gbarecomp::HostOverlay;
 using gbarecomp::Input;
 using gbarecomp::InputBindings;
 using gbarecomp::InputSnapshot;
+using gbarecomp::Menu;
+using gbarecomp::MenuModel;
+using gbarecomp::MenuResult;
 using gbarecomp::OpenParams;
 using gbarecomp::Overlay;
+using gbarecomp::PointerState;
 using ::RecompRuntimeUi;
 using gbarecomp::Result;
 using gbarecomp::TouchConfig;
@@ -145,12 +149,20 @@ struct NoopOverlay final : Overlay {
     bool touch_pad_visible() const override { return false; }
 };
 
+struct NoopMenu final : Menu {
+    bool available() const override { return false; }
+    MenuResult present(MenuModel&, const PointerState&) override {
+        return MenuResult{};
+    }
+};
+
 struct NoopBackend final : WindowBackendV2 {
     NoopVideo v;
     NoopAudio a;
     NoopInput i;
     NoopFx f;
     NoopOverlay o;
+    NoopMenu m;
 
     Result open(const OpenParams&) override {
         return {Err::Unsupported, "no-op backend"};
@@ -163,6 +175,7 @@ struct NoopBackend final : WindowBackendV2 {
     Input& input() override { return i; }
     Fx& fx() override { return f; }
     Overlay& overlay() override { return o; }
+    Menu& menu() override { return m; }
     Events pump() override { return Events{}; }
     void set_runtime_ui(RecompRuntimeUi*) override {}
     bool suspend() override { return false; }

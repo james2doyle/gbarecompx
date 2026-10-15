@@ -82,6 +82,7 @@ public:
     Input& input() override;
     Fx& fx() override;
     Overlay& overlay() override;
+    Menu& menu() override;
 
     // ---- window state (implemented: pure state) --------------------------
     void set_title(const char* title) override;
@@ -185,6 +186,7 @@ private:
     class InputImpl;
     class FxImpl;
     class OverlayImpl;
+    class MenuImpl;
     std::unique_ptr<Impl> impl_;
 
     // raylib's AudioCallback carries no userdata (open upstream limitation:
@@ -226,6 +228,10 @@ private:
     // The [video] config block (Fx concern's loader): ini [video] -> the LCD
     // group, transitioning the shader flag through Fx::apply.
     static void load_video_config(Impl* impl, const char* dir);
+    // Draw (and clear) the menu frame stashed by MenuImpl::present. Called by
+    // VideoImpl::present after the pad chrome — the menu is the topmost layer
+    // and never runs inside a shader/scale pass (plan §3.4).
+    static void draw_pending_menu(Impl* impl);
     // Pad geometry inputs from backend state (pure, no raylib).
     static PadLayoutInputs pad_layout_inputs(const Impl* impl, int dw, int dh);
 };

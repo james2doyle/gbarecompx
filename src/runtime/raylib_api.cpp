@@ -71,6 +71,13 @@ struct RealRaylibApi final : RaylibApi {
     Color GetColor(unsigned int hexValue) override {
         return ::GetColor(hexValue);
     }
+    void DrawText(const char* text, int posX, int posY, int fontSize,
+                  Color color) override {
+        ::DrawText(text, posX, posY, fontSize, color);
+    }
+    int MeasureText(const char* text, int fontSize) override {
+        return ::MeasureText(text, fontSize);
+    }
 
     Shader LoadShaderFromMemory(const char* vsCode,
                                 const char* fsCode) override {

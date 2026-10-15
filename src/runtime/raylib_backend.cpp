@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,6 +46,7 @@
 #include "input_translate.h"
 #include "interp_pacing.h"
 #include "lcd_shader.h"
+#include "menu_draw.h"
 #include "presentation_layout.h"
 #if defined(GBARECOMP_HAVE_FRAME_BLEND)
 #include "recomp_frame_blend.h"
@@ -164,6 +166,14 @@ struct RaylibBackend::Impl {
     std::unique_ptr<Input> input;
     std::unique_ptr<Fx> fx;
     std::unique_ptr<Overlay> overlay;
+    std::unique_ptr<Menu> menu;
+    // Menu frame stash: MenuImpl::present() computes the geometry + pointer
+    // hit-test and stores the frame here; draw_pending_menu() consumes it
+    // inside the video present's Begin/EndDrawing (one-shot — no model
+    // pointer survives the frame).
+    MenuModel* menu_model = nullptr;
+    MenuGeometry menu_geometry;
+    PointerState menu_pointer;
     // True once a monitor-refresh probe returned a sane rate: Caps::
     // vsync_report (Video::refresh_hz() is meaningful).
     bool vsync_probed = false;
@@ -815,11 +825,29 @@ public:
                  to_ray(color));
     }
 
-    bool text_supported() const override { return false; }
-    void text(float, float, float, OverlayColor, const char*, OverlayAlign,
-              OverlaySpace) override {}
-    float text_width(const char*, float, OverlaySpace) const override {
-        return 0.0f;
+    bool text_supported() const override { return true; }
+    void text(float x, float y, float size, OverlayColor color, const char* utf8,
+              OverlayAlign align, OverlaySpace space) override {
+        if (!utf8 || !*utf8 || size <= 0.0f) return;
+        float dx = 0.0f, dy = 0.0f;
+        to_drawable(x, y, space, &dx, &dy);
+        const int fsize = static_cast<int>(
+            std::lround(size * view_scale(space)));
+        const int fsz = fsize > 0 ? fsize : 1;
+        const int w = api_->MeasureText(utf8, fsz);
+        int ax = static_cast<int>(std::lround(dx));
+        if (align == OverlayAlign::Center) ax -= w / 2;
+        else if (align == OverlayAlign::Right) ax -= w;
+        api_->DrawText(utf8, ax, static_cast<int>(std::lround(dy)), fsz,
+                       to_ray(color));
+    }
+    float text_width(const char* utf8, float size,
+                     OverlaySpace space) const override {
+        if (!utf8 || size <= 0.0f) return 0.0f;
+        int fsize =
+            static_cast<int>(std::lround(size * view_scale(space)));
+        if (fsize < 1) fsize = 1;
+        return static_cast<float>(api_->MeasureText(utf8, fsize));
     }
 
 private:
@@ -1127,6 +1155,11 @@ public:
                 // whose draw_engine_long_press returns early.
             }
         }
+
+        // Menu: the topmost layer (plan §3.4 draw order), coalesced into
+        // this frame's Begin/EndDrawing — never inside a shader/scale pass.
+        draw_pending_menu(impl_);
+
         impl_->api->EndDrawing();
 
 #if defined(__ANDROID__)
@@ -2209,6 +2242,76 @@ public:
 private:
     Impl* impl_;
 };
+
+// ── V2 concern: Menu ────────────────────────────────────────────────────
+// The V2 `Menu` interface over the shared menu_draw.h presentation. The
+// raylib frame context lives inside VideoImpl::present, so present() runs
+// the geometry + pointer hit-test here (the result is immediate) and stashes
+// the frame for draw_pending_menu(), which VideoImpl::present calls after
+// the pad chrome (topmost layer, never inside a shader/scale pass).
+class RaylibBackend::MenuImpl final : public Menu {
+public:
+    explicit MenuImpl(Impl* impl) : impl_(impl) {}
+
+    bool available() const override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        return true;
+#else
+        return false;  // stub build: state only, no presentation
+#endif
+    }
+
+    MenuResult present(MenuModel& model, const PointerState& pointer) override {
+        MenuResult r;
+        impl_->menu_model = nullptr;  // a fresh frame's stash
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!impl_->open || !impl_->api->IsWindowReady()) return r;
+        RaylibOverlay ov(impl_->api, impl_->api->GetScreenWidth(),
+                         impl_->api->GetScreenHeight(), impl_->last_layout,
+                         impl_->base_w, impl_->base_h, impl_->px_per_mm,
+                         impl_->safe_left, impl_->safe_top,
+                         impl_->safe_right, impl_->safe_bottom,
+                         touch_clock_ms());
+        impl_->menu_geometry = menu_compute_geometry(ov, model);
+        if (model.open && pointer.pressed) {
+            MenuPointer mp;
+            mp.row = menu_hit_test(impl_->menu_geometry, model, pointer.x,
+                                   pointer.y);
+            mp.pressed = true;
+            r = menu_pointer(model, mp);
+        }
+        impl_->menu_model = &model;
+        impl_->menu_pointer = pointer;
+#else
+        (void)model;
+        (void)pointer;
+#endif
+        return r;
+    }
+
+private:
+    Impl* impl_;
+};
+
+// Draw (and clear) the menu frame stashed by MenuImpl::present. One-shot:
+// a frame without a fresh menu().present() draws nothing, so no model
+// pointer survives a frame.
+void RaylibBackend::draw_pending_menu(RaylibBackend::Impl* impl) {
+#if defined(GBARECOMP_USE_RAYLIB)
+    MenuModel* model = impl->menu_model;
+    impl->menu_model = nullptr;
+    if (!model) return;
+    RaylibOverlay ov(impl->api, impl->api->GetScreenWidth(),
+                     impl->api->GetScreenHeight(), impl->last_layout,
+                     impl->base_w, impl->base_h, impl->px_per_mm,
+                     impl->safe_left, impl->safe_top, impl->safe_right,
+                     impl->safe_bottom, touch_clock_ms());
+    menu_draw(ov, *model, impl->menu_geometry, impl->menu_pointer);
+#else
+    (void)impl;
+#endif
+}
+
 // raylib's AudioCallback is `void (*)(void *framesOut, unsigned int frames)` --
 // it carries NO userdata (open upstream limitation: raysan5/raylib#3911). SDL
 // gives us userdata, raylib does not, so the callback can only reach backend
@@ -2256,6 +2359,7 @@ RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
     impl_->input = std::make_unique<InputImpl>(impl_.get());
     impl_->fx = std::make_unique<FxImpl>(impl_.get());
     impl_->overlay = std::make_unique<OverlayImpl>(impl_.get());
+    impl_->menu = std::make_unique<MenuImpl>(impl_.get());
     // Same layout as the SDL backend's kDefaultBinds/kHotkeyDefaults, so the
     // backend is usable before any config file is read.
     raylib_default_bindings(impl_->input_bindings);
@@ -2563,7 +2667,9 @@ Caps RaylibBackend::caps() const {
     // No cross-platform system vibrator in raylib core (haptics ride the
     // gamepad motors); the Android port is where a real vibrator lands.
     c.haptics = false;
-    c.menu = false;  // Phase 3 (menu_model.h)
+#if defined(GBARECOMP_USE_RAYLIB)
+    c.menu = true;  // the shared menu_draw.h presentation exists (Phase 3b)
+#endif
 #if !defined(__ANDROID__)
     c.reopen = true;  // desktop can close -> open; Android cannot (plan §3.2)
 #endif
@@ -2629,6 +2735,8 @@ Input& RaylibBackend::input() { return *impl_->input; }
 Fx& RaylibBackend::fx() { return *impl_->fx; }
 
 Overlay& RaylibBackend::overlay() { return *impl_->overlay; }
+
+Menu& RaylibBackend::menu() { return *impl_->menu; }
 
 // ── window state: implemented (pure state) ────────────────────────────────
 void RaylibBackend::set_title(const char* title) {

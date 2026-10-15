@@ -240,6 +240,25 @@ public:
     bool pad_visible = false;
 };
 
+// ── FakeMenu ────────────────────────────────────────────────────────────
+// Records what the host handed it; `next_result` scripts the pointer-driven
+// MenuResult (host-loop tests).
+class FakeMenu final : public Menu {
+public:
+    bool available() const override { return true; }
+    MenuResult present(MenuModel& model, const PointerState& pointer) override {
+        ++present_calls;
+        last_model = &model;
+        last_pointer = pointer;
+        return next_result;
+    }
+
+    int present_calls = 0;
+    MenuModel* last_model = nullptr;
+    PointerState last_pointer;
+    MenuResult next_result;
+};
+
 // ── FakeBackend ─────────────────────────────────────────────────────────
 // Composes the fakes behind the V2 facade. Behavior knobs: `open_fails`
 // (Err::Window), `caps_override` (defaults mirror a desktop raylib build),
@@ -275,6 +294,7 @@ public:
     Input& input() override { return scripted_input; }
     Fx& fx() override { return fake_fx; }
     Overlay& overlay() override { return fake_overlay; }
+    Menu& menu() override { return fake_menu; }
 
     Events pump() override {
         ++pump_calls;
@@ -303,6 +323,7 @@ public:
     ScriptedInput scripted_input;
     FakeFx fake_fx;
     FakeOverlay fake_overlay;
+    FakeMenu fake_menu;
     FakeClock clock;
     InputEdges edges;
     Caps caps_override{[] {
@@ -314,6 +335,7 @@ public:
         c.touch = true;
         c.reopen = true;
         c.vsync_report = true;
+        c.menu = true;  // FakeMenu is a real presentation
         return c;
     }()};
     bool is_open_ = false;

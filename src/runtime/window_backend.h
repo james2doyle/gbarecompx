@@ -6,6 +6,8 @@ class RecompRuntimeUi;
 #include <string>
 #include <vector>
 
+#include "menu_model.h"
+
 // Backend seam for HostWindow. The SDL implementation is still inlined in
 // host_window.cpp; this header is the first step toward letting a raylib
 // implementation share the same logical contract. It intentionally stays free
@@ -353,6 +355,26 @@ public:
     virtual bool touch_pad_visible() const = 0;
 };
 
+// The generic in-game menu presentation (plan §3.4). The host owns the
+// MenuModel (single source of truth) and hands it to present() each frame;
+// the backend stores no model pointer across frames. Navigation policy
+// lives in menu_model.h — the presenter only draws and hit-tests, and every
+// mutation goes through the shared mutators.
+class Menu {
+public:
+    virtual ~Menu() = default;
+    virtual bool available() const = 0;  // == Caps::menu
+    // Draw `model` (when open; a live toast draws regardless) in screen
+    // space and translate pointer/touch hits through the shared mutators.
+    // Call once per frame, after pump() and before video().present(); a
+    // backend whose frame context lives inside present() coalesces the draw
+    // into that call — the hit-test still runs here, so the returned
+    // MenuResult (the pointer-driven one) is immediate and the host applies
+    // it exactly like menu_navigate()'s.
+    virtual MenuResult present(MenuModel& model,
+                               const PointerState& pointer) = 0;
+};
+
 // ── facade ────────────────────────────────────────────────────────────────
 // Transitional name: the flat generation above still owns `WindowBackend`;
 // Phase 4 deletes it and this class becomes `WindowBackend` (§6 4b).
@@ -370,7 +392,7 @@ public:
     virtual Input&   input() = 0;
     virtual Fx&      fx() = 0;
     virtual Overlay& overlay() = 0;
-    // Menu& menu() lands in Phase 3 with menu_model.h (§6 3b).
+    virtual Menu&    menu() = 0;
 
     virtual Events pump() = 0;   // = translate_input(read(snapshot), bindings, edges)
     virtual void set_runtime_ui(RecompRuntimeUi* ui) = 0;

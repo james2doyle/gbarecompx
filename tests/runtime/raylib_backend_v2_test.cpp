@@ -372,7 +372,11 @@ void facade_lifecycle_contract() {
 
     // Caps invariants that hold in every config.
     const Caps caps = v2.caps();
-    CHECK(!caps.menu);
+#if defined(GBARECOMP_USE_RAYLIB)
+    CHECK(caps.menu);  // the presentation exists in the raylib build
+#else
+    CHECK(!caps.menu);  // state-only stub: no presentation
+#endif
     CHECK(!caps.rumble && !caps.haptics);
     CHECK(caps.reopen);         // desktop
     CHECK(!caps.vsync_report);  // no monitor probe yet
@@ -424,6 +428,8 @@ void facade_lifecycle_contract() {
     CHECK(&v2.input() == &b.input());
     CHECK(&v2.fx() == &b.fx());
     CHECK(&v2.overlay() == &b.overlay());
+    CHECK(&v2.menu() == &b.menu());
+    CHECK(v2.menu().available() == caps.menu);
 }
 
 }  // namespace

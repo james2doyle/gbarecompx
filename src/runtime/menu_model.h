@@ -146,6 +146,9 @@ int menu_selected_row(const MenuModel& m);
 // Section row list in storage order (all rows, visible or not).
 int menu_section_row_count(const MenuModel& m, int section);
 int menu_section_row(const MenuModel& m, int section, int index);  // -1 if none
+// First selectable (visible+enabled) row of a section as a global index, or
+// -1. The pointer hit-test maps a section-line press through this.
+int menu_section_first_selectable(const MenuModel& m, int section);
 
 // ── input mapping ───────────────────────────────────────────────────────
 // GBA KEYINPUT (active-low: a CLEAR bit means pressed) -> the nav input.

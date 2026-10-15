@@ -301,6 +301,14 @@ int menu_section_row(const MenuModel& m, int section, int index) {
     return -1;
 }
 
+int menu_section_first_selectable(const MenuModel& m, int section) {
+    for (int i = 0; i < m.row_count; ++i) {
+        if (m.rows[i].section != section) continue;
+        if (selectable(m.rows[i])) return i;
+    }
+    return -1;
+}
+
 bool menu_input_from_keyinput(std::uint16_t gba_bits, MenuInput* out) {
     // GBA KEYINPUT layout, active-low: bits 0=A 1=B 4=Right 5=Left 6=Up
     // 7=Down (a CLEAR bit means pressed).

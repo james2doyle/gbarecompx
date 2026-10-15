@@ -241,7 +241,7 @@ add_library(gbarecomp_raylib_backend STATIC src/runtime/raylib_backend.cpp
     src/runtime/raylib_api.cpp src/runtime/host_clock.cpp)
 target_include_directories(gbarecomp_raylib_backend PUBLIC src/runtime)
 target_link_libraries(gbarecomp_raylib_backend PUBLIC gbarecomp_audio_drc
-    gbarecomp_color_lut gbarecomp_touch_input)
+    gbarecomp_color_lut gbarecomp_touch_input gbarecomp_menu_model)
 # Presentation blend primitive (issue #9 strategy #1): the same pure-C
 # recomp_frame_blend.c the SDL backend compiles into gbarecomp_runtime, so
 # both backends average byte-identical frames. PUBLIC so the integration
@@ -1089,6 +1089,13 @@ add_executable(menu_model_tests tests/runtime/menu_model_test.cpp)
 target_include_directories(menu_model_tests PRIVATE src/runtime)
 target_link_libraries(menu_model_tests PRIVATE gbarecomp_menu_model)
 add_test(NAME menu_model_tests COMMAND menu_model_tests)
+
+# Phase 3b — the shared menu presentation over a recording HostOverlay
+# (geometry, hit-test, drawing; no window, no raylib).
+add_executable(menu_draw_tests tests/runtime/menu_draw_test.cpp)
+target_include_directories(menu_draw_tests PRIVATE src/runtime)
+target_link_libraries(menu_draw_tests PRIVATE gbarecomp_menu_model)
+add_test(NAME menu_draw_tests COMMAND menu_draw_tests)
 
 # NOTE: the backend-selection and closed-window HostWindow tests deliberately
 # live in the APP build (root CMakeLists: ffta_backend_select_tests,

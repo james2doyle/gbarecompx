@@ -57,6 +57,9 @@ struct RaylibApi {
     virtual void BeginDrawing() = 0;
     virtual void EndDrawing() = 0;
     virtual Color GetColor(unsigned int hexValue) = 0;
+    virtual void DrawText(const char* text, int posX, int posY, int fontSize,
+                          Color color) = 0;
+    virtual int MeasureText(const char* text, int fontSize) = 0;
 
     // ── shaders ─────────────────────────────────────────────────────────
     virtual Shader LoadShaderFromMemory(const char* vsCode,

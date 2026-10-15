@@ -68,12 +68,15 @@ void run_contract(WindowBackendV2& b, const char* name,
         CHECK(!b.is_open());
     }
 
-    // Accessors are stable objects.
+    // Accessors are stable objects; the menu presentation's availability
+    // agrees with the capability bit.
     CHECK(&b.video() == &b.video());
     CHECK(&b.audio() == &b.audio());
     CHECK(&b.input() == &b.input());
     CHECK(&b.fx() == &b.fx());
     CHECK(&b.overlay() == &b.overlay());
+    CHECK(&b.menu() == &b.menu());
+    CHECK(b.menu().available() == b.caps().menu);
 
     // Open: strict for the fake; the real backend may fail with Err::Window
     // on a display-less box (both are legal for it).
