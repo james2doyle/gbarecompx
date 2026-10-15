@@ -1874,15 +1874,20 @@ void render_scanline_wide(uint8_t* rgb, int y, uint16_t dispcnt,
             // into the next priority's BG band.
             int key = priority * 256 + idx;
             bool obj_target2 = (second_targets & (1u << 4)) != 0;
+            // Opt-in policy: sprites the guest parked entirely outside the
+            // native viewport stay hidden, but a sprite anchored inside it
+            // may extend into the margin columns — its beyond-240 pixels are
+            // real artwork (the old per-pixel clip cut wide effects like the
+            // Totema summon mid-animation). See obj_parked_outside_view.
+            auto obj_parked_outside_view = [&](int draw_width) {
+                if (!g_ws_obj_native_clip) return false;
+                const int span_left = static_cast<int>(ox);
+                const int span_right = span_left + static_cast<int>(kVanW);
+                const int view_left = span_left + sx;
+                return view_left >= span_right || view_left + draw_width <= span_left;
+            };
             auto emit_obj = [&](int tex_x, int tex_y, int screen_x) {
                 if (screen_x < 0 || screen_x >= static_cast<int>(out_w)) return;
-                // Opt-in policy: hardware-faithful OBJ placement only within
-                // the native viewport; margin columns never show sprites the
-                // guest believed were off-screen.
-                if (g_ws_obj_native_clip &&
-                    (screen_x < static_cast<int>(ox) ||
-                     screen_x >= static_cast<int>(ox) + static_cast<int>(kVanW)))
-                    return;
                 if (!layer_enabled(static_cast<uint32_t>(screen_x), 4)) return;
                 int tile_x_in_sprite = tex_x >> 3;
                 int tile_y_in_sprite = tex_y >> 3;
@@ -1931,6 +1936,7 @@ void render_scanline_wide(uint8_t* rgb, int y, uint16_t dispcnt,
                 int j = static_cast<int>(y) - sy;
                 if (j < 0 || j >= bh) continue;
                 if (!obj_focus_active) resolve_sx();
+                if (obj_parked_outside_view(bw)) continue;
                 int affine_group = (attr1 >> 9) & 0x1Fu;
                 const uint8_t* ag = oam + affine_group * 0x20u;
                 int32_t pa = read_s16(ag, 0x06);
@@ -1965,6 +1971,7 @@ void render_scanline_wide(uint8_t* rgb, int y, uint16_t dispcnt,
             int line = static_cast<int>(y) - sy;
             if (line < 0 || line >= draw_h) continue;
             if (!obj_focus_active) resolve_sx();
+            if (obj_parked_outside_view(draw_w)) continue;
             bool hflip = (attr1 & 0x1000u) != 0;
             bool vflip = (attr1 & 0x2000u) != 0;
             const int source_y = nearest_source_pixel(line, sh, draw_h);
