@@ -74,6 +74,17 @@ void video_defaults_clamps_and_shared_state() {
     v.set_fps_readout(true);
     CHECK(v.fps_readout());
     CHECK(b.fps_readout_value());
+
+    // ...and the other direction: the flat setters must be visible through V2
+    // (a broken flat forwarder would otherwise pass every check above).
+    b.set_linear_filter(false);
+    CHECK(!v.linear_filter());
+    b.adjust_scale(1);
+    CHECK(v.scale() == 2);
+    b.set_fullscreen(1);
+    CHECK(v.fullscreen() == 1);
+    b.set_fps_readout(false);
+    CHECK(!v.fps_readout());
 }
 
 void video_safe_without_a_window() {
@@ -101,6 +112,19 @@ void video_safe_without_a_window() {
     v.set_resize_driven_view(true);
     v.set_view_margins(1, 2, 3, 4);
     v.set_presentation_anchor_top(true);
+
+    // The flat side of the same paths (forwarders): same no-ops, same state.
+    CHECK(b.px_per_mm_value() > 3.7f && b.px_per_mm_value() < 3.9f);
+    int fw = 0, fh = 0;
+    CHECK(!b.drawable_size(&fw, &fh));
+    std::vector<std::uint8_t> frame2;
+    CHECK(!b.copy_presented_frame(frame2, fw, fh));
+    b.present(px.data(), false);
+    b.interp_display_tick(px.data(), 2000u);
+    b.set_title("flat title");
+    b.set_view_margins(0, 0, 0, 0);
+    b.set_resize_driven_view(false);
+    b.set_presentation_anchor_top(false);
 
     // Surface size: rejects nonsense, accepts changes, idempotent on repeat.
     CHECK(!v.set_surface_size(0, 160));

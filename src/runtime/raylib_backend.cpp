@@ -395,10 +395,17 @@ bool RaylibBackend::ensure_sharp_target(RaylibBackend::Impl* impl, int factor) {
 #endif
 }
 
+// The refresh-rate probe's sanity range: raylib warns-and-returns 0 when the
+// monitor query is unimplemented, and the injectable RaylibApi (tests) can
+// return absurd values. Anything outside 1..kMaxSaneHz must never reach
+// interp_period_ns: 1e9/hz truncates to 0 for hz > 1e9, and a zero period
+// breaks the interp pacing (and divides by zero in VideoImpl::refresh_hz).
+static constexpr int kMaxSaneHz = 1000;
+
 void RaylibBackend::refresh_interp_mode(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     const int hz = impl->api->GetMonitorRefreshRate(impl->api->GetCurrentMonitor());
-    if (hz <= 0) return;
+    if (hz <= 0 || hz > kMaxSaneHz) return;  // unprobed/absurd: keep the last period
     const std::uint64_t period =
         1000000000ull / static_cast<std::uint64_t>(hz);
     if (period == impl->interp_period_ns) return;
@@ -1595,7 +1602,9 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     {
         const int hz = impl_->api->GetMonitorRefreshRate(impl_->api->GetCurrentMonitor());
         impl_->interp_period_ns =
-            hz > 0 ? 1000000000ull / static_cast<std::uint64_t>(hz) : 16666666u;
+            (hz > 0 && hz <= kMaxSaneHz)
+                ? 1000000000ull / static_cast<std::uint64_t>(hz)
+                : 16666666u;
         impl_->interp_tick_ns = 0;
     }
 
