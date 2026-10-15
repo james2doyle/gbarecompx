@@ -40,8 +40,10 @@ using gbarecomp::FxSettings;
 using gbarecomp::Input;
 using gbarecomp::InputSnapshot;
 using gbarecomp::kRayKeyX;
+using gbarecomp::Overlay;
 using gbarecomp::RaylibBackend;
 using gbarecomp::Result;
+using gbarecomp::TouchConfig;
 using gbarecomp::Video;
 
 void video_defaults_clamps_and_shared_state() {
@@ -324,6 +326,43 @@ void fx_defaults_roundtrip_and_shared_state() {
     b.reset_frame_blend();
 }
 
+void overlay_defaults_and_shared_state() {
+    RaylibBackend b;
+    Overlay& o = b.overlay();
+    CHECK(&b.overlay() == &o);
+
+    // Fresh backend: no pad.
+    CHECK(!o.touch_pad_visible());
+    CHECK(!b.touch_pad_visible_value());
+
+    // configure_touch stores the value struct: emulation turns the pad
+    // capability on, and the unsaved pad choice follows pad_default.
+    TouchConfig cfg;
+    cfg.policy = true;
+    cfg.claims = 1;
+    cfg.pad_default = 2;  // non-zero -> visible
+    cfg.emulate_touch = true;
+    cfg.pad_idle_hide_seconds = 5;
+    o.configure_touch(cfg);
+    CHECK(o.touch_pad_visible());
+    CHECK(b.touch_pad_visible_value());
+
+    // A saved choice wins from then on (pad_default no longer applies).
+    o.set_touch_pad_visible(false);
+    CHECK(!o.touch_pad_visible());
+    CHECK(!b.touch_pad_visible_value());
+    b.configure_touch(true, 1, 2, true, 5);
+    CHECK(!o.touch_pad_visible());  // saved: stays hidden
+    b.set_touch_pad_visible(true);
+    CHECK(o.touch_pad_visible());
+
+    // Config dir + overlay hook: null is a safe no-op in both views.
+    o.set_config_dir(nullptr);
+    b.set_touch_config_dir(nullptr);
+    o.set_host_overlay(nullptr);
+    b.set_host_overlay(nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -335,6 +374,7 @@ int main() {
     input_defaults_and_shared_state();
     input_safe_without_a_window();
     fx_defaults_roundtrip_and_shared_state();
+    overlay_defaults_and_shared_state();
 
     std::printf("raylib_backend_v2 tests: PASS\n");
     return 0;

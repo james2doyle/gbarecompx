@@ -163,6 +163,7 @@ struct RaylibBackend::Impl {
     std::unique_ptr<Audio> audio;
     std::unique_ptr<Input> input;
     std::unique_ptr<Fx> fx;
+    std::unique_ptr<Overlay> overlay;
     // Touch fast-forward pill state, refreshed by InputImpl::read() each pump
     // and consumed by pump()'s post-translate overlay (the SDL sibling does
     // the same). Plain state; false whenever input is not being read.
@@ -2103,6 +2104,107 @@ private:
 
     Impl* impl_;
 };
+// ── V2 concern: Overlay ──────────────────────────────────────────
+// The V2 `Overlay` interface over the backend's Impl state: the host
+// overlay hook, the touch policy (TouchConfig value struct), the touch
+// config dir, and pad visibility. The pad-visibility transition stays the
+// private static apply_touch_pad_visible (shared with InputImpl::read()'s
+// tap handling). The drawing side is RaylibOverlay, constructed by
+// VideoImpl::present per frame.
+class RaylibBackend::OverlayImpl final : public Overlay {
+public:
+    explicit OverlayImpl(Impl* impl) : impl_(impl) {}
+
+    void set_host_overlay(void (*overlay)(HostOverlay*)) override {
+        impl_->host_overlay = overlay;
+    }
+
+    void configure_touch(const TouchConfig& cfg) override {
+            // Unpack the value struct into the flat body's parameter names;
+            // the body below is the flat body verbatim.
+            const bool policy = cfg.policy;
+            const std::uint32_t claims = cfg.claims;
+            const int pad_default = cfg.pad_default;
+            const bool emulate_touch = cfg.emulate_touch;
+            const int pad_idle_hide_seconds = cfg.pad_idle_hide_seconds;
+
+        // Same policy as the SDL backend's configure_touch. One deliberate
+        // difference: SDL asks the OS to re-report the left mouse button as a
+        // touch finger (SDL_HINT_MOUSE_TOUCH_EVENTS); raylib has no such hint,
+        // so emulation is handled at poll time in pump() instead (left-drag
+        // feeds the same TouchTrack path as a finger).
+        impl_->touch_policy = policy;
+        impl_->touch_claims = claims;
+        impl_->touch_emulation = emulate_touch;
+        impl_->pad_idle_hide_seconds = std::max(0, pad_idle_hide_seconds);
+        impl_->pad_last_touch_ms = touch_clock_ms();
+        impl_->pad_idle_hidden = false;
+#if defined(__ANDROID__)
+        if (emulate_touch) impl_->touch_controls = true;
+#else
+        // A desktop session that asks for touch emulation also gets the pad
+        // capability so its toggle and layouts can be validated.
+        if (emulate_touch) impl_->touch_controls = true;
+#endif
+        if (!impl_->pad_choice_saved) {
+            const bool platform_default =
+#if defined(__ANDROID__)
+                true;
+#else
+                false;
+#endif
+            impl_->pad_visible = impl_->touch_controls &&
+                (pad_default < 0 ? platform_default : pad_default != 0);
+        }
+        TouchHub& hub = TouchHub::instance();
+        hub.set_claims(policy ? claims : 0);
+        // A game that owns long-press gets a snappier threshold; the engine's own
+        // settings long-press keeps its historical, deliberately slow 650 ms.
+        const bool game_long_press = policy && (claims & kTouchClaimLongPress);
+        hub.set_timing(350, game_long_press ? 450 : 650);
+        std::fprintf(stderr,
+                     "raylib_backend: touch policy=%s claims=0x%x pad=%s(%s) "
+                     "emulation=%s px_per_mm=%.2f insets=%d,%d,%d,%d\n",
+                     policy ? "game" : "none", static_cast<unsigned>(claims),
+                     impl_->pad_visible ? "visible" : "hidden",
+                     impl_->pad_choice_saved ? "saved" : "default",
+                     emulate_touch ? "on" : "off",
+                     static_cast<double>(impl_->px_per_mm),
+                     impl_->safe_left, impl_->safe_top, impl_->safe_right,
+                     impl_->safe_bottom);
+    }
+
+    void set_config_dir(const char* dir) override {
+        if (dir) impl_->touch_config_dir = dir;
+        if (impl_->touch_config_dir.empty()) return;
+        const std::string path = impl_->touch_config_dir + "/config.ini";
+        ini_scan_section(path.c_str(), "Touch",
+                         [this](const char* key, const char* val) {
+            if (detail::ci_equal(key, "pad_visible")) {
+                impl_->pad_visible =
+                    impl_->touch_controls && std::atoi(val) != 0;
+                impl_->pad_choice_saved = true;
+            } else if (detail::ci_equal(key, "toggle_x")) {
+                impl_->toggle_fx =
+                    std::clamp(static_cast<float>(std::atof(val)), 0.0f, 1.0f);
+                impl_->toggle_pos_saved = true;
+            } else if (detail::ci_equal(key, "toggle_y")) {
+                impl_->toggle_fy =
+                    std::clamp(static_cast<float>(std::atof(val)), 0.0f, 1.0f);
+                impl_->toggle_pos_saved = true;
+            }
+        });
+    }
+
+    void set_touch_pad_visible(bool visible) override {
+        apply_touch_pad_visible(impl_, visible);
+    }
+
+    bool touch_pad_visible() const override { return impl_->pad_visible; }
+
+private:
+    Impl* impl_;
+};
 // raylib's AudioCallback is `void (*)(void *framesOut, unsigned int frames)` --
 // it carries NO userdata (open upstream limitation: raysan5/raylib#3911). SDL
 // gives us userdata, raylib does not, so the callback can only reach backend
@@ -2149,6 +2251,7 @@ RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
     impl_->audio = std::make_unique<AudioImpl>(impl_.get());
     impl_->input = std::make_unique<InputImpl>(impl_.get());
     impl_->fx = std::make_unique<FxImpl>(impl_.get());
+    impl_->overlay = std::make_unique<OverlayImpl>(impl_.get());
     // Same layout as the SDL backend's kDefaultBinds/kHotkeyDefaults, so the
     // backend is usable before any config file is read.
     raylib_default_bindings(impl_->input_bindings);
@@ -2447,6 +2550,8 @@ Input& RaylibBackend::input() { return *impl_->input; }
 
 Fx& RaylibBackend::fx() { return *impl_->fx; }
 
+Overlay& RaylibBackend::overlay() { return *impl_->overlay; }
+
 // ── window state: implemented (pure state) ────────────────────────────────
 void RaylibBackend::set_title(const char* title) {
     impl_->video->set_title(title);
@@ -2499,7 +2604,7 @@ void RaylibBackend::set_presentation_anchor_top(bool anchor_top) {
 }
 
 void RaylibBackend::set_host_overlay(void (*overlay)(HostOverlay*)) {
-    impl_->host_overlay = overlay;
+    impl_->overlay->set_host_overlay(overlay);
 }
 
 void RaylibBackend::set_fps_readout(bool on) {
@@ -2605,72 +2710,17 @@ float RaylibBackend::lcd_deband_value() const {
 void RaylibBackend::configure_touch(bool policy, std::uint32_t claims,
                                     int pad_default, bool emulate_touch,
                                     int pad_idle_hide_seconds) {
-    // Same policy as the SDL backend's configure_touch. One deliberate
-    // difference: SDL asks the OS to re-report the left mouse button as a
-    // touch finger (SDL_HINT_MOUSE_TOUCH_EVENTS); raylib has no such hint,
-    // so emulation is handled at poll time in pump() instead (left-drag
-    // feeds the same TouchTrack path as a finger).
-    impl_->touch_policy = policy;
-    impl_->touch_claims = claims;
-    impl_->touch_emulation = emulate_touch;
-    impl_->pad_idle_hide_seconds = std::max(0, pad_idle_hide_seconds);
-    impl_->pad_last_touch_ms = touch_clock_ms();
-    impl_->pad_idle_hidden = false;
-#if defined(__ANDROID__)
-    if (emulate_touch) impl_->touch_controls = true;
-#else
-    // A desktop session that asks for touch emulation also gets the pad
-    // capability so its toggle and layouts can be validated.
-    if (emulate_touch) impl_->touch_controls = true;
-#endif
-    if (!impl_->pad_choice_saved) {
-        const bool platform_default =
-#if defined(__ANDROID__)
-            true;
-#else
-            false;
-#endif
-        impl_->pad_visible = impl_->touch_controls &&
-            (pad_default < 0 ? platform_default : pad_default != 0);
-    }
-    TouchHub& hub = TouchHub::instance();
-    hub.set_claims(policy ? claims : 0);
-    // A game that owns long-press gets a snappier threshold; the engine's own
-    // settings long-press keeps its historical, deliberately slow 650 ms.
-    const bool game_long_press = policy && (claims & kTouchClaimLongPress);
-    hub.set_timing(350, game_long_press ? 450 : 650);
-    std::fprintf(stderr,
-                 "raylib_backend: touch policy=%s claims=0x%x pad=%s(%s) "
-                 "emulation=%s px_per_mm=%.2f insets=%d,%d,%d,%d\n",
-                 policy ? "game" : "none", static_cast<unsigned>(claims),
-                 impl_->pad_visible ? "visible" : "hidden",
-                 impl_->pad_choice_saved ? "saved" : "default",
-                 emulate_touch ? "on" : "off",
-                 static_cast<double>(impl_->px_per_mm),
-                 impl_->safe_left, impl_->safe_top, impl_->safe_right,
-                 impl_->safe_bottom);
+    TouchConfig cfg;
+    cfg.policy = policy;
+    cfg.claims = claims;
+    cfg.pad_default = pad_default;
+    cfg.emulate_touch = emulate_touch;
+    cfg.pad_idle_hide_seconds = pad_idle_hide_seconds;
+    impl_->overlay->configure_touch(cfg);
 }
 
 void RaylibBackend::set_touch_config_dir(const char* dir) {
-    if (dir) impl_->touch_config_dir = dir;
-    if (impl_->touch_config_dir.empty()) return;
-    const std::string path = impl_->touch_config_dir + "/config.ini";
-    ini_scan_section(path.c_str(), "Touch",
-                     [this](const char* key, const char* val) {
-        if (detail::ci_equal(key, "pad_visible")) {
-            impl_->pad_visible =
-                impl_->touch_controls && std::atoi(val) != 0;
-            impl_->pad_choice_saved = true;
-        } else if (detail::ci_equal(key, "toggle_x")) {
-            impl_->toggle_fx =
-                std::clamp(static_cast<float>(std::atof(val)), 0.0f, 1.0f);
-            impl_->toggle_pos_saved = true;
-        } else if (detail::ci_equal(key, "toggle_y")) {
-            impl_->toggle_fy =
-                std::clamp(static_cast<float>(std::atof(val)), 0.0f, 1.0f);
-            impl_->toggle_pos_saved = true;
-        }
-    });
+    impl_->overlay->set_config_dir(dir);
 }
 
 // Pad geometry inputs from backend state. Pure: the same values pump()
@@ -2728,7 +2778,7 @@ void RaylibBackend::save_touch_config(const RaylibBackend::Impl* impl) {
 }
 
 void RaylibBackend::set_touch_pad_visible(bool visible) {
-    apply_touch_pad_visible(impl_.get(), visible);
+    impl_->overlay->set_touch_pad_visible(visible);
 }
 
 void RaylibBackend::apply_touch_pad_visible(RaylibBackend::Impl* impl, bool visible) {
@@ -2748,7 +2798,9 @@ void RaylibBackend::apply_touch_pad_visible(RaylibBackend::Impl* impl, bool visi
                  visible ? "shown" : "hidden");
 }
 
-bool RaylibBackend::touch_pad_visible_value() const { return impl_->pad_visible; }
+bool RaylibBackend::touch_pad_visible_value() const {
+    return impl_->overlay->touch_pad_visible();
+}
 
 // ── gamepad ──────────────────────────────────────────────────────────────
 bool RaylibBackend::gamepad_connected() const {

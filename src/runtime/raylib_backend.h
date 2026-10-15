@@ -69,6 +69,7 @@ public:
     Audio& audio();
     Input& input();
     Fx& fx();
+    Overlay& overlay();
 
     // ---- window state (implemented: pure state) --------------------------
     void set_title(const char* title) override;
@@ -171,6 +172,7 @@ private:
     class AudioImpl;
     class InputImpl;
     class FxImpl;
+    class OverlayImpl;
     std::unique_ptr<Impl> impl_;
 
     // raylib's AudioCallback carries no userdata (open upstream limitation:
