@@ -99,23 +99,31 @@ option(GBARECOMP_USE_RAYLIB
 
 set(GBARECOMP_RAYLIB_OK FALSE)
 if(GBARECOMP_USE_RAYLIB)
-    include(FetchContent)
-    # raylib 6.0, pinned by commit rather than tag: tags can be moved, SHAs
-    # cannot (matches this repo's submodule-pinning convention).
-    #   refs/tags/6.0 = dbc56a87da87d973a9c5baa4e7438a9d20121d28
-    set(GBARECOMP_RAYLIB_TAG "6.0"
-        CACHE STRING "raylib tag (pinned to the SHA below)")
-    set(GBARECOMP_RAYLIB_SHA "dbc56a87da87d973a9c5baa4e7438a9d20121d28"
-        CACHE STRING "raylib commit SHA to build against")
-    FetchContent_Declare(raylib
-        GIT_REPOSITORY https://github.com/raysan5/raylib.git
-        GIT_TAG ${GBARECOMP_RAYLIB_SHA}
-        GIT_SHALLOW FALSE)   # a shallow clone cannot resolve an arbitrary SHA
-    message(STATUS "gbarecompx: building raylib ${GBARECOMP_RAYLIB_TAG} "
-                   "(${GBARECOMP_RAYLIB_SHA})")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(raylib)
+    if(TARGET raylib)
+        # A parent project already provided the target (the release cross
+        # prefix via find_package(raylib CONFIG), Phase 4e): use it as-is --
+        # no FetchContent, no network, deterministic.
+        message(STATUS "gbarecompx: raylib target provided by the parent "
+                       "project (no fetch)")
+    else()
+        include(FetchContent)
+        # raylib 6.0, pinned by commit rather than tag: tags can be moved, SHAs
+        # cannot (matches this repo's submodule-pinning convention).
+        #   refs/tags/6.0 = dbc56a87da87d973a9c5baa4e7438a9d20121d28
+        set(GBARECOMP_RAYLIB_TAG "6.0"
+            CACHE STRING "raylib tag (pinned to the SHA below)")
+        set(GBARECOMP_RAYLIB_SHA "dbc56a87da87d973a9c5baa4e7438a9d20121d28"
+            CACHE STRING "raylib commit SHA to build against")
+        FetchContent_Declare(raylib
+            GIT_REPOSITORY https://github.com/raysan5/raylib.git
+            GIT_TAG ${GBARECOMP_RAYLIB_SHA}
+            GIT_SHALLOW FALSE)  # a shallow clone cannot resolve an arbitrary SHA
+        message(STATUS "gbarecompx: building raylib ${GBARECOMP_RAYLIB_TAG} "
+                       "(${GBARECOMP_RAYLIB_SHA})")
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(raylib)
+    endif()
     if(TARGET raylib)
         set(GBARECOMP_RAYLIB_OK TRUE)
         message(STATUS "gbarecompx: raylib 6 dependency available")
