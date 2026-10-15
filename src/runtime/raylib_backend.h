@@ -68,6 +68,7 @@ public:
     Video& video();
     Audio& audio();
     Input& input();
+    Fx& fx();
 
     // ---- window state (implemented: pure state) --------------------------
     void set_title(const char* title) override;
@@ -169,6 +170,7 @@ private:
     class VideoImpl;
     class AudioImpl;
     class InputImpl;
+    class FxImpl;
     std::unique_ptr<Impl> impl_;
 
     // raylib's AudioCallback carries no userdata (open upstream limitation:
@@ -207,6 +209,9 @@ private:
     // flat setter and InputImpl::read()'s tap handling (read() has no backend
     // object to call the flat method through).
     static void apply_touch_pad_visible(Impl* impl, bool visible);
+    // The [video] config block (Fx concern's loader): ini [video] -> the LCD
+    // group, transitioning the shader flag through Fx::apply.
+    static void load_video_config(Impl* impl, const char* dir);
     // Pad geometry inputs from backend state (pure, no raylib).
     static PadLayoutInputs pad_layout_inputs(const Impl* impl, int dw, int dh);
 };

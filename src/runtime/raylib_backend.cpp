@@ -162,6 +162,7 @@ struct RaylibBackend::Impl {
     std::unique_ptr<Video> video;
     std::unique_ptr<Audio> audio;
     std::unique_ptr<Input> input;
+    std::unique_ptr<Fx> fx;
     // Touch fast-forward pill state, refreshed by InputImpl::read() each pump
     // and consumed by pump()'s post-translate overlay (the SDL sibling does
     // the same). Plain state; false whenever input is not being read.
@@ -1978,6 +1979,130 @@ public:
 private:
     Impl* impl_;
 };
+// [video] config block (moved from load_input_config when the Fx concern
+// landed). A set GBARECOMP_LCD_SHADER env var wins (recorded at open);
+// without an explicit env choice the file decides, so the setting survives
+// restarts. The LCD transition goes through the Fx concern's apply().
+void RaylibBackend::load_video_config(RaylibBackend::Impl* impl, const char* dir) {
+    if (!dir || impl->lcd_env_override) return;
+    const std::string base = std::string(dir) + "/";
+    bool lcd = impl->lcd_shader;
+    float boost = impl->lcd_boost;
+    float dither = impl->lcd_dither;
+    float deband = impl->lcd_deband;
+    ini_scan_section((base + "config.ini").c_str(), "video",
+                     [&lcd, &boost, &dither, &deband](const char* key,
+                                                      const char* val) {
+        apply_lcd_shader_line(key, val, &lcd);
+        apply_lcd_boost_line(key, val, &boost);
+        apply_lcd_dither_line(key, val, &dither);
+        apply_lcd_deband_line(key, val, &deband);
+    });
+    impl->lcd_boost = boost;
+    impl->lcd_dither = dither;
+    impl->lcd_deband = deband;
+    if (lcd != impl->lcd_shader) {
+        FxSettings s = impl->fx->settings();
+        s.lcd = lcd;
+        impl->fx->apply(s);
+    }
+}
+
+// ── V2 concern: Fx ──────────────────────────────────────────────
+// The V2 `Fx` interface over the backend's Impl state. settings()/apply()
+// assemble/write the FxSettings snapshot (the flat generation goes through
+// them, per plan §3.5); the per-field transitions are private and carry
+// the exact old semantics (clamps, live shader updates, blend-history
+// resets). apply() touches only changed fields. Note: frame_blend is a
+// bool under the hood — values round-trip as 0.0/1.0.
+class RaylibBackend::FxImpl final : public Fx {
+public:
+    explicit FxImpl(Impl* impl) : impl_(impl) {}
+
+    FxSettings settings() const override {
+        FxSettings s;
+        s.frame_interp = impl_->frame_interp_enabled;
+        s.frame_blend = impl_->frame_blend_enabled ? 1.0f : 0.0f;
+        s.lcd = impl_->lcd_shader;
+        s.lcd_boost = impl_->lcd_boost;
+        s.lcd_dither = impl_->lcd_dither;
+        s.lcd_deband = impl_->lcd_deband;
+        return s;
+    }
+
+    void apply(const FxSettings& s) override {
+        // Changed fields only: the private transitions below carry
+        // blend-history resets and post-target releases that must fire on
+        // real toggles, not on every apply() (a host may sync its config
+        // each frame).
+        if (s.frame_interp != impl_->frame_interp_enabled)
+            set_frame_interp(s.frame_interp);
+        const bool blend = s.frame_blend != 0.0f;
+        if (blend != impl_->frame_blend_enabled) set_frame_blend(blend);
+        if (s.lcd != impl_->lcd_shader) set_lcd_shader(s.lcd);
+        if (s.lcd_boost != impl_->lcd_boost) set_lcd_boost(s.lcd_boost);
+        if (s.lcd_dither != impl_->lcd_dither) set_lcd_dither(s.lcd_dither);
+        if (s.lcd_deband != impl_->lcd_deband) set_lcd_deband(s.lcd_deband);
+    }
+
+    void reset_frame_blend() override {
+#if defined(GBARECOMP_HAVE_FRAME_BLEND)
+        if (impl_->frame_blend) recomp_frame_blend_reset(impl_->frame_blend);
+#endif
+    }
+
+private:
+    void set_frame_interp(bool enabled) {
+        impl_->frame_interp_enabled = enabled;
+#if defined(GBARECOMP_HAVE_FRAME_BLEND)
+        // Toggling interp changes the present cadence (fresh vs holding), so stale
+        // history would smear — same reset the SDL backend does here.
+        if (impl_->frame_blend) recomp_frame_blend_reset(impl_->frame_blend);
+#endif
+    }
+
+    void set_frame_blend(bool enabled) {
+        impl_->frame_blend_enabled = enabled;
+#if defined(GBARECOMP_HAVE_FRAME_BLEND)
+        if (impl_->frame_blend) recomp_frame_blend_reset(impl_->frame_blend);
+#endif
+    }
+
+    void set_lcd_shader(bool enabled) {
+        // A set GBARECOMP_LCD_SHADER pins on/off above flags, config and menu.
+        if (impl_->lcd_env_override) return;
+        impl_->lcd_shader = enabled;
+#if defined(GBARECOMP_USE_RAYLIB)
+        // Enabling while the GL context is live compiles immediately; enabling
+        // before open (or via config) compiles at open(). The program is kept
+        // after disabling so toggling never hitches on a recompile -- close()
+        // is what releases it.
+        if (enabled && impl_->open && impl_->api->IsWindowReady()) load_lcd_shader(impl_);
+#else
+        (void)enabled;
+#endif
+    }
+
+    void set_lcd_boost(float boost) {
+        impl_->lcd_boost = lcd_clamp_boost(boost);
+    }
+
+    void set_lcd_dither(float dither) {
+        impl_->lcd_dither = lcd_clamp_dither(dither);
+        // Strength 0 disables the pass: drop the target so a dead fullscreen
+        // buffer never lingers (mirrors the sharp-filter release rule).
+        if (impl_->lcd_dither == 0.0f) release_post_targets(impl_);
+    }
+
+    void set_lcd_deband(float deband) {
+        impl_->lcd_deband = lcd_clamp_deband(deband);
+        // As with dither-off: toggling a pass drops the chain targets; the
+        // surviving pass (if any) recreates what it needs next present.
+        if (impl_->lcd_deband == 0.0f) release_post_targets(impl_);
+    }
+
+    Impl* impl_;
+};
 // raylib's AudioCallback is `void (*)(void *framesOut, unsigned int frames)` --
 // it carries NO userdata (open upstream limitation: raysan5/raylib#3911). SDL
 // gives us userdata, raylib does not, so the callback can only reach backend
@@ -2023,6 +2148,7 @@ RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
     impl_->video = std::make_unique<VideoImpl>(impl_.get());
     impl_->audio = std::make_unique<AudioImpl>(impl_.get());
     impl_->input = std::make_unique<InputImpl>(impl_.get());
+    impl_->fx = std::make_unique<FxImpl>(impl_.get());
     // Same layout as the SDL backend's kDefaultBinds/kHotkeyDefaults, so the
     // backend is usable before any config file is read.
     raylib_default_bindings(impl_->input_bindings);
@@ -2319,6 +2445,8 @@ Audio& RaylibBackend::audio() { return *impl_->audio; }
 
 Input& RaylibBackend::input() { return *impl_->input; }
 
+Fx& RaylibBackend::fx() { return *impl_->fx; }
+
 // ── window state: implemented (pure state) ────────────────────────────────
 void RaylibBackend::set_title(const char* title) {
     impl_->video->set_title(title);
@@ -2336,26 +2464,8 @@ void RaylibBackend::load_input_config(const char* dir, bool assist_tools_default
                                       int fast_forward_multiplier_default) {
     impl_->input->load_config(dir, assist_tools_default,
                               fast_forward_multiplier_default);
-    // [video] lcd_shader: the persistent opt-in for the GPU subpixel grid.
-    // (Moves to the Fx concern with the rest of the LCD group.)
-    if (!dir || impl_->lcd_env_override) return;
-    const std::string base = std::string(dir) + "/";
-    bool lcd = impl_->lcd_shader;
-    float boost = impl_->lcd_boost;
-    float dither = impl_->lcd_dither;
-    float deband = impl_->lcd_deband;
-    ini_scan_section((base + "config.ini").c_str(), "video",
-                     [&lcd, &boost, &dither, &deband](const char* key,
-                                                      const char* val) {
-        apply_lcd_shader_line(key, val, &lcd);
-        apply_lcd_boost_line(key, val, &boost);
-        apply_lcd_dither_line(key, val, &dither);
-        apply_lcd_deband_line(key, val, &deband);
-    });
-    impl_->lcd_boost = boost;
-    impl_->lcd_dither = dither;
-    impl_->lcd_deband = deband;
-    if (lcd != impl_->lcd_shader) set_lcd_shader(lcd);
+    // [video] lcd_shader: the Fx concern's config loader.
+    load_video_config(impl_.get(), dir);
 }
 
 void RaylibBackend::set_volume(int pct) { impl_->audio->set_volume(pct); }
@@ -2400,29 +2510,31 @@ bool RaylibBackend::fps_readout_value() const {
 }
 
 void RaylibBackend::set_frame_interp(bool enabled) {
-    impl_->frame_interp_enabled = enabled;
-#if defined(GBARECOMP_HAVE_FRAME_BLEND)
-    // Toggling interp changes the present cadence (fresh vs holding), so stale
-    // history would smear — same reset the SDL backend does here.
-    if (impl_->frame_blend) recomp_frame_blend_reset(impl_->frame_blend);
-#endif
+    FxSettings s = impl_->fx->settings();
+    s.frame_interp = enabled;
+    impl_->fx->apply(s);
+    // The flat setter's blend-history reset was unconditional;
+    // apply() fires it only on a real toggle, so keep it here.
+    impl_->fx->reset_frame_blend();
 }
 
-bool RaylibBackend::frame_interp() const { return impl_->frame_interp_enabled; }
+bool RaylibBackend::frame_interp() const {
+    return impl_->fx->settings().frame_interp;
+}
 
 void RaylibBackend::set_frame_blend(bool enabled) {
-    impl_->frame_blend_enabled = enabled;
-#if defined(GBARECOMP_HAVE_FRAME_BLEND)
-    if (impl_->frame_blend) recomp_frame_blend_reset(impl_->frame_blend);
-#endif
+    FxSettings s = impl_->fx->settings();
+    s.frame_blend = enabled ? 1.0f : 0.0f;
+    impl_->fx->apply(s);
+    impl_->fx->reset_frame_blend();  // same unconditional reset
 }
 
-bool RaylibBackend::frame_blend_value() const { return impl_->frame_blend_enabled; }
+bool RaylibBackend::frame_blend_value() const {
+    return impl_->fx->settings().frame_blend != 0.0f;
+}
 
 void RaylibBackend::reset_frame_blend() {
-#if defined(GBARECOMP_HAVE_FRAME_BLEND)
-    if (impl_->frame_blend) recomp_frame_blend_reset(impl_->frame_blend);
-#endif
+    impl_->fx->reset_frame_blend();
 }
 
 void RaylibBackend::set_audio_enabled(bool enabled) {
@@ -2450,45 +2562,44 @@ void RaylibBackend::set_runtime_ui(::RecompRuntimeUi* ui) {
 }
 
 void RaylibBackend::set_lcd_shader(bool enabled) {
-    // A set GBARECOMP_LCD_SHADER pins on/off above flags, config and menu.
-    if (impl_->lcd_env_override) return;
-    impl_->lcd_shader = enabled;
-#if defined(GBARECOMP_USE_RAYLIB)
-    // Enabling while the GL context is live compiles immediately; enabling
-    // before open (or via config) compiles at open(). The program is kept
-    // after disabling so toggling never hitches on a recompile -- close()
-    // is what releases it.
-    if (enabled && impl_->open && impl_->api->IsWindowReady()) load_lcd_shader(impl_.get());
-#else
-    (void)enabled;
-#endif
+    FxSettings s = impl_->fx->settings();
+    s.lcd = enabled;
+    impl_->fx->apply(s);
 }
 
-bool RaylibBackend::lcd_shader_enabled() const { return impl_->lcd_shader; }
+bool RaylibBackend::lcd_shader_enabled() const {
+    return impl_->fx->settings().lcd;
+}
 
 void RaylibBackend::set_lcd_boost(float boost) {
-    impl_->lcd_boost = lcd_clamp_boost(boost);
+    FxSettings s = impl_->fx->settings();
+    s.lcd_boost = boost;
+    impl_->fx->apply(s);
 }
 
-float RaylibBackend::lcd_boost_value() const { return impl_->lcd_boost; }
+float RaylibBackend::lcd_boost_value() const {
+    return impl_->fx->settings().lcd_boost;
+}
 
 void RaylibBackend::set_lcd_dither(float dither) {
-    impl_->lcd_dither = lcd_clamp_dither(dither);
-    // Strength 0 disables the pass: drop the target so a dead fullscreen
-    // buffer never lingers (mirrors the sharp-filter release rule).
-    if (impl_->lcd_dither == 0.0f) release_post_targets(impl_.get());
+    FxSettings s = impl_->fx->settings();
+    s.lcd_dither = dither;
+    impl_->fx->apply(s);
 }
 
-float RaylibBackend::lcd_dither_value() const { return impl_->lcd_dither; }
+float RaylibBackend::lcd_dither_value() const {
+    return impl_->fx->settings().lcd_dither;
+}
 
 void RaylibBackend::set_lcd_deband(float deband) {
-    impl_->lcd_deband = lcd_clamp_deband(deband);
-    // As with dither-off: toggling a pass drops the chain targets; the
-    // surviving pass (if any) recreates what it needs next present.
-    if (impl_->lcd_deband == 0.0f) release_post_targets(impl_.get());
+    FxSettings s = impl_->fx->settings();
+    s.lcd_deband = deband;
+    impl_->fx->apply(s);
 }
 
-float RaylibBackend::lcd_deband_value() const { return impl_->lcd_deband; }
+float RaylibBackend::lcd_deband_value() const {
+    return impl_->fx->settings().lcd_deband;
+}
 
 // ── touch / virtual pad ──────────────────────────────────────────────────
 void RaylibBackend::configure_touch(bool policy, std::uint32_t claims,

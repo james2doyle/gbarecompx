@@ -35,6 +35,8 @@ namespace {
 using gbarecomp::Audio;
 using gbarecomp::Err;
 using gbarecomp::Events;
+using gbarecomp::Fx;
+using gbarecomp::FxSettings;
 using gbarecomp::Input;
 using gbarecomp::InputSnapshot;
 using gbarecomp::kRayKeyX;
@@ -259,6 +261,69 @@ void input_safe_without_a_window() {
     b.haptic_pulse(50, 1.0f);
 }
 
+void fx_defaults_roundtrip_and_shared_state() {
+    RaylibBackend b;
+    Fx& f = b.fx();
+    CHECK(&b.fx() == &f);
+
+    // Defaults mirror the flat generation's.
+    const FxSettings d = f.settings();
+    CHECK(!d.frame_interp);
+    CHECK(d.frame_blend == 0.0f);
+    CHECK(!d.lcd);
+    CHECK(d.lcd_boost == 1.0f && d.lcd_dither == 1.0f && d.lcd_deband == 0.0f);
+
+    // Flat setters -> settings() (V2), both directions.
+    b.set_frame_interp(true);
+    CHECK(f.settings().frame_interp);
+    CHECK(b.frame_interp());
+    b.set_frame_blend(true);
+    CHECK(f.settings().frame_blend == 1.0f);
+    CHECK(b.frame_blend_value());
+    f.apply(FxSettings{});  // defaults: toggles both back off
+    CHECK(!f.settings().frame_interp);
+    CHECK(f.settings().frame_blend == 0.0f);
+
+    // A full snapshot round-trips through settings(); the flat LCD getters
+    // agree.
+    FxSettings want;
+    want.frame_interp = true;
+    want.frame_blend = 1.0f;
+    want.lcd = true;
+    want.lcd_boost = 1.25f;
+    want.lcd_dither = 0.5f;
+    want.lcd_deband = 0.25f;
+    f.apply(want);
+    const FxSettings got = f.settings();
+    CHECK(got.frame_interp == want.frame_interp);
+    CHECK(got.frame_blend == want.frame_blend);
+    CHECK(got.lcd == want.lcd);
+    CHECK(got.lcd_boost == want.lcd_boost);
+    CHECK(got.lcd_dither == want.lcd_dither);
+    CHECK(got.lcd_deband == want.lcd_deband);
+    CHECK(b.lcd_shader_enabled());
+    CHECK(b.lcd_boost_value() == 1.25f);
+    CHECK(b.lcd_dither_value() == 0.5f);
+    CHECK(b.lcd_deband_value() == 0.25f);
+
+    // Out-of-range values clamp like the flat setters (shared policy:
+    // boost [1,3], dither [0,2], deband [0,16]).
+    FxSettings wild;
+    wild.lcd_boost = 99.0f;
+    wild.lcd_dither = -5.0f;
+    wild.lcd_deband = 99.0f;
+    f.apply(wild);
+    const FxSettings clamped = f.settings();
+    CHECK(clamped.lcd_boost == 3.0f);
+    CHECK(clamped.lcd_dither == 0.0f);
+    CHECK(clamped.lcd_deband == 16.0f);
+
+    // reset_frame_blend is a safe no-op unopened (no history yet), through
+    // both views.
+    f.reset_frame_blend();
+    b.reset_frame_blend();
+}
+
 }  // namespace
 
 int main() {
@@ -269,6 +334,7 @@ int main() {
     audio_safe_without_a_device();
     input_defaults_and_shared_state();
     input_safe_without_a_window();
+    fx_defaults_roundtrip_and_shared_state();
 
     std::printf("raylib_backend_v2 tests: PASS\n");
     return 0;
