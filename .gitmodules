@@ -1,0 +1,16 @@
+[submodule "external/arm-recomp-core"]
+	path = external/arm-recomp-core
+	url = https://github.com/mstan/arm-recomp-core.git
+	# The pinned upstream commit needs the local patch in
+	# tools/patches/arm-recomp-core-local.patch (configure fails loudly
+	# without it). `dirty` keeps the patched worktree out of `git status`.
+	ignore = dirty
+[submodule "platform/android/third_party/SDL"]
+	path = platform/android/third_party/SDL
+	url = https://github.com/mstan/SDL.git
+[submodule "external/recomp-net"]
+	path = external/recomp-net
+	url = https://github.com/RetroPortingToolKit/recomp-net.git
+[submodule "external/rbengine"]
+	path = external/rbengine
+	url = https://github.com/RetroPortingToolKit/rbengine.git

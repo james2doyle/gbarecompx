@@ -1,0 +1,121 @@
+# ci.yml — gbarecompx display-free CI.
+#
+# Runs everything that needs no literal display:
+#   * stub   — the framework with raylib OFF (seam compile-check + pure tests)
+#   * raylib — the framework with raylib 6 ON (fetched by pinned SHA) + full ctest
+#   * guard  — the seam-completeness checker and its self-tests (once ported)
+#
+# The rlsw headless tier is a required V2 deliverable (plan §2/§5.4): its
+# `headless` job is added here in Phase 5, once Spike S1 fixes the build
+# mechanism — the exact CMake flags are S1's output, do not guess them here.
+# Display-dependent tests are NOT part of these jobs: when the GL
+# present/readback integration test lands in this repo it runs under the
+# headless tier (no display at all) or in a separate Xvfb job (virtual
+# display; still no literal display).
+#
+# Keep every job green on every push: the public release requires it.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stub:
+    name: framework (raylib OFF)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Submodules
+        run: git submodule update --init --recursive
+
+      - name: Submodule patches
+        run: |
+          # arm-recomp-core carries a local patch (plan Phase 0):
+          # in-tree change on top of the pinned upstream submodule.
+          if [ -f tools/patches/arm-recomp-core-local.patch ]; then
+            git -C external/arm-recomp-core apply \
+              ../../tools/patches/arm-recomp-core-local.patch
+          fi
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git ca-certificates
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-stub -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGBARECOMP_USE_RAYLIB=OFF
+
+      - name: Build
+        run: cmake --build build-stub --parallel
+
+      - name: Test
+        run: ctest --test-dir build-stub --output-on-failure
+
+  raylib:
+    name: framework (raylib 6 ON)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Submodules
+        run: git submodule update --init --recursive
+
+      - name: Submodule patches
+        run: |
+          if [ -f tools/patches/arm-recomp-core-local.patch ]; then
+            git -C external/arm-recomp-core apply \
+              ../../tools/patches/arm-recomp-core-local.patch
+          fi
+
+      - name: System packages (GL + X11 headers for the raylib build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git ca-certificates \
+            libgl-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxkbcommon-dev \
+            libfreetype-dev libharfbuzz-dev
+
+      - name: Configure (fetches raylib 6 by pinned SHA)
+        run: >
+          cmake -S . -B build-raylib -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGBARECOMP_USE_RAYLIB=ON
+
+      - name: Build
+        run: cmake --build build-raylib --parallel
+
+      - name: Test
+        run: ctest --test-dir build-raylib --output-on-failure
+
+  guard:
+    name: seam completeness guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard + self-tests
+        run: |
+          if [ -f tools/check_raylib_backend_complete.py ]; then
+            python3 tools/check_raylib_backend_complete.py
+            python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
+          else
+            echo "completeness checker not ported into this tree yet (release phase)"
+          fi
