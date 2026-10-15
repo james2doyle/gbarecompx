@@ -13,6 +13,7 @@
 // CHECK (not <cassert>): Release erases assert() via -DNDEBUG; see BRINGUP
 // "vacuous test" finding.
 #include "raylib_backend.h"
+#include "raylib_keymap.h"
 #include "window_backend.h"
 
 #include <cstdint>
@@ -33,6 +34,10 @@ namespace {
 
 using gbarecomp::Audio;
 using gbarecomp::Err;
+using gbarecomp::Events;
+using gbarecomp::Input;
+using gbarecomp::InputSnapshot;
+using gbarecomp::kRayKeyX;
 using gbarecomp::RaylibBackend;
 using gbarecomp::Result;
 using gbarecomp::Video;
@@ -195,6 +200,65 @@ void audio_safe_without_a_device() {
     b.push_audio_samples(samples.data(), samples.size());
 }
 
+void input_defaults_and_shared_state() {
+    RaylibBackend b;
+    Input& in = b.input();
+    CHECK(&b.input() == &in);
+
+    // Defaults mirror the flat generation's.
+    CHECK(in.assist_tools_enabled());
+    CHECK(b.assist_tools_enabled());
+    CHECK(in.fast_forward_multiplier() == 4);
+    CHECK(b.fast_forward_multiplier() == 4);
+    CHECK(!in.gamepad_connected());
+    CHECK(!b.gamepad_connected());
+
+    // bindings() is the live table (stable address; the ctor's default seed:
+    // index 0 = A = X, per raylib_keymap.h).
+    CHECK(&in.bindings() == &in.bindings());
+    CHECK(in.bindings().gba_key[0] == kRayKeyX);
+
+    // load_config(nullptr, ...) reseeds the defaults (assist tools + clamped
+    // multiplier) without touching a file.
+    in.load_config(nullptr, false, 7);
+    CHECK(!in.assist_tools_enabled());
+    CHECK(!b.assist_tools_enabled());
+    CHECK(in.fast_forward_multiplier() == 7);
+    in.load_config(nullptr, true, 99);
+    CHECK(in.assist_tools_enabled());
+    CHECK(in.fast_forward_multiplier() == 10);  // clamped
+}
+
+void input_safe_without_a_window() {
+    RaylibBackend b;
+    Input& in = b.input();
+
+    // read() unopened resets the snapshot to all-up levels.
+    InputSnapshot s;
+    s.mods = 0xFFFFu;
+    s.close_requested = true;
+    s.pad_connected = true;
+    s.hold(kRayKeyX);
+    in.read(s);
+    CHECK(s.mods == 0u);
+    CHECK(!s.close_requested);
+    CHECK(!s.pad_connected);
+    CHECK(s.held_key_count == 0);
+
+    // The flat pump composes the same way and stays quiet unopened.
+    const Events ev = b.pump();
+    CHECK(!ev.fast_forward);
+    CHECK(!ev.quit);
+    CHECK(ev.save_slot == 0 && ev.load_slot == 0);
+    CHECK(ev.keyinput == 0x03FF);
+
+    // rumble/haptic are safe no-ops without a pad.
+    in.rumble(0.5f, 0.5f, 100);
+    in.haptic_pulse(50, 1.0f);
+    b.gamepad_rumble(0.5f, 0.5f, 100);
+    b.haptic_pulse(50, 1.0f);
+}
+
 }  // namespace
 
 int main() {
@@ -203,6 +267,8 @@ int main() {
     video_refresh_hz_estimate();
     audio_defaults_and_shared_state();
     audio_safe_without_a_device();
+    input_defaults_and_shared_state();
+    input_safe_without_a_window();
 
     std::printf("raylib_backend_v2 tests: PASS\n");
     return 0;

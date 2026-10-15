@@ -67,6 +67,7 @@ public:
     // forward to it.
     Video& video();
     Audio& audio();
+    Input& input();
 
     // ---- window state (implemented: pure state) --------------------------
     void set_title(const char* title) override;
@@ -167,6 +168,7 @@ private:
     // they can reach the private static helpers below).
     class VideoImpl;
     class AudioImpl;
+    class InputImpl;
     std::unique_ptr<Impl> impl_;
 
     // raylib's AudioCallback carries no userdata (open upstream limitation:
@@ -201,6 +203,10 @@ private:
     static bool ensure_post_target(Impl* impl, int which, int w, int h);
     // Touch config persistence (pure file I/O, no raylib).
     static void save_touch_config(const Impl* impl);
+    // Pad visibility transition (state + persistence + logging), shared by the
+    // flat setter and InputImpl::read()'s tap handling (read() has no backend
+    // object to call the flat method through).
+    static void apply_touch_pad_visible(Impl* impl, bool visible);
     // Pad geometry inputs from backend state (pure, no raylib).
     static PadLayoutInputs pad_layout_inputs(const Impl* impl, int dw, int dh);
 };

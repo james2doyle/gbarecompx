@@ -161,6 +161,11 @@ struct RaylibBackend::Impl {
     // forward into them).
     std::unique_ptr<Video> video;
     std::unique_ptr<Audio> audio;
+    std::unique_ptr<Input> input;
+    // Touch fast-forward pill state, refreshed by InputImpl::read() each pump
+    // and consumed by pump()'s post-translate overlay (the SDL sibling does
+    // the same). Plain state; false whenever input is not being read.
+    bool touch_ff_held = false;
     // Audio claim (V2 ownership handshake): claim() succeeds once per
     // open when the device came up; reset by open()/close().
     bool audio_claimed = false;
@@ -1450,6 +1455,529 @@ private:
     Impl* impl_;
 };
 
+// ── V2 concern: Input ───────────────────────────────────────────
+// The V2 `Input` interface over the backend's Impl state. read() is the
+// snapshot fill (levels only) that used to sit at the top of the flat
+// pump(); the flat pump keeps the composition (translate_input is the only
+// edge producer) plus the touch-FF post-translate overlay, exactly as the
+// SDL sibling does. load_config is the input half of load_input_config;
+// the [video] LCD block stays behind until the Fx step.
+class RaylibBackend::InputImpl final : public Input {
+public:
+    explicit InputImpl(Impl* impl) : impl_(impl) {}
+
+    void read(InputSnapshot& out) override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!impl_->open || !impl_->api->IsWindowReady()) {
+            impl_->touch_ff_held = false;
+            out = InputSnapshot{};
+            return;
+        }
+
+        // raylib is PULL-based: there is no KEYDOWN event with a repeat flag, so
+        // every edge in Events is recovered by translate_input() from prior-pump
+        // state (InputEdges). This function only READS the current level into a
+        // snapshot; all policy lives in input_translate.h, tested without a
+        // display.
+        InputSnapshot s;
+        s.now_ms = impl_->clock->millis();
+        s.close_requested = impl_->api->WindowShouldClose();
+
+        unsigned mods = kModNone;
+        if (impl_->api->IsKeyDown(KEY_LEFT_SHIFT) || impl_->api->IsKeyDown(KEY_RIGHT_SHIFT))
+            mods |= kModShift;
+        if (impl_->api->IsKeyDown(KEY_LEFT_CONTROL) || impl_->api->IsKeyDown(KEY_RIGHT_CONTROL))
+            mods |= kModCtrl;
+        if (impl_->api->IsKeyDown(KEY_LEFT_ALT) || impl_->api->IsKeyDown(KEY_RIGHT_ALT))
+            mods |= kModAlt;
+        s.mods = mods;
+
+        // Poll exactly the bound keys, not the whole keyboard: IsKeyDown per key
+        // is cheap, and this keeps the snapshot identical in shape to what the
+        // config file means.
+        const InputBindings& b = impl_->input_bindings;
+        auto poll = [&](HostKey k) {
+            if (k != kHostKeyNone && impl_->api->IsKeyDown(k)) s.hold(k);
+        };
+        for (int bit = 0; bit < 10; ++bit) poll(b.gba_key[bit]);
+        for (int i = 0; i < 9; ++i) poll(b.slot_key[i]);
+        poll(b.escape_key);
+        for (int h = 0; h < HK_COUNT; ++h) poll(b.hotkeys[h].key);
+        poll(b.assist_key[0]);
+        poll(b.assist_key[1]);
+
+        // Gamepad. The ONLY platform-specific part: native buttons/axes into
+        // canonical PadButton/PadAxis ids plus a GamepadSnapshot. The button->GBA
+        // mapping and stick deadzone live in gamepad_map.h, shared with the SDL
+        // backend. The native->canonical table is explicit so an upstream
+        // reordering cannot silently remap a binding.
+#if defined(__ANDROID__)
+        // No GLFW on Android: raylib's own (capped, unfiltered) slots are all
+        // there is.
+        s.pad_connected = impl_->api->IsGamepadAvailable(0);
+        if (s.pad_connected) {
+            static const struct {
+                int ray_button;
+                int pad_button;
+                std::uint16_t gba_bit;   // 0 when the button has no GBA meaning
+            } kPadMap[] = {
+                {GAMEPAD_BUTTON_RIGHT_FACE_DOWN, kPadA, kGbaKeyA},
+                {GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, kPadB, kGbaKeyB},
+                {GAMEPAD_BUTTON_RIGHT_FACE_LEFT, kPadX, 0},
+                {GAMEPAD_BUTTON_RIGHT_FACE_UP, kPadY, 0},
+                {GAMEPAD_BUTTON_LEFT_TRIGGER_1, kPadLeftBumper, kGbaKeyL},
+                {GAMEPAD_BUTTON_RIGHT_TRIGGER_1, kPadRightBumper, kGbaKeyR},
+                {GAMEPAD_BUTTON_MIDDLE_LEFT, kPadBack, kGbaKeySelect},
+                {GAMEPAD_BUTTON_MIDDLE_RIGHT, kPadStart, kGbaKeyStart},
+                {GAMEPAD_BUTTON_LEFT_THUMB, kPadLeftThumb, 0},
+                {GAMEPAD_BUTTON_RIGHT_THUMB, kPadRightThumb, 0},
+                {GAMEPAD_BUTTON_LEFT_FACE_UP, kPadDpadUp, kGbaKeyUp},
+                {GAMEPAD_BUTTON_LEFT_FACE_RIGHT, kPadDpadRight, kGbaKeyRight},
+                {GAMEPAD_BUTTON_LEFT_FACE_DOWN, kPadDpadDown, kGbaKeyDown},
+                {GAMEPAD_BUTTON_LEFT_FACE_LEFT, kPadDpadLeft, kGbaKeyLeft},
+                {GAMEPAD_BUTTON_LEFT_TRIGGER_2, kPadLeftTrigger, 0},
+                {GAMEPAD_BUTTON_RIGHT_TRIGGER_2, kPadRightTrigger, 0},
+            };
+            GamepadSnapshot pad;
+            for (const auto& m : kPadMap) {
+                if (impl_->api->IsGamepadButtonDown(0, m.ray_button)) {
+                    s.hold_pad_button(m.pad_button);
+                    pad.buttons |= m.gba_bit;
+                }
+            }
+            // raylib axes are float -1..1; the shared mapping works in SDL's int
+            // units (-32768..32767), so scale. Triggers rest at -1 and press to
+            // +1, which lands on the same side of the 16000 threshold as SDL's
+            // 0..32767 range does.
+            const float lx = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+            const float ly = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+            pad.stick_x = static_cast<int>(lx * 32767.0f);
+            pad.stick_y = static_cast<int>(ly * 32767.0f);
+            s.hold_pad_axis(kPadAxisLeftX, pad.stick_x);
+            s.hold_pad_axis(kPadAxisLeftY, pad.stick_y);
+            s.hold_pad_axis(kPadAxisRightX, static_cast<int>(
+                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_X) * 32767.0f));
+            s.hold_pad_axis(kPadAxisRightY, static_cast<int>(
+                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_Y) * 32767.0f));
+            s.hold_pad_axis(kPadAxisLeftTrigger, static_cast<int>(
+                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_TRIGGER) * 32767.0f));
+            s.hold_pad_axis(kPadAxisRightTrigger, static_cast<int>(
+                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_TRIGGER) * 32767.0f));
+            // gamepad_to_keyinput() returns ACTIVE-LOW; the snapshot carries
+            // ACTIVE-HIGH pressed bits (see input_translate.h), so invert once.
+            s.pad_gba_bits =
+                static_cast<std::uint16_t>(~gamepad_to_keyinput(pad) & kGbaKeyAll);
+        }
+#else
+        // Desktop: select through GLFW's standard-mapping layer, NOT raylib slot
+        // 0 (see find_standard_pad: phantoms eat raylib's 4 slots while a real
+        // pad sits beyond them). GUIDE has no canonical/PadButton slot and no
+        // GBA meaning -- skipped, same as the SDL table.
+        impl_->pad_glfw_index = find_standard_pad();
+        impl_->pad_raylib_slot = (impl_->pad_glfw_index >= 0 &&
+                                  impl_->pad_glfw_index < 4)
+                                     ? impl_->pad_glfw_index
+                                     : -1;
+        s.pad_connected = impl_->pad_glfw_index >= 0;
+        if (s.pad_connected) {
+            RayGlfwGamepadState st{};
+            if (!glfwGetGamepadState(impl_->pad_glfw_index, &st)) {
+                // Disconnected mid-frame: report nothing, rescan next pump.
+                s.pad_connected = false;
+                impl_->pad_glfw_index = -1;
+                impl_->pad_raylib_slot = -1;
+            } else {
+                static const struct {
+                    int glfw_button;
+                    int pad_button;
+                    std::uint16_t gba_bit;  // 0: no GBA meaning
+                } kPadMap[] = {
+                    {kGlfwBtnA, kPadA, kGbaKeyA},
+                    {kGlfwBtnB, kPadB, kGbaKeyB},
+                    {kGlfwBtnX, kPadX, 0},
+                    {kGlfwBtnY, kPadY, 0},
+                    {kGlfwBtnLB, kPadLeftBumper, kGbaKeyL},
+                    {kGlfwBtnRB, kPadRightBumper, kGbaKeyR},
+                    {kGlfwBtnBack, kPadBack, kGbaKeySelect},
+                    {kGlfwBtnStart, kPadStart, kGbaKeyStart},
+                    {kGlfwBtnLThumb, kPadLeftThumb, 0},
+                    {kGlfwBtnRThumb, kPadRightThumb, 0},
+                    {kGlfwBtnDUp, kPadDpadUp, kGbaKeyUp},
+                    {kGlfwBtnDRight, kPadDpadRight, kGbaKeyRight},
+                    {kGlfwBtnDDown, kPadDpadDown, kGbaKeyDown},
+                    {kGlfwBtnDLeft, kPadDpadLeft, kGbaKeyLeft},
+                };
+                GamepadSnapshot pad;
+                // Per-device mapping quirks (see glfw_pad_quirks.h): same
+                // physical press must reach the same GBA bit as on SDL.
+                const char* guid = glfwGetJoystickGUID(impl_->pad_glfw_index);
+                for (const auto& m : kPadMap) {
+                    const int btn = quirk_glfw_button(guid, m.glfw_button);
+                    if (btn >= 0 && btn < 15 && st.buttons[btn]) {
+                        s.hold_pad_button(m.pad_button);
+                        pad.buttons |= m.gba_bit;
+                    }
+                }
+                // GLFW gamepad axes are float -1..1 like raylib's; scale to the
+                // shared int units identically.
+                pad.stick_x =
+                    static_cast<int>(st.axes[kGlfwAxisLX] * 32767.0f);
+                pad.stick_y =
+                    static_cast<int>(st.axes[kGlfwAxisLY] * 32767.0f);
+                s.hold_pad_axis(kPadAxisLeftX, pad.stick_x);
+                s.hold_pad_axis(kPadAxisLeftY, pad.stick_y);
+                s.hold_pad_axis(kPadAxisRightX, static_cast<int>(
+                    st.axes[kGlfwAxisRX] * 32767.0f));
+                s.hold_pad_axis(kPadAxisRightY, static_cast<int>(
+                    st.axes[kGlfwAxisRY] * 32767.0f));
+                s.hold_pad_axis(kPadAxisLeftTrigger, static_cast<int>(
+                    st.axes[kGlfwAxisLT] * 32767.0f));
+                s.hold_pad_axis(kPadAxisRightTrigger, static_cast<int>(
+                    st.axes[kGlfwAxisRT] * 32767.0f));
+                s.pad_gba_bits = static_cast<std::uint16_t>(
+                    ~gamepad_to_keyinput(pad) & kGbaKeyAll);
+            }
+        }
+#endif
+
+        // Mouse gyro stand-in (WarioWare-style twist): horizontal delta while the
+        // left button is held. Same quantity as SDL_GetRelativeMouseState. Gated
+        // off below whenever touch can drive the game.
+        s.mouse_left = impl_->api->IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+        s.mouse_dx = static_cast<int>(impl_->api->GetMouseDelta().x);
+
+        // ---- touch ----
+        // Poll raylib touch points + emulated mouse into TouchTracks, hit-test
+        // the shared pad layout, and route the rest to the shared TouchHub.
+        // Mirrors the SDL finger-event branch: a touch is pad, toggle or routed
+        // for its whole life; sliding across pad buttons follows the finger.
+        std::uint16_t touch_buttons = 0;
+        bool touch_ff_held = false;
+        Impl* impl = impl_;
+        const bool touch_on = touch_input_enabled(
+            impl->touch_controls, impl->touch_policy, impl->touch_emulation);
+        if (touch_on) {
+            TouchHub& hub = TouchHub::instance();
+            TouchPresentation pres;
+            pres.drawable_width = impl_->api->GetScreenWidth();
+            pres.drawable_height = impl_->api->GetScreenHeight();
+            pres.layout = impl->last_layout;
+            pres.view_width = impl->base_w;
+            pres.view_height = impl->base_h;
+            pres.extra_left = impl->view_margin_left;
+            pres.extra_right = impl->view_margin_right;
+            pres.extra_top = impl->view_margin_top;
+            pres.extra_bottom = impl->view_margin_bottom;
+            pres.drawable_px_per_mm = impl->px_per_mm;
+            pres.safe_insets.left = impl->safe_left;
+            pres.safe_insets.top = impl->safe_top;
+            pres.safe_insets.right = impl->safe_right;
+            pres.safe_insets.bottom = impl->safe_bottom;
+            hub.set_presentation(pres);
+            const std::uint32_t now_ms = touch_clock_ms();
+            hub.advance(now_ms);
+            // Idle-hide: a quiet pad hides itself so it never burns in.
+            // Held pad/toggle touches keep it up so a control never vanishes
+            // mid-press.
+            if (impl->pad_idle_hide_seconds > 0 && impl->touch_controls &&
+                impl->pad_visible && !impl->pad_idle_hidden) {
+                bool held = false;
+                for (const auto& [id, t] : impl->touches)
+                    held = held || (t.active && (t.pad || t.toggle));
+                const std::uint32_t deadline =
+                    impl->pad_last_touch_ms +
+                    static_cast<std::uint32_t>(impl->pad_idle_hide_seconds) * 1000u;
+                if (!held &&
+                    static_cast<std::int32_t>(now_ms - deadline) >= 0) {
+                    impl->pad_idle_hidden = true;
+                    std::fprintf(stderr,
+                                 "raylib_backend: pad idle-hidden (%d s quiet)\n",
+                                 impl->pad_idle_hide_seconds);
+                }
+            }
+
+            PadLayoutInputs lin = pad_layout_inputs(impl, pres.drawable_width,
+                                                         pres.drawable_height);
+            const PadLayout pad = compute_pad_layout(lin);
+            const float mm = std::max(1.0f, impl->px_per_mm);
+            const bool overlay_shown = pad_overlay_shown(
+                impl->pad_visible, impl->touch_controls, impl->pad_idle_hidden);
+            const bool toggle_avail = pad_toggle_available(
+                impl->touch_policy, impl->touch_controls, impl->touch_emulation);
+
+            auto route = [&](int pointer, TouchPhase phase, float px, float py,
+                             TouchSource source) {
+                TouchEvent te;
+                te.t_ms = now_ms;
+                te.pointer = pointer & 0x7FFFFFFF;
+                te.phase = phase;
+                te.source = source;
+                te.drawable_x = px;
+                te.drawable_y = py;
+                te.in_view = presentation_point_to_logical(
+                    impl->last_layout, impl->base_w, impl->base_h, px, py,
+                    &te.view_x, &te.view_y);
+                hub.submit(te);
+            };
+
+            // Current live points: raylib fingers plus the emulated mouse finger
+            // when emulation is on (raylib has no MOUSE_TOUCHID hint; the left
+            // drag feeds the same track path as a finger, id -1).
+            struct LivePoint { int id; float x, y; TouchSource source; };
+            std::vector<LivePoint> live;
+            const int n_touch = impl_->api->GetTouchPointCount();
+            for (int i = 0; i < n_touch; ++i)
+                live.push_back({impl_->api->GetTouchPointId(i), impl_->api->GetTouchPosition(i).x,
+                                impl_->api->GetTouchPosition(i).y, TouchSource::Finger});
+            if (impl->touch_emulation && impl_->api->IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+                live.push_back({-1, static_cast<float>(impl_->api->GetMouseX()),
+                                static_cast<float>(impl_->api->GetMouseY()),
+                                TouchSource::Mouse});
+            if (!live.empty()) {
+                // Any finger activity refreshes the pad idle timer and reveals a
+                // hidden pad; the touch then acts normally, so a tap after the
+                // quiet period is never swallowed.
+                impl->pad_last_touch_ms = now_ms;
+                impl->pad_idle_hidden = false;
+            }
+            for (const auto& lp : live) {
+                auto it = impl->touches.find(lp.id);
+                if (it == impl->touches.end()) {
+                    Impl::TouchTrack track;
+                    track.active = true;
+                    track.x = track.start_x = lp.x;
+                    track.y = track.start_y = lp.y;
+                    const std::uint16_t buttons =
+                        overlay_shown ? pad_buttons_at(pad, lp.x, lp.y, mm) : 0;
+                    if (toggle_avail &&
+                        pad.toggle.contains(lp.x, lp.y, 2.0f * mm)) {
+                        track.toggle = true;
+                        track.grab_dx = pad.toggle.x + pad.toggle.w * 0.5f - lp.x;
+                        track.grab_dy = pad.toggle.y + pad.toggle.h * 0.5f - lp.y;
+                    } else if (overlay_shown &&
+                               pad_ff_at(pad, lp.x, lp.y, mm)) {
+                        track.ff = true;
+                    } else if (buttons) {
+                        track.pad = true;
+                        track.buttons = buttons;
+                    } else {
+                        track.routed = true;
+                        route(lp.id, TouchPhase::Down, lp.x, lp.y, lp.source);
+                    }
+                    impl->touches[lp.id] = track;
+                } else {
+                    Impl::TouchTrack& track = it->second;
+                    track.x = lp.x;
+                    track.y = lp.y;
+                    if (track.pad) {
+                        track.buttons = pad_buttons_at(pad, lp.x, lp.y, mm);
+                    } else if (track.ff) {
+                        // Sliding off the pill releases, like the pad buttons.
+                        track.ff = overlay_shown && pad_ff_at(pad, lp.x, lp.y, mm);
+                    } else if (track.routed) {
+                        route(lp.id, TouchPhase::Move, lp.x, lp.y, lp.source);
+                    } else if (track.toggle) {
+                        const float slop = 2.5f * mm;
+                        const float mx = lp.x - track.start_x;
+                        const float my = lp.y - track.start_y;
+                        if (!track.toggle_dragging &&
+                            mx * mx + my * my > slop * slop)
+                            track.toggle_dragging = true;
+                        if (track.toggle_dragging) {
+                            const float l = static_cast<float>(impl->safe_left);
+                            const float t = static_cast<float>(impl->safe_top);
+                            const float w = std::max(
+                                1.0f, lin.drawable_w - l - impl->safe_right);
+                            const float h = std::max(
+                                1.0f, lin.drawable_h - t - impl->safe_bottom);
+                            impl->toggle_fx = std::clamp(
+                                (lp.x + track.grab_dx - l) / w, 0.0f, 1.0f);
+                            impl->toggle_fy = std::clamp(
+                                (lp.y + track.grab_dy - t) / h, 0.0f, 1.0f);
+                            impl->toggle_pos_saved = true;
+                        }
+                    }
+                }
+            }
+            // Points that vanished since the last pump ended.
+            for (auto it = impl->touches.begin(); it != impl->touches.end();) {
+                const int id = it->first;
+                Impl::TouchTrack& track = it->second;
+                bool still = false;
+                for (const auto& lp : live)
+                    if (lp.id == id) { still = true; break; }
+                if (still || !track.active) { ++it; continue; }
+                if (track.routed)
+                    route(id, TouchPhase::Up, track.x, track.y,
+                          TouchSource::Finger);
+                else if (track.toggle) {
+                    if (track.toggle_dragging) {
+                        save_touch_config(impl);
+                    } else if (pad.toggle.contains(track.x, track.y,
+                                                   2.0f * mm)) {
+                        // A tap shows/hides the pad (the shared helper keeps
+                        // persistence + logging in one place).
+                        apply_touch_pad_visible(impl, !impl->pad_visible);
+                    }
+                }
+                it = impl->touches.erase(it);
+            }
+            // Desktop stand-ins for multi-finger taps (same bindings as SDL:
+            // right = two-finger, middle = three-finger).
+            if (impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) ||
+                impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE)) {
+                const bool right = impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+                Gesture g;
+                g.kind = right ? GestureKind::TwoFingerTap
+                               : GestureKind::ThreeFingerTap;
+                g.fingers = right ? 2 : 3;
+                g.t_ms = now_ms;
+                g.source = TouchSource::Mouse;
+                g.drawable_x = g.start_drawable_x =
+                    static_cast<float>(impl_->api->GetMouseX());
+                g.drawable_y = g.start_drawable_y =
+                    static_cast<float>(impl_->api->GetMouseY());
+                g.start_in_view = presentation_point_to_logical(
+                    impl->last_layout, impl->base_w, impl->base_h, g.drawable_x,
+                    g.drawable_y, &g.view_x, &g.view_y);
+                g.start_view_x = g.view_x;
+                g.start_view_y = g.view_y;
+                hub.submit_gesture(g);
+            }
+            // Platform Back (Android Back key; desktop Backspace when emulating).
+            if (impl_->api->IsKeyPressed(KEY_BACK) ||
+                (impl->touch_emulation && impl_->api->IsKeyPressed(KEY_BACKSPACE))) {
+                Gesture g;
+                g.kind = GestureKind::Back;
+                g.t_ms = now_ms;
+                hub.submit_gesture(g);
+            }
+            // Long-press engine actions while the finger is still held. The
+            // raylib backend has no settings-menu plumbing yet, so actions are
+            // drained and dropped -- same as the SDL backend without RUNTIME_UI.
+            (void)hub.take_host_actions();
+            for (const auto& [id, track] : impl->touches) {
+                if (!track.active) continue;
+                if (track.pad) touch_buttons |= track.buttons;
+                if (track.ff) touch_ff_held = true;
+            }
+        }
+        s.touch_enabled = touch_on;
+        s.touch_gba_bits = touch_buttons;
+
+#if defined(GBARECOMP_RUNTIME_UI)
+        if (impl_->runtime_ui && recomp_runtime_ui_is_open(impl_->runtime_ui))
+            s.suppress_game_input = true;
+#endif
+        // gyro_rate_z stays 0: raylib exposes no gyroscope API, and silently
+        // faking motion would be worse than reporting none.
+        // The touch fast-forward pill is a level overlay the shared
+        // translate_input cannot see; pump() ORs it in after translation.
+        impl_->touch_ff_held = touch_ff_held;
+        out = s;
+#else
+        impl_->touch_ff_held = false;
+        out = InputSnapshot{};
+#endif
+    }
+
+    void load_config(const char* dir, bool assist_tools_default,
+                     int fast_forward_multiplier_default) override {
+        impl_->assist_tools = assist_tools_default;
+        impl_->fast_forward_multiplier =
+            std::clamp(fast_forward_multiplier_default, 2, 10);
+        // Reseed before applying overrides so repeated loads are idempotent and a
+        // missing file leaves the built-in defaults, exactly as the SDL backend's
+        // open() seeding does.
+        raylib_default_bindings(impl_->input_bindings);
+        if (!dir) return;
+        const std::string base = std::string(dir) + "/";
+
+        // keybinds.ini [player1]: GBA button name -> key name. Same vocabulary as
+        // the SDL backend (kBindKeys); "None"/unknown unbinds.
+        ini_scan_section((base + "keybinds.ini").c_str(), "player1",
+                         [this](const char* key, const char* val) {
+            apply_keybinds_line(impl_->input_bindings, key, val);
+        });
+
+        // config.ini [KeyMap]: hotkey name -> "Ctrl+/Alt+/Shift+Key" value.
+        ini_scan_section((base + "config.ini").c_str(), "KeyMap",
+                         [this](const char* key, const char* val) {
+            apply_keymap_line(impl_->input_bindings, key, val);
+        });
+
+        // Launcher-owned global Assist bindings. Numeric keyboard values are SDL
+        // SCANCODES on disk (the SDL backend was first), so they go through the
+        // scancode->raylib conversion, not atoi directly; controller values use
+        // the portable button/axis encoding both backends share.
+        ini_scan_section((base + "config.ini").c_str(), "Launcher",
+                         [this](const char* key, const char* val) {
+            apply_launcher_line(impl_->input_bindings, impl_->assist_tools,
+                                impl_->fast_forward_multiplier, key, val);
+        });
+    }
+
+    const InputBindings& bindings() const override {
+        return impl_->input_bindings;
+    }
+
+    bool assist_tools_enabled() const override { return impl_->assist_tools; }
+
+    int fast_forward_multiplier() const override {
+        return impl_->fast_forward_multiplier;
+    }
+
+    bool gamepad_connected() const override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!impl_->open || !impl_->api->IsWindowReady()) return false;
+#if defined(__ANDROID__)
+        return impl_->api->IsGamepadAvailable(0);
+#else
+        // Standard-mapped pad selection lives behind find_standard_pad()
+        // (see above): raylib slot 0 is routinely a phantom.
+        return find_standard_pad() >= 0;
+#endif
+#endif
+        return false;
+    }
+
+    void rumble(float low_frequency, float high_frequency,
+                    std::uint32_t duration_ms) override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!gamepad_connected()) return;
+        const float low = std::clamp(low_frequency, 0.0f, 1.0f);
+        const float high = std::clamp(high_frequency, 0.0f, 1.0f);
+        // raylib 6 takes an int gamepad index and a duration in SECONDS. Rumble
+        // the selected pad's raylib slot when it has one; a pad beyond raylib's
+        // range (see find_standard_pad) cannot rumble through this API.
+        const int slot = impl_->pad_raylib_slot;
+        if (slot < 0) return;
+        impl_->api->SetGamepadVibration(slot, low, high, duration_ms / 1000.0f);
+#else
+        (void)low_frequency; (void)high_frequency; (void)duration_ms;
+#endif
+    }
+
+    void haptic_pulse(int duration_ms, float strength) override {
+        // raylib core has no cross-platform system vibrator, and SDL_Haptic has
+        // no raylib equivalent. Desktop haptics therefore ride the gamepad motors
+        // via the rumble path (the spin-off enhancement working as designed); with
+        // no pad attached this is a documented no-op, matching "no-op sans
+        // vibrator" in the SDL path. Android should route to the platform
+        // vibrator when that port lands.
+        if (!haptic_should_play(duration_ms)) return;
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!impl_->open || !impl_->api->IsWindowReady() || !impl_->api->IsGamepadAvailable(0)) return;
+        const float s = haptic_clamp_strength(strength);
+        impl_->api->SetGamepadVibration(0, s, s, duration_ms / 1000.0f);
+#else
+        (void)strength;
+#endif
+    }
+
+private:
+    Impl* impl_;
+};
 // raylib's AudioCallback is `void (*)(void *framesOut, unsigned int frames)` --
 // it carries NO userdata (open upstream limitation: raysan5/raylib#3911). SDL
 // gives us userdata, raylib does not, so the callback can only reach backend
@@ -1494,6 +2022,7 @@ RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
     impl_->clock = clock ? clock : &real_host_clock();
     impl_->video = std::make_unique<VideoImpl>(impl_.get());
     impl_->audio = std::make_unique<AudioImpl>(impl_.get());
+    impl_->input = std::make_unique<InputImpl>(impl_.get());
     // Same layout as the SDL backend's kDefaultBinds/kHotkeyDefaults, so the
     // backend is usable before any config file is read.
     raylib_default_bindings(impl_->input_bindings);
@@ -1788,73 +2317,45 @@ Video& RaylibBackend::video() { return *impl_->video; }
 
 Audio& RaylibBackend::audio() { return *impl_->audio; }
 
+Input& RaylibBackend::input() { return *impl_->input; }
+
 // ── window state: implemented (pure state) ────────────────────────────────
 void RaylibBackend::set_title(const char* title) {
     impl_->video->set_title(title);
 }
 
-bool RaylibBackend::assist_tools_enabled() const { return impl_->assist_tools; }
+bool RaylibBackend::assist_tools_enabled() const {
+    return impl_->input->assist_tools_enabled();
+}
 
 int RaylibBackend::fast_forward_multiplier() const {
-    return impl_->fast_forward_multiplier;
+    return impl_->input->fast_forward_multiplier();
 }
 
 void RaylibBackend::load_input_config(const char* dir, bool assist_tools_default,
                                       int fast_forward_multiplier_default) {
-    impl_->assist_tools = assist_tools_default;
-    impl_->fast_forward_multiplier =
-        std::clamp(fast_forward_multiplier_default, 2, 10);
-    // Reseed before applying overrides so repeated loads are idempotent and a
-    // missing file leaves the built-in defaults, exactly as the SDL backend's
-    // open() seeding does.
-    raylib_default_bindings(impl_->input_bindings);
-    if (!dir) return;
-    const std::string base = std::string(dir) + "/";
-
-    // keybinds.ini [player1]: GBA button name -> key name. Same vocabulary as
-    // the SDL backend (kBindKeys); "None"/unknown unbinds.
-    ini_scan_section((base + "keybinds.ini").c_str(), "player1",
-                     [this](const char* key, const char* val) {
-        apply_keybinds_line(impl_->input_bindings, key, val);
-    });
-
-    // config.ini [KeyMap]: hotkey name -> "Ctrl+/Alt+/Shift+Key" value.
-    ini_scan_section((base + "config.ini").c_str(), "KeyMap",
-                     [this](const char* key, const char* val) {
-        apply_keymap_line(impl_->input_bindings, key, val);
-    });
-
-    // Launcher-owned global Assist bindings. Numeric keyboard values are SDL
-    // SCANCODES on disk (the SDL backend was first), so they go through the
-    // scancode->raylib conversion, not atoi directly; controller values use
-    // the portable button/axis encoding both backends share.
-    ini_scan_section((base + "config.ini").c_str(), "Launcher",
-                     [this](const char* key, const char* val) {
-        apply_launcher_line(impl_->input_bindings, impl_->assist_tools,
-                            impl_->fast_forward_multiplier, key, val);
-    });
-
+    impl_->input->load_config(dir, assist_tools_default,
+                              fast_forward_multiplier_default);
     // [video] lcd_shader: the persistent opt-in for the GPU subpixel grid.
-    // A set GBARECOMP_LCD_SHADER env var wins (recorded at open); without an
-    // explicit env choice the file decides, so the setting survives restarts.
-    if (!impl_->lcd_env_override) {
-        bool lcd = impl_->lcd_shader;
-        float boost = impl_->lcd_boost;
-        float dither = impl_->lcd_dither;
-        float deband = impl_->lcd_deband;
-        ini_scan_section((base + "config.ini").c_str(), "video",
-                         [&lcd, &boost, &dither, &deband](const char* key,
-                                                          const char* val) {
-            apply_lcd_shader_line(key, val, &lcd);
-            apply_lcd_boost_line(key, val, &boost);
-            apply_lcd_dither_line(key, val, &dither);
-            apply_lcd_deband_line(key, val, &deband);
-        });
-        impl_->lcd_boost = boost;
-        impl_->lcd_dither = dither;
-        impl_->lcd_deband = deband;
-        if (lcd != impl_->lcd_shader) set_lcd_shader(lcd);
-    }
+    // (Moves to the Fx concern with the rest of the LCD group.)
+    if (!dir || impl_->lcd_env_override) return;
+    const std::string base = std::string(dir) + "/";
+    bool lcd = impl_->lcd_shader;
+    float boost = impl_->lcd_boost;
+    float dither = impl_->lcd_dither;
+    float deband = impl_->lcd_deband;
+    ini_scan_section((base + "config.ini").c_str(), "video",
+                     [&lcd, &boost, &dither, &deband](const char* key,
+                                                      const char* val) {
+        apply_lcd_shader_line(key, val, &lcd);
+        apply_lcd_boost_line(key, val, &boost);
+        apply_lcd_dither_line(key, val, &dither);
+        apply_lcd_deband_line(key, val, &deband);
+    });
+    impl_->lcd_boost = boost;
+    impl_->lcd_dither = dither;
+    impl_->lcd_deband = deband;
+    if (lcd != impl_->lcd_shader) set_lcd_shader(lcd);
 }
 
 void RaylibBackend::set_volume(int pct) { impl_->audio->set_volume(pct); }
@@ -2116,18 +2617,22 @@ void RaylibBackend::save_touch_config(const RaylibBackend::Impl* impl) {
 }
 
 void RaylibBackend::set_touch_pad_visible(bool visible) {
-    visible = visible && impl_->touch_controls;
-    if (impl_->pad_visible == visible && impl_->pad_choice_saved) return;
-    impl_->pad_visible = visible;
-    impl_->pad_choice_saved = true;
+    apply_touch_pad_visible(impl_.get(), visible);
+}
+
+void RaylibBackend::apply_touch_pad_visible(RaylibBackend::Impl* impl, bool visible) {
+    visible = visible && impl->touch_controls;
+    if (impl->pad_visible == visible && impl->pad_choice_saved) return;
+    impl->pad_visible = visible;
+    impl->pad_choice_saved = true;
     // Showing the pad restarts its idle clock; it can hide again after the
     // configured quiet period.
-    impl_->pad_last_touch_ms = touch_clock_ms();
-    impl_->pad_idle_hidden = false;
+    impl->pad_last_touch_ms = touch_clock_ms();
+    impl->pad_idle_hidden = false;
     // Any finger currently on a pad button is released with the pad.
-    for (auto& [id, t] : impl_->touches)
+    for (auto& [id, t] : impl->touches)
         if (t.active && t.pad) t.buttons = 0;
-    save_touch_config(impl_.get());
+    save_touch_config(impl);
     std::fprintf(stderr, "raylib_backend: touch pad %s\n",
                  visible ? "shown" : "hidden");
 }
@@ -2136,17 +2641,7 @@ bool RaylibBackend::touch_pad_visible_value() const { return impl_->pad_visible;
 
 // ── gamepad ──────────────────────────────────────────────────────────────
 bool RaylibBackend::gamepad_connected() const {
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !impl_->api->IsWindowReady()) return false;
-#if defined(__ANDROID__)
-    return impl_->api->IsGamepadAvailable(0);
-#else
-    // Standard-mapped pad selection lives behind find_standard_pad()
-    // (see above): raylib slot 0 is routinely a phantom.
-    return find_standard_pad() >= 0;
-#endif
-#endif
-    return false;
+    return impl_->input->gamepad_connected();
 }
 
 bool RaylibBackend::gamepad_supports_rumble() const {
@@ -2157,39 +2652,15 @@ bool RaylibBackend::gamepad_supports_rumble() const {
     return false;
 }
 
-void RaylibBackend::gamepad_rumble(float low_frequency, float high_frequency,
+void RaylibBackend::gamepad_rumble(float low_frequency,
+                                   float high_frequency,
                                    std::uint32_t duration_ms) {
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!gamepad_connected()) return;
-    const float low = std::clamp(low_frequency, 0.0f, 1.0f);
-    const float high = std::clamp(high_frequency, 0.0f, 1.0f);
-    // raylib 6 takes an int gamepad index and a duration in SECONDS. Rumble
-    // the selected pad's raylib slot when it has one; a pad beyond raylib's
-    // range (see find_standard_pad) cannot rumble through this API.
-    const int slot = impl_->pad_raylib_slot;
-    if (slot < 0) return;
-    impl_->api->SetGamepadVibration(slot, low, high, duration_ms / 1000.0f);
-#else
-    (void)low_frequency; (void)high_frequency; (void)duration_ms;
-#endif
+    impl_->input->rumble(low_frequency, high_frequency, duration_ms);
 }
 
 // ── haptics ──────────────────────────────────────────────────────────────
 void RaylibBackend::haptic_pulse(int duration_ms, float strength) {
-    // raylib core has no cross-platform system vibrator, and SDL_Haptic has
-    // no raylib equivalent. Desktop haptics therefore ride the gamepad motors
-    // via the rumble path (the spin-off enhancement working as designed); with
-    // no pad attached this is a documented no-op, matching "no-op sans
-    // vibrator" in the SDL path. Android should route to the platform
-    // vibrator when that port lands.
-    if (!haptic_should_play(duration_ms)) return;
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !impl_->api->IsWindowReady() || !impl_->api->IsGamepadAvailable(0)) return;
-    const float s = haptic_clamp_strength(strength);
-    impl_->api->SetGamepadVibration(0, s, s, duration_ms / 1000.0f);
-#else
-    (void)strength;
-#endif
+    impl_->input->haptic_pulse(duration_ms, strength);
 }
 
 // ── frame / geometry ─────────────────────────────────────────────────────
@@ -2205,415 +2676,16 @@ bool RaylibBackend::drawable_size(int* width, int* height) const {
 void RaylibBackend::pump_events(Events& out) { out = pump(); }
 
 RaylibBackend::Events RaylibBackend::pump() {
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!impl_->open || !impl_->api->IsWindowReady()) return Events{};
-
-    // raylib is PULL-based: there is no KEYDOWN event with a repeat flag, so
-    // every edge in Events is recovered by translate_input() from prior-pump
-    // state (InputEdges). This function only READS the current level into a
-    // snapshot; all policy lives in input_translate.h, tested without a
-    // display.
+    // V2 composition (plan §3.2): read() fills the levels; translate_input
+    // is the only edge producer. The touch fast-forward pill is a
+    // raylib-only level overlay read() records, ORed in here exactly as
+    // the pre-conversion pump did (hold-to-run like Tab).
     InputSnapshot s;
-    s.now_ms = impl_->clock->millis();
-    s.close_requested = impl_->api->WindowShouldClose();
-
-    unsigned mods = kModNone;
-    if (impl_->api->IsKeyDown(KEY_LEFT_SHIFT) || impl_->api->IsKeyDown(KEY_RIGHT_SHIFT))
-        mods |= kModShift;
-    if (impl_->api->IsKeyDown(KEY_LEFT_CONTROL) || impl_->api->IsKeyDown(KEY_RIGHT_CONTROL))
-        mods |= kModCtrl;
-    if (impl_->api->IsKeyDown(KEY_LEFT_ALT) || impl_->api->IsKeyDown(KEY_RIGHT_ALT))
-        mods |= kModAlt;
-    s.mods = mods;
-
-    // Poll exactly the bound keys, not the whole keyboard: IsKeyDown per key
-    // is cheap, and this keeps the snapshot identical in shape to what the
-    // config file means.
-    const InputBindings& b = impl_->input_bindings;
-    auto poll = [&](HostKey k) {
-        if (k != kHostKeyNone && impl_->api->IsKeyDown(k)) s.hold(k);
-    };
-    for (int bit = 0; bit < 10; ++bit) poll(b.gba_key[bit]);
-    for (int i = 0; i < 9; ++i) poll(b.slot_key[i]);
-    poll(b.escape_key);
-    for (int h = 0; h < HK_COUNT; ++h) poll(b.hotkeys[h].key);
-    poll(b.assist_key[0]);
-    poll(b.assist_key[1]);
-
-    // Gamepad. The ONLY platform-specific part: native buttons/axes into
-    // canonical PadButton/PadAxis ids plus a GamepadSnapshot. The button->GBA
-    // mapping and stick deadzone live in gamepad_map.h, shared with the SDL
-    // backend. The native->canonical table is explicit so an upstream
-    // reordering cannot silently remap a binding.
-#if defined(__ANDROID__)
-    // No GLFW on Android: raylib's own (capped, unfiltered) slots are all
-    // there is.
-    s.pad_connected = impl_->api->IsGamepadAvailable(0);
-    if (s.pad_connected) {
-        static const struct {
-            int ray_button;
-            int pad_button;
-            std::uint16_t gba_bit;   // 0 when the button has no GBA meaning
-        } kPadMap[] = {
-            {GAMEPAD_BUTTON_RIGHT_FACE_DOWN, kPadA, kGbaKeyA},
-            {GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, kPadB, kGbaKeyB},
-            {GAMEPAD_BUTTON_RIGHT_FACE_LEFT, kPadX, 0},
-            {GAMEPAD_BUTTON_RIGHT_FACE_UP, kPadY, 0},
-            {GAMEPAD_BUTTON_LEFT_TRIGGER_1, kPadLeftBumper, kGbaKeyL},
-            {GAMEPAD_BUTTON_RIGHT_TRIGGER_1, kPadRightBumper, kGbaKeyR},
-            {GAMEPAD_BUTTON_MIDDLE_LEFT, kPadBack, kGbaKeySelect},
-            {GAMEPAD_BUTTON_MIDDLE_RIGHT, kPadStart, kGbaKeyStart},
-            {GAMEPAD_BUTTON_LEFT_THUMB, kPadLeftThumb, 0},
-            {GAMEPAD_BUTTON_RIGHT_THUMB, kPadRightThumb, 0},
-            {GAMEPAD_BUTTON_LEFT_FACE_UP, kPadDpadUp, kGbaKeyUp},
-            {GAMEPAD_BUTTON_LEFT_FACE_RIGHT, kPadDpadRight, kGbaKeyRight},
-            {GAMEPAD_BUTTON_LEFT_FACE_DOWN, kPadDpadDown, kGbaKeyDown},
-            {GAMEPAD_BUTTON_LEFT_FACE_LEFT, kPadDpadLeft, kGbaKeyLeft},
-            {GAMEPAD_BUTTON_LEFT_TRIGGER_2, kPadLeftTrigger, 0},
-            {GAMEPAD_BUTTON_RIGHT_TRIGGER_2, kPadRightTrigger, 0},
-        };
-        GamepadSnapshot pad;
-        for (const auto& m : kPadMap) {
-            if (impl_->api->IsGamepadButtonDown(0, m.ray_button)) {
-                s.hold_pad_button(m.pad_button);
-                pad.buttons |= m.gba_bit;
-            }
-        }
-        // raylib axes are float -1..1; the shared mapping works in SDL's int
-        // units (-32768..32767), so scale. Triggers rest at -1 and press to
-        // +1, which lands on the same side of the 16000 threshold as SDL's
-        // 0..32767 range does.
-        const float lx = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
-        const float ly = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
-        pad.stick_x = static_cast<int>(lx * 32767.0f);
-        pad.stick_y = static_cast<int>(ly * 32767.0f);
-        s.hold_pad_axis(kPadAxisLeftX, pad.stick_x);
-        s.hold_pad_axis(kPadAxisLeftY, pad.stick_y);
-        s.hold_pad_axis(kPadAxisRightX, static_cast<int>(
-            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_X) * 32767.0f));
-        s.hold_pad_axis(kPadAxisRightY, static_cast<int>(
-            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_Y) * 32767.0f));
-        s.hold_pad_axis(kPadAxisLeftTrigger, static_cast<int>(
-            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_TRIGGER) * 32767.0f));
-        s.hold_pad_axis(kPadAxisRightTrigger, static_cast<int>(
-            impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_TRIGGER) * 32767.0f));
-        // gamepad_to_keyinput() returns ACTIVE-LOW; the snapshot carries
-        // ACTIVE-HIGH pressed bits (see input_translate.h), so invert once.
-        s.pad_gba_bits =
-            static_cast<std::uint16_t>(~gamepad_to_keyinput(pad) & kGbaKeyAll);
-    }
-#else
-    // Desktop: select through GLFW's standard-mapping layer, NOT raylib slot
-    // 0 (see find_standard_pad: phantoms eat raylib's 4 slots while a real
-    // pad sits beyond them). GUIDE has no canonical/PadButton slot and no
-    // GBA meaning -- skipped, same as the SDL table.
-    impl_->pad_glfw_index = find_standard_pad();
-    impl_->pad_raylib_slot = (impl_->pad_glfw_index >= 0 &&
-                              impl_->pad_glfw_index < 4)
-                                 ? impl_->pad_glfw_index
-                                 : -1;
-    s.pad_connected = impl_->pad_glfw_index >= 0;
-    if (s.pad_connected) {
-        RayGlfwGamepadState st{};
-        if (!glfwGetGamepadState(impl_->pad_glfw_index, &st)) {
-            // Disconnected mid-frame: report nothing, rescan next pump.
-            s.pad_connected = false;
-            impl_->pad_glfw_index = -1;
-            impl_->pad_raylib_slot = -1;
-        } else {
-            static const struct {
-                int glfw_button;
-                int pad_button;
-                std::uint16_t gba_bit;  // 0: no GBA meaning
-            } kPadMap[] = {
-                {kGlfwBtnA, kPadA, kGbaKeyA},
-                {kGlfwBtnB, kPadB, kGbaKeyB},
-                {kGlfwBtnX, kPadX, 0},
-                {kGlfwBtnY, kPadY, 0},
-                {kGlfwBtnLB, kPadLeftBumper, kGbaKeyL},
-                {kGlfwBtnRB, kPadRightBumper, kGbaKeyR},
-                {kGlfwBtnBack, kPadBack, kGbaKeySelect},
-                {kGlfwBtnStart, kPadStart, kGbaKeyStart},
-                {kGlfwBtnLThumb, kPadLeftThumb, 0},
-                {kGlfwBtnRThumb, kPadRightThumb, 0},
-                {kGlfwBtnDUp, kPadDpadUp, kGbaKeyUp},
-                {kGlfwBtnDRight, kPadDpadRight, kGbaKeyRight},
-                {kGlfwBtnDDown, kPadDpadDown, kGbaKeyDown},
-                {kGlfwBtnDLeft, kPadDpadLeft, kGbaKeyLeft},
-            };
-            GamepadSnapshot pad;
-            // Per-device mapping quirks (see glfw_pad_quirks.h): same
-            // physical press must reach the same GBA bit as on SDL.
-            const char* guid = glfwGetJoystickGUID(impl_->pad_glfw_index);
-            for (const auto& m : kPadMap) {
-                const int btn = quirk_glfw_button(guid, m.glfw_button);
-                if (btn >= 0 && btn < 15 && st.buttons[btn]) {
-                    s.hold_pad_button(m.pad_button);
-                    pad.buttons |= m.gba_bit;
-                }
-            }
-            // GLFW gamepad axes are float -1..1 like raylib's; scale to the
-            // shared int units identically.
-            pad.stick_x =
-                static_cast<int>(st.axes[kGlfwAxisLX] * 32767.0f);
-            pad.stick_y =
-                static_cast<int>(st.axes[kGlfwAxisLY] * 32767.0f);
-            s.hold_pad_axis(kPadAxisLeftX, pad.stick_x);
-            s.hold_pad_axis(kPadAxisLeftY, pad.stick_y);
-            s.hold_pad_axis(kPadAxisRightX, static_cast<int>(
-                st.axes[kGlfwAxisRX] * 32767.0f));
-            s.hold_pad_axis(kPadAxisRightY, static_cast<int>(
-                st.axes[kGlfwAxisRY] * 32767.0f));
-            s.hold_pad_axis(kPadAxisLeftTrigger, static_cast<int>(
-                st.axes[kGlfwAxisLT] * 32767.0f));
-            s.hold_pad_axis(kPadAxisRightTrigger, static_cast<int>(
-                st.axes[kGlfwAxisRT] * 32767.0f));
-            s.pad_gba_bits = static_cast<std::uint16_t>(
-                ~gamepad_to_keyinput(pad) & kGbaKeyAll);
-        }
-    }
-#endif
-
-    // Mouse gyro stand-in (WarioWare-style twist): horizontal delta while the
-    // left button is held. Same quantity as SDL_GetRelativeMouseState. Gated
-    // off below whenever touch can drive the game.
-    s.mouse_left = impl_->api->IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-    s.mouse_dx = static_cast<int>(impl_->api->GetMouseDelta().x);
-
-    // ---- touch ----
-    // Poll raylib touch points + emulated mouse into TouchTracks, hit-test
-    // the shared pad layout, and route the rest to the shared TouchHub.
-    // Mirrors the SDL finger-event branch: a touch is pad, toggle or routed
-    // for its whole life; sliding across pad buttons follows the finger.
-    std::uint16_t touch_buttons = 0;
-    bool touch_ff_held = false;
-    Impl* impl = impl_.get();
-    const bool touch_on = touch_input_enabled(
-        impl->touch_controls, impl->touch_policy, impl->touch_emulation);
-    if (touch_on) {
-        TouchHub& hub = TouchHub::instance();
-        TouchPresentation pres;
-        pres.drawable_width = impl_->api->GetScreenWidth();
-        pres.drawable_height = impl_->api->GetScreenHeight();
-        pres.layout = impl->last_layout;
-        pres.view_width = impl->base_w;
-        pres.view_height = impl->base_h;
-        pres.extra_left = impl->view_margin_left;
-        pres.extra_right = impl->view_margin_right;
-        pres.extra_top = impl->view_margin_top;
-        pres.extra_bottom = impl->view_margin_bottom;
-        pres.drawable_px_per_mm = impl->px_per_mm;
-        pres.safe_insets.left = impl->safe_left;
-        pres.safe_insets.top = impl->safe_top;
-        pres.safe_insets.right = impl->safe_right;
-        pres.safe_insets.bottom = impl->safe_bottom;
-        hub.set_presentation(pres);
-        const std::uint32_t now_ms = touch_clock_ms();
-        hub.advance(now_ms);
-        // Idle-hide: a quiet pad hides itself so it never burns in.
-        // Held pad/toggle touches keep it up so a control never vanishes
-        // mid-press.
-        if (impl->pad_idle_hide_seconds > 0 && impl->touch_controls &&
-            impl->pad_visible && !impl->pad_idle_hidden) {
-            bool held = false;
-            for (const auto& [id, t] : impl->touches)
-                held = held || (t.active && (t.pad || t.toggle));
-            const std::uint32_t deadline =
-                impl->pad_last_touch_ms +
-                static_cast<std::uint32_t>(impl->pad_idle_hide_seconds) * 1000u;
-            if (!held &&
-                static_cast<std::int32_t>(now_ms - deadline) >= 0) {
-                impl->pad_idle_hidden = true;
-                std::fprintf(stderr,
-                             "raylib_backend: pad idle-hidden (%d s quiet)\n",
-                             impl->pad_idle_hide_seconds);
-            }
-        }
-
-        PadLayoutInputs lin = pad_layout_inputs(impl, pres.drawable_width,
-                                                     pres.drawable_height);
-        const PadLayout pad = compute_pad_layout(lin);
-        const float mm = std::max(1.0f, impl->px_per_mm);
-        const bool overlay_shown = pad_overlay_shown(
-            impl->pad_visible, impl->touch_controls, impl->pad_idle_hidden);
-        const bool toggle_avail = pad_toggle_available(
-            impl->touch_policy, impl->touch_controls, impl->touch_emulation);
-
-        auto route = [&](int pointer, TouchPhase phase, float px, float py,
-                         TouchSource source) {
-            TouchEvent te;
-            te.t_ms = now_ms;
-            te.pointer = pointer & 0x7FFFFFFF;
-            te.phase = phase;
-            te.source = source;
-            te.drawable_x = px;
-            te.drawable_y = py;
-            te.in_view = presentation_point_to_logical(
-                impl->last_layout, impl->base_w, impl->base_h, px, py,
-                &te.view_x, &te.view_y);
-            hub.submit(te);
-        };
-
-        // Current live points: raylib fingers plus the emulated mouse finger
-        // when emulation is on (raylib has no MOUSE_TOUCHID hint; the left
-        // drag feeds the same track path as a finger, id -1).
-        struct LivePoint { int id; float x, y; TouchSource source; };
-        std::vector<LivePoint> live;
-        const int n_touch = impl_->api->GetTouchPointCount();
-        for (int i = 0; i < n_touch; ++i)
-            live.push_back({impl_->api->GetTouchPointId(i), impl_->api->GetTouchPosition(i).x,
-                            impl_->api->GetTouchPosition(i).y, TouchSource::Finger});
-        if (impl->touch_emulation && impl_->api->IsMouseButtonDown(MOUSE_BUTTON_LEFT))
-            live.push_back({-1, static_cast<float>(impl_->api->GetMouseX()),
-                            static_cast<float>(impl_->api->GetMouseY()),
-                            TouchSource::Mouse});
-        if (!live.empty()) {
-            // Any finger activity refreshes the pad idle timer and reveals a
-            // hidden pad; the touch then acts normally, so a tap after the
-            // quiet period is never swallowed.
-            impl->pad_last_touch_ms = now_ms;
-            impl->pad_idle_hidden = false;
-        }
-        for (const auto& lp : live) {
-            auto it = impl->touches.find(lp.id);
-            if (it == impl->touches.end()) {
-                Impl::TouchTrack track;
-                track.active = true;
-                track.x = track.start_x = lp.x;
-                track.y = track.start_y = lp.y;
-                const std::uint16_t buttons =
-                    overlay_shown ? pad_buttons_at(pad, lp.x, lp.y, mm) : 0;
-                if (toggle_avail &&
-                    pad.toggle.contains(lp.x, lp.y, 2.0f * mm)) {
-                    track.toggle = true;
-                    track.grab_dx = pad.toggle.x + pad.toggle.w * 0.5f - lp.x;
-                    track.grab_dy = pad.toggle.y + pad.toggle.h * 0.5f - lp.y;
-                } else if (overlay_shown &&
-                           pad_ff_at(pad, lp.x, lp.y, mm)) {
-                    track.ff = true;
-                } else if (buttons) {
-                    track.pad = true;
-                    track.buttons = buttons;
-                } else {
-                    track.routed = true;
-                    route(lp.id, TouchPhase::Down, lp.x, lp.y, lp.source);
-                }
-                impl->touches[lp.id] = track;
-            } else {
-                Impl::TouchTrack& track = it->second;
-                track.x = lp.x;
-                track.y = lp.y;
-                if (track.pad) {
-                    track.buttons = pad_buttons_at(pad, lp.x, lp.y, mm);
-                } else if (track.ff) {
-                    // Sliding off the pill releases, like the pad buttons.
-                    track.ff = overlay_shown && pad_ff_at(pad, lp.x, lp.y, mm);
-                } else if (track.routed) {
-                    route(lp.id, TouchPhase::Move, lp.x, lp.y, lp.source);
-                } else if (track.toggle) {
-                    const float slop = 2.5f * mm;
-                    const float mx = lp.x - track.start_x;
-                    const float my = lp.y - track.start_y;
-                    if (!track.toggle_dragging &&
-                        mx * mx + my * my > slop * slop)
-                        track.toggle_dragging = true;
-                    if (track.toggle_dragging) {
-                        const float l = static_cast<float>(impl->safe_left);
-                        const float t = static_cast<float>(impl->safe_top);
-                        const float w = std::max(
-                            1.0f, lin.drawable_w - l - impl->safe_right);
-                        const float h = std::max(
-                            1.0f, lin.drawable_h - t - impl->safe_bottom);
-                        impl->toggle_fx = std::clamp(
-                            (lp.x + track.grab_dx - l) / w, 0.0f, 1.0f);
-                        impl->toggle_fy = std::clamp(
-                            (lp.y + track.grab_dy - t) / h, 0.0f, 1.0f);
-                        impl->toggle_pos_saved = true;
-                    }
-                }
-            }
-        }
-        // Points that vanished since the last pump ended.
-        for (auto it = impl->touches.begin(); it != impl->touches.end();) {
-            const int id = it->first;
-            Impl::TouchTrack& track = it->second;
-            bool still = false;
-            for (const auto& lp : live)
-                if (lp.id == id) { still = true; break; }
-            if (still || !track.active) { ++it; continue; }
-            if (track.routed)
-                route(id, TouchPhase::Up, track.x, track.y,
-                      TouchSource::Finger);
-            else if (track.toggle) {
-                if (track.toggle_dragging) {
-                    save_touch_config(impl);
-                } else if (pad.toggle.contains(track.x, track.y,
-                                               2.0f * mm)) {
-                    // A tap shows/hides the pad (member call keeps
-                    // persistence + logging in one place).
-                    set_touch_pad_visible(!impl->pad_visible);
-                }
-            }
-            it = impl->touches.erase(it);
-        }
-        // Desktop stand-ins for multi-finger taps (same bindings as SDL:
-        // right = two-finger, middle = three-finger).
-        if (impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) ||
-            impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE)) {
-            const bool right = impl_->api->IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
-            Gesture g;
-            g.kind = right ? GestureKind::TwoFingerTap
-                           : GestureKind::ThreeFingerTap;
-            g.fingers = right ? 2 : 3;
-            g.t_ms = now_ms;
-            g.source = TouchSource::Mouse;
-            g.drawable_x = g.start_drawable_x =
-                static_cast<float>(impl_->api->GetMouseX());
-            g.drawable_y = g.start_drawable_y =
-                static_cast<float>(impl_->api->GetMouseY());
-            g.start_in_view = presentation_point_to_logical(
-                impl->last_layout, impl->base_w, impl->base_h, g.drawable_x,
-                g.drawable_y, &g.view_x, &g.view_y);
-            g.start_view_x = g.view_x;
-            g.start_view_y = g.view_y;
-            hub.submit_gesture(g);
-        }
-        // Platform Back (Android Back key; desktop Backspace when emulating).
-        if (impl_->api->IsKeyPressed(KEY_BACK) ||
-            (impl->touch_emulation && impl_->api->IsKeyPressed(KEY_BACKSPACE))) {
-            Gesture g;
-            g.kind = GestureKind::Back;
-            g.t_ms = now_ms;
-            hub.submit_gesture(g);
-        }
-        // Long-press engine actions while the finger is still held. The
-        // raylib backend has no settings-menu plumbing yet, so actions are
-        // drained and dropped -- same as the SDL backend without RUNTIME_UI.
-        (void)hub.take_host_actions();
-        for (const auto& [id, track] : impl->touches) {
-            if (!track.active) continue;
-            if (track.pad) touch_buttons |= track.buttons;
-            if (track.ff) touch_ff_held = true;
-        }
-    }
-    s.touch_enabled = touch_on;
-    s.touch_gba_bits = touch_buttons;
-
-#if defined(GBARECOMP_RUNTIME_UI)
-    if (impl_->runtime_ui && recomp_runtime_ui_is_open(impl_->runtime_ui))
-        s.suppress_game_input = true;
-#endif
-    // gyro_rate_z stays 0: raylib exposes no gyroscope API, and silently
-    // faking motion would be worse than reporting none.
-    WindowBackend::Events ev =
-        translate_input(s, impl_->input_bindings, impl_->input_edges);
-    // Touch fast-forward is hold-to-run like Tab and the right trigger: a
-    // finger down on the FF pill reads as a held Turbo binding.
-    if (touch_ff_held) ev.fast_forward = true;
+    impl_->input->read(s);
+    Events ev = translate_input(s, impl_->input->bindings(),
+                                impl_->input_edges);
+    if (impl_->touch_ff_held) ev.fast_forward = true;
     return ev;
-#else
-    return Events{};
-#endif
 }
 
 bool RaylibBackend::wait_for_foreground() {
