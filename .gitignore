@@ -31,6 +31,9 @@ Thumbs.db
 *.ppm
 *.rgb
 *.log
+# ...except the README's R.A.I.D. Discord badge (framework branding asset,
+# tracked upstream as well).
+!.github/raid-discord.png
 
 # Python bytecode caches.
 **/__pycache__/
