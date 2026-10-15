@@ -143,6 +143,10 @@ struct TouchConfig {
     int pad_default = 0;
     bool emulate_touch = false;
     int pad_idle_hide_seconds = 0;
+    // Millimetre layout multiplier for the on-screen pad (1.0 = the authored
+    // sizes). Sizes are mm-based via the panel density, so phones whose pads
+    // feel large in the hand can step down without touching the layout.
+    float pad_scale = 1.0f;
 };
 
 // ── concern interfaces ────────────────────────────────────────────────────

@@ -2,9 +2,9 @@
 //
 // A game's app/build.gradle applies `com.android.application`, declares an
 // `ext.gbaGame = [...]` map, then `apply from:` this file. Everything else —
-// SDL2, the shared Java shell (org.gbarecomp.*), the manifest, the native
-// CMake root, payload staging and ABI policy — lives here so every gbarecomp
-// Android game builds the same way.
+// the shared Java shell (org.gbarecomp.*), the manifest, the native CMake
+// root (raylib/NativeActivity since Phase 4f), payload staging and ABI
+// policy — lives here so every gbarecomp Android game builds the same way.
 //
 // Required gbaGame keys:
 //   applicationId, versionCode, versionName, title, romSha1 (list or CSV),
@@ -34,10 +34,6 @@ required.each { key ->
 def engineRoot = file(g.engineRoot)
 def gameRoot = file(g.gameRoot)
 def platformRoot = new File(engineRoot, "platform/android")
-def sdlRoot = new File(platformRoot, "third_party/SDL")
-if (!new File(sdlRoot, "CMakeLists.txt").isFile())
-    throw new GradleException("SDL submodule missing at ${sdlRoot}: " +
-        "git -C ${engineRoot} submodule update --init platform/android/third_party/SDL")
 
 def cmakePath = { File f -> f.absolutePath.replace('\\', '/') }
 def romShas = (g.romSha1 instanceof Collection ? g.romSha1 : g.romSha1.toString().split(","))
@@ -92,7 +88,9 @@ if (abiOverride) {
 android {
     namespace g.namespace ?: g.applicationId
     compileSdk 35
-    ndkVersion "27.1.12297006"
+    // The raylib path's proven NDK (matches the vendored native_app_glue
+    // provenance; the spike ran 28.2 on device).
+    ndkVersion "28.2.13676358"
 
     defaultConfig {
         applicationId g.applicationId
@@ -129,6 +127,11 @@ android {
                     "-DANDROID_STL=c++_shared",
                     "-DGBA_GAME_ROOT=${cmakePath(gameRoot)}",
                     "-DGBARECOMP_ROOT=${cmakePath(engineRoot)}",
+                    // The NativeActivity storage path (mobile_platform.h):
+                    // /data/user/0/<applicationId>/files is the chdir target
+                    // and the game's baked external dir. The pre-4f shell
+                    // never needed it (its own accessor provided the path).
+                    "-DGBARECOMP_ANDROID_PACKAGE=${g.applicationId}",
                     "-DCMAKE_BUILD_TYPE=Release",
                     "-DCMAKE_JOB_POOLS=gba_compile=${jobs}",
                     "-DCMAKE_JOB_POOL_COMPILE=gba_compile",
@@ -136,6 +139,15 @@ android {
                 if (g.recompUiRoot) {
                     args += "-DRECOMP_UI_ROOT=${cmakePath(file(g.recompUiRoot))}"
                     args += "-DGBARECOMP_RUNTIME_UI_ROOT=${cmakePath(file(g.recompUiRoot))}"
+                }
+                if (privateRomPath != null) {
+                    // Private build: the ROM is embedded in the payload, and
+                    // the game CMake reads GBAGAME_BUNDLED_ROM to skip the
+                    // pre-boot setup path. Public builds keep the SAF import
+                    // flow (the flag stays off). The pre-4f shell never needed
+                    // this mapping: its launcher was compiled in, which
+                    // bypassed the game's bundled-ROM check.
+                    args += "-DGBAGAME_BUNDLED_ROM=ON"
                 }
                 args += (g.cmakeArguments ?: [])
                 arguments(*args)
@@ -178,15 +190,16 @@ android {
     externalNativeBuild {
         cmake {
             path new File(platformRoot, "cpp/CMakeLists.txt")
-            version "3.22.1"
+            // raylib 6 requires CMake >= 3.25 (the pre-4f shell built under
+            // 3.22.1); pin the SDK's newer toolchain.
+            version "3.30.3"
         }
     }
 
     sourceSets {
         main {
             manifest.srcFile new File(platformRoot, "AndroidManifest.xml")
-            java.srcDirs = [new File(sdlRoot, "android-project/app/src/main/java"),
-                            new File(platformRoot, "java")]
+            java.srcDirs = [new File(platformRoot, "java")]
             res.srcDirs = [new File(platformRoot, "res"), file("src/main/res")]
             assets.srcDirs = [stagedPayload]
         }

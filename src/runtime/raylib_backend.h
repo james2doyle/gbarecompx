@@ -124,6 +124,12 @@ private:
     static void unload_deband_shader(Impl* impl);
     static void release_post_targets(Impl* impl);
     static bool ensure_post_target(Impl* impl, int which, int w, int h);
+#if defined(__ANDROID__)
+    // Android: apply the Activity-pushed display info (mobile_platform.h
+    // store) — insets live (they arrive after open()), the panel density
+    // through the same 4..60 px/mm sanity window the SDL path used.
+    static void refresh_android_display_info(Impl* impl);
+#endif
     // Touch config persistence (pure file I/O, no raylib).
     static void save_touch_config(const Impl* impl);
     // Pad visibility transition (state + persistence + logging), shared by

@@ -61,7 +61,7 @@ libmgba itself is linked only into the opt-in oracle binary
   (via the Android NDK 28.2.13676358, `sources/android/native_app_glue/`)
 - **License:** Apache-2.0
 - **Vendored as:** `platform/android/native_app_glue/android_native_app_glue.{c,h}`
-  (used only by SDL-less raylib NativeActivity game builds)
+  (the Android scaffold's NativeActivity entry — every Android game build)
 - **Modification:** one hunk — the app thread is created with a 256 MiB
   stack (`pthread_attr_setstacksize`, matching `kMobileGameStackBytes`),
   because raylib is glue-thread-bound and the game runs on that thread.

@@ -1,7 +1,9 @@
 # Shared native root for gbarecomp Android games (driven by Gradle's
-# externalNativeBuild, see gbarecomp-app.gradle). Builds SDL2 as a shared
-# library, then the game's own CMake project, whose Android target must be
-# named `main` (libmain.so is what SDLActivity loads).
+# externalNativeBuild, see gbarecomp-app.gradle). NativeActivity loads the
+# game's libmain.so (the manifest's android.app.lib_name = main); there is no
+# shell subproject — the game project's CMake pulls raylib through the framework
+# (FetchContent, PLATFORM=Android, the same pin as desktop) and the vendored
+# native_app_glue supplies android_main.
 cmake_minimum_required(VERSION 3.22)
 project(GbarecompAndroidApp C CXX)
 
@@ -9,17 +11,28 @@ if(NOT GBA_GAME_ROOT OR NOT EXISTS "${GBA_GAME_ROOT}/CMakeLists.txt")
     message(FATAL_ERROR "GBA_GAME_ROOT must name the game repository root")
 endif()
 
-set(GBARECOMP_ANDROID_SDL_ROOT "${CMAKE_CURRENT_LIST_DIR}/../third_party/SDL")
-if(NOT EXISTS "${GBARECOMP_ANDROID_SDL_ROOT}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "SDL submodule missing: git submodule update --init platform/android/third_party/SDL")
-endif()
+# raylib's Android platform (GLES2). Set before the game's CMake adds the
+# framework's raylib subproject — the on-device spike proved this wiring.
+set(PLATFORM "Android" CACHE STRING "" FORCE)
 
-set(SDL_SHARED ON CACHE BOOL "" FORCE)
-set(SDL_STATIC OFF CACHE BOOL "" FORCE)
-set(SDL_TEST OFF CACHE BOOL "" FORCE)
-set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory("${GBARECOMP_ANDROID_SDL_ROOT}" sdl_build)
+# One raylib checkout per ABI, shared across native configs. FetchContent's
+# default base dir lives inside the per-config .cxx dir, so every distinct
+# config (e.g. a different job-pool value) re-cloned raylib — observed live,
+# and the release flow would need network whenever its config differs from
+# the dev one. ANDROID_ABI is known here (NDK toolchain); the source and the
+# subbuild are shared per ABI, and different ABIs stay isolated (a shared
+# base cannot hold two ABIs' build trees).
+#
+# The FetchContent module CACHES its default on the first configure, so a
+# "not defined" guard would never fire for existing config dirs. Replace the
+# default value only; an explicit -DFETCHCONTENT_BASE_DIR is respected.
+if(NOT DEFINED FETCHCONTENT_BASE_DIR
+   OR FETCHCONTENT_BASE_DIR STREQUAL "${CMAKE_BINARY_DIR}/_deps")
+    set(FETCHCONTENT_BASE_DIR
+        "${GBA_GAME_ROOT}/android/.fetchcontent/${ANDROID_ABI}"
+        CACHE PATH "Shared FetchContent base (one raylib checkout per ABI)"
+        FORCE)
+endif()
 
 add_subdirectory("${GBA_GAME_ROOT}" game_build)
 

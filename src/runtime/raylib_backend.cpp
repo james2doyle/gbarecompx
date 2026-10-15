@@ -8,6 +8,7 @@
 #include "raylib_backend.h"
 
 #include "host_overlay.h"
+#include "mobile_platform.h"
 
 #include <algorithm>
 #include <chrono>
@@ -222,6 +223,8 @@ struct RaylibBackend::Impl {
     // Touches are tracked by raylib point id across pumps; a touch is pad,
     // toggle or routed for its whole life, exactly as on SDL.
     bool touch_policy = false;
+    // Touch pad millimetre multiplier (TouchConfig::pad_scale; 1 = authored).
+    float touch_pad_scale = 1.0f;
     std::uint32_t touch_claims = 0;
     bool touch_controls = false;
     bool touch_emulation = false;
@@ -876,6 +879,31 @@ private:
 // so the private static helpers (sharp target, post targets, shader
 // programs, interp mode) stay reachable. Bodies are the flat bodies
 // verbatim, with Impl* members respelled from impl_.get().
+#if defined(__ANDROID__)
+// Android: apply the Activity-pushed display info (mobile_platform.h store).
+// Insets live — they arrive after open(), so a one-shot read would miss them.
+// The panel density is applied only when it passes the sanity window the SDL
+// path used (4..60 px/mm: phones ~8-25; a broken report must not shrink or
+// balloon the touch UI).
+void RaylibBackend::refresh_android_display_info(RaylibBackend::Impl* impl) {
+    const gbarecomp::AndroidDisplayInfo& info = gbarecomp::android_display_info();
+    if (info.insets_known.load()) {
+        impl->safe_left = info.inset_left.load();
+        impl->safe_top = info.inset_top.load();
+        impl->safe_right = info.inset_right.load();
+        impl->safe_bottom = info.inset_bottom.load();
+    }
+    const float xdpi = info.xdpi.load(), ydpi = info.ydpi.load();
+    const float physical = (xdpi + ydpi) * 0.5f / 25.4f;
+    if (xdpi > 0.0f && ydpi > 0.0f && physical >= 4.0f && physical <= 60.0f &&
+        std::fabs(physical - impl->px_per_mm) > 0.05f) {
+        impl->px_per_mm = physical;
+        std::fprintf(stderr, "raylib_backend: android panel %.2f px/mm\n",
+                     physical);
+    }
+}
+#endif
+
 class RaylibBackend::VideoImpl final : public Video {
 public:
     explicit VideoImpl(Impl* impl) : impl_(impl) {}
@@ -884,6 +912,9 @@ public:
         (void)fresh;   // the SDL path only uses `fresh` to pick a blend variant
 #if defined(GBARECOMP_USE_RAYLIB)
         if (!rgb888 || !impl_->open || !impl_->texture_ready) return;
+#if defined(__ANDROID__)
+        refresh_android_display_info(impl_);
+#endif
 
         // Present-time color grading (opt-in). Raw is passthrough: the raw frame
         // is uploaded untouched, so verify/frame-hash are unaffected. Mirrors the
@@ -1131,7 +1162,8 @@ public:
             if (impl_->host_overlay || overlay_shown || toggle_shown ||
                 touch_on_this_frame) {
                 RaylibOverlay ov(impl_->api, dw, dh, impl_->last_layout,
-                                 impl_->base_w, impl_->base_h, impl_->px_per_mm,
+                                 impl_->base_w, impl_->base_h,
+                                 impl_->px_per_mm * impl_->touch_pad_scale,
                                  impl_->safe_left, impl_->safe_top,
                                  impl_->safe_right, impl_->safe_bottom,
                                  touch_clock_ms());
@@ -1149,7 +1181,9 @@ public:
                         if (track.ff) ff_held = true;
                     }
                     if (overlay_shown)
-                        draw_touch_pad(ov, pad, held, impl_->px_per_mm, ff_held);
+                        draw_touch_pad(ov, pad, held,
+                                       impl_->px_per_mm * impl_->touch_pad_scale,
+                                       ff_held);
                     if (toggle_shown)
                         draw_pad_toggle(ov, pad, toggle_held, impl_->pad_visible);
                 }
@@ -1168,7 +1202,8 @@ public:
                         touch_clock_ms(), hub.gesture_config().long_press_ms,
                         rings, 10);
                     for (int i = 0; i < n; ++i)
-                        draw_long_press_ring(ov, rings[i], impl_->px_per_mm);
+                        draw_long_press_ring(ov, rings[i],
+                                             impl_->px_per_mm * impl_->touch_pad_scale);
                 }
             }
         }
@@ -1524,6 +1559,9 @@ public:
 
     void read(InputSnapshot& out) override {
 #if defined(GBARECOMP_USE_RAYLIB)
+#if defined(__ANDROID__)
+        refresh_android_display_info(impl_);
+#endif
         if (!impl_->open || !impl_->api->IsWindowReady()) {
             impl_->touch_ff_held = false;
             out = InputSnapshot{};
@@ -1724,7 +1762,7 @@ public:
             pres.extra_right = impl->view_margin_right;
             pres.extra_top = impl->view_margin_top;
             pres.extra_bottom = impl->view_margin_bottom;
-            pres.drawable_px_per_mm = impl->px_per_mm;
+            pres.drawable_px_per_mm = impl->px_per_mm * impl->touch_pad_scale;
             pres.safe_insets.left = impl->safe_left;
             pres.safe_insets.top = impl->safe_top;
             pres.safe_insets.right = impl->safe_right;
@@ -1755,7 +1793,8 @@ public:
             PadLayoutInputs lin = pad_layout_inputs(impl, pres.drawable_width,
                                                          pres.drawable_height);
             const PadLayout pad = compute_pad_layout(lin);
-            const float mm = std::max(1.0f, impl->px_per_mm);
+            const float mm = std::max(1.0f,
+                                      impl->px_per_mm * impl->touch_pad_scale);
             const bool overlay_shown = pad_overlay_shown(
                 impl->pad_visible, impl->touch_controls, impl->pad_idle_hidden);
             const bool toggle_avail = pad_toggle_available(
@@ -2198,6 +2237,7 @@ public:
         // so emulation is handled at poll time in pump() instead (left-drag
         // feeds the same TouchTrack path as a finger).
         impl_->touch_policy = policy;
+        impl_->touch_pad_scale = cfg.pad_scale;
         impl_->touch_claims = claims;
         impl_->touch_emulation = emulate_touch;
         impl_->pad_idle_hide_seconds = std::max(0, pad_idle_hide_seconds);
@@ -2469,8 +2509,28 @@ Result RaylibBackend::open(const OpenParams& params) {
     }
 
 #if defined(GBARECOMP_USE_RAYLIB)
+#if defined(__ANDROID__)
+    // The Java shell writes the display size to files/display.ini before the
+    // native thread starts (GbaGameActivity). Open the window at the display
+    // size: raylib letterboxes any other request into the surface, and the
+    // resize-driven view would then see the requested 3:2 window instead of
+    // the display aspect (the fullscreen pre-4f shell matched the surface).
+    // Fallback: the scaled request.
+    int win_w = rp.base_w * rp.scale;
+    int win_h = rp.base_h * rp.scale;
+    if (std::FILE* display_file = std::fopen("display.ini", "r")) {
+        int dw = 0, dh = 0;
+        if (std::fscanf(display_file, "%dx%d", &dw, &dh) == 2 && dw > 0 &&
+            dh > 0) {
+            win_w = dw;
+            win_h = dh;
+        }
+        std::fclose(display_file);
+    }
+#else
     const int win_w = rp.base_w * rp.scale;
     const int win_h = rp.base_h * rp.scale;
+#endif
 
 #if defined(__ANDROID__)
     // No MSAA on Android: we blit textured quads (no triangle edges to

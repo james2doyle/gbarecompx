@@ -85,6 +85,11 @@ public:
                            bool assist_tools_default = true,
                            int fast_forward_multiplier_default = 4);
 
+    // Touch pad size multiplier (1.0 = authored; applied by the next
+    // configure_touch, which is where the touch config reaches the backend).
+    // No-op when the window isn't open or this build has no backend.
+    void set_touch_pad_scale(float scale);
+
     // Live window/audio controls (hotkey + launcher-driven). All no-ops when
     // the window isn't open or this build has no backend.
     // Tri-state fullscreen mode: 0 windowed, 1 borderless (desktop), 2
@@ -232,6 +237,8 @@ private:
     WindowBackend* impl_ = nullptr;
     // Backend selection: null = host_make_backend() (the compile-time choice).
     BackendFactory factory_ = nullptr;
+    // Pad scale applied by configure_touch (see set_touch_pad_scale).
+    float touch_pad_scale_ = 1.0f;
     int orientation_policy_ = 0;
 };
 

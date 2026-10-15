@@ -77,6 +77,7 @@ struct RunOptions {
     std::uint16_t max_resize_view_height = 160;
     bool resize_driven_view = false;
 
+
     // How a resize-driven view picks its logical size from the drawable.
     //   Aspect  — keep 160 lines, widen with the window aspect (desktop; the
     //             established behaviour).

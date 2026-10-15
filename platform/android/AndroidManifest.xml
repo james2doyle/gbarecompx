@@ -56,6 +56,12 @@
             android:exported="false"
             android:launchMode="singleTask"
             android:preferMinimalPostProcessing="true"
-            android:screenOrientation="${gbaActivityOrientation}" />
+            android:screenOrientation="${gbaActivityOrientation}">
+            <!-- NativeActivity loads this .so; the vendored native_app_glue
+                 runs android_main on its 256 MiB thread. -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="main" />
+        </activity>
     </application>
 </manifest>

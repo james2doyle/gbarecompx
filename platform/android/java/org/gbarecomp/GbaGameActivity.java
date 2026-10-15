@@ -12,7 +12,7 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 
-import org.libsdl.app.SDLActivity;
+import android.app.NativeActivity;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -22,13 +22,15 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The shared game Activity: installs the packaged payload (game TOML, mod
- * catalog, optional private assets) into private storage, runs immersive and
- * edge-to-edge (drawing under display cutouts), follows the game's
- * orientation policy with live rotation, and reports safe-area insets to the
- * runtime so host chrome avoids cutouts and system-gesture edges.
+ * The shared game Activity (a NativeActivity subclass since Phase 4f):
+ * installs the packaged payload (game TOML, mod catalog, optional private
+ * assets) into private storage, runs immersive and edge-to-edge (drawing
+ * under display cutouts), follows the game's orientation policy with live
+ * rotation, and reports safe-area insets to the runtime so host chrome avoids
+ * cutouts and system-gesture edges. NativeActivity starts the native app
+ * thread; the manifest's android.app.lib_name names the game's .so.
  */
-public class GbaGameActivity extends SDLActivity {
+public class GbaGameActivity extends NativeActivity {
     private GbaGameConfig config;
     private boolean nativeReady;
 
@@ -36,6 +38,13 @@ public class GbaGameActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         config = GbaGameConfig.load(this);
         setRequestedOrientation(orientationFor(config.orientation));
+        // Before super.onCreate (which starts the native thread and opens the
+        // window): the runtime reads this to open its window at the display
+        // size. raylib letterboxes any other request, which would starve the
+        // resize-driven expanded view (it would see the requested 3:2 window
+        // instead of the surface). The fullscreen pre-4f shell never had this
+        // problem.
+        writeDisplaySize();
         try {
             installPayload();
         } catch (IOException error) {
@@ -65,6 +74,24 @@ public class GbaGameActivity extends SDLActivity {
             View decor = getWindow().getDecorView();
             WindowInsets insets = decor.getRootWindowInsets();
             if (insets != null) reportInsets(insets);
+        }
+    }
+
+    /** The display's real size, for the runtime's window request. */
+    private void writeDisplaySize() {
+        try {
+            WindowManager manager = (WindowManager) getSystemService(WINDOW_SERVICE);
+            if (manager == null || manager.getDefaultDisplay() == null) return;
+            DisplayMetrics metrics = new DisplayMetrics();
+            manager.getDefaultDisplay().getRealMetrics(metrics);
+            if (metrics.widthPixels <= 0 || metrics.heightPixels <= 0) return;
+            File target = new File(getFilesDir(), "display.ini");
+            try (FileOutputStream out = new FileOutputStream(target)) {
+                out.write((metrics.widthPixels + "x" + metrics.heightPixels + "\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception ignored) {
+            // Fallback: the runtime keeps its scaled window request.
         }
     }
 

@@ -1,7 +1,8 @@
 # Vendored `android_native_app_glue` (NDK 28.2.13676358, Apache-2.0 — see
-# THIRD_PARTY_ATTRIBUTION.md). Used only by SDL-less raylib (NativeActivity)
-# game builds; the SDL shell keeps using the NDK copy via the engine Gradle
-# template.
+# THIRD_PARTY_ATTRIBUTION.md). The Android scaffold's NativeActivity entry
+# (platform/android/cpp + the manifest's android.app.lib_name): every Android
+# game build uses this copy (the game CMake falls back to the NDK copy only
+# when it is absent).
 #
 # Single deliberate diff from upstream (documented at the site): the app
 # thread is created with a 256 MiB stack (`pthread_attr_setstacksize`,

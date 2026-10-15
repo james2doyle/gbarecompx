@@ -18,11 +18,26 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <string>
 #include <vector>
 
 namespace gbarecomp {
+
+// Display info pushed from the Android Activity over JNI
+// (org.gbarecomp.GbaNative.setSafeInsets / setDisplayDpi — the shared Java
+// shell stays; the NativeActivity build exports these from this TU). Atomics:
+// the JNI calls arrive on the UI thread while the runtime reads them on the
+// glue thread, and the insets arrive after open(), so consumers refresh live.
+// All zero / known=false on every other platform.
+struct AndroidDisplayInfo {
+    std::atomic<int> inset_left{0}, inset_top{0}, inset_right{0}, inset_bottom{0};
+    std::atomic<bool> insets_known{false};
+    std::atomic<float> xdpi{0.0f}, ydpi{0.0f};
+};
+
+AndroidDisplayInfo& android_display_info();
 
 struct MobileProcessOptions {
     const char* game_config = nullptr;   // e.g. "variants/emerald/game.toml"

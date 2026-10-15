@@ -236,6 +236,8 @@ struct Args {
     // Desktop mouse -> touch emulation (--touch-emulation or
     // GBARECOMP_TOUCH_EMULATION=1) for developing and validating touch input.
     bool touch_emulation = false;
+    // Pad size multiplier (--touch-pad-scale / [touch] pad_scale; 0.5..1.5).
+    float touch_pad_scale = 1.0f;
     // Force density-driven view sizing (--view-density / GBARECOMP_VIEW_DENSITY)
     // and an optional player zoom multiplier (GBARECOMP_VIEW_ZOOM, [Touch] zoom).
     bool view_density = false;
@@ -782,6 +784,9 @@ bool apply_toml_file(const std::filesystem::path& path, Args* args,
             if (parse_int(val.c_str(), &n) && n >= 240) args->view_width = n;
         } else if (section == "video" && key == "resize_view") {
             args->resize_view = (val == "true" || val == "1");
+        } else if (section == "touch" && key == "pad_scale") {
+            const float f = static_cast<float>(std::atof(val.c_str()));
+            if (f >= 0.5f && f <= 1.5f) args->touch_pad_scale = f;
         } else if (section == "video" && key == "sharp_filter") {
             args->sharp_filter = (val == "true" || val == "1");
         } else if (section == "video" && key == "affine_filter") {
@@ -825,6 +830,7 @@ constexpr std::string_view kCliValueFlags[] = {
     "--dump-png",    "--load-state",    "--view-width",    "--widescreen",
     "--save",        "--save-path",     "--state-dir",
     "--gyro-sensitivity",
+    "--touch-pad-scale",
     "--sharp-filter", "--linear-filter", "--affine-filter", "--screen",
     "--volume",
 };
@@ -1010,6 +1016,13 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
         }
         if (s == "--resize-view") {
             args->resize_view = true;
+            continue;
+        }
+        if (s == "--touch-pad-scale") {
+            const char* v = need_value("--touch-pad-scale");
+            if (!v) continue;
+            const float f = static_cast<float>(std::atof(v));
+            if (f >= 0.5f && f <= 1.5f) args->touch_pad_scale = f;
             continue;
         }
         if (s == "--touch-emulation") {
@@ -1748,6 +1761,15 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     bool resize_view_enabled =
         args.resize_view && opts.resize_driven_view &&
         opts.max_resize_view_width > 240 && args.window;
+    // Record the decision and every gate that fed it: a silent 240 view is
+    // otherwise hard to triage (especially on device, where the applied-geometry
+    // line only prints when the view actually changes).
+    std::fprintf(stderr,
+                 "[gbarecomp:runtime] resize-driven view: %s "
+                 "(resize_view=%d opts=%d max=%d window=%d)\n",
+                 resize_view_enabled ? "on" : "off",
+                 args.resize_view ? 1 : 0, opts.resize_driven_view ? 1 : 0,
+                 opts.max_resize_view_width, args.window ? 1 : 0);
 #if defined(GBARECOMP_RUNTIME_UI)
     RuntimeUiContext runtime_ui_context;
     runtime_ui_context.opts = &opts;
@@ -2959,14 +2981,14 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                 gba::GbaPpu::kMaxRenderHeight);
         }
         if (!apply_runtime_view_geometry(geometry)) return false;
-        if (!args.quiet) {
-            std::fprintf(stderr,
-                "[gbarecomp:runtime] resize-driven view: drawable=%dx%d "
-                "logical=%ux%u margins=%u/%u\n",
-                drawable_w, drawable_h, ppu.render_width(), ppu.render_height(),
-                static_cast<unsigned>(ppu.view_extra_left()),
-                static_cast<unsigned>(ppu.view_extra_right()));
-        }
+        // Change-gated by the apply above (unchanged geometry returns false),
+        // so this prints once per real view change, never per frame.
+        std::fprintf(stderr,
+            "[gbarecomp:runtime] resize-driven view applied: drawable=%dx%d "
+            "logical=%ux%u margins=%u/%u\n",
+            drawable_w, drawable_h, ppu.render_width(), ppu.render_height(),
+            static_cast<unsigned>(ppu.view_extra_left()),
+            static_cast<unsigned>(ppu.view_extra_right()));
         return true;
     };
     // Wall-clock frame limiter — constructed only for windowed runs so
@@ -3104,6 +3126,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             if (args.lcd_boost_given) win.set_lcd_boost(args.lcd_boost);
             if (args.lcd_dither_given) win.set_lcd_dither(args.lcd_dither);
             if (args.lcd_deband_given) win.set_lcd_deband(args.lcd_deband);
+            win.set_touch_pad_scale(args.touch_pad_scale);
             win.configure_touch(opts.input_frame != nullptr,
                                 opts.touch_gesture_claims,
                                 opts.touch_pad_default, args.touch_emulation,

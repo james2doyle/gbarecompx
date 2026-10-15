@@ -26,7 +26,36 @@
 #include <android/log.h>
 #endif
 
+#if defined(__ANDROID__)
+#include <jni.h>
+// The shared Java shell's JNI bridge (org.gbarecomp.GbaNative): the Activity
+// pushes cutout insets + the physical panel density. Ported from the retired
+// shell's SDL region (Phase 4f) — same Java contract, the store above.
+extern "C" JNIEXPORT void JNICALL
+Java_org_gbarecomp_GbaNative_setSafeInsets(JNIEnv*, jclass, jint left, jint top,
+                                           jint right, jint bottom) {
+    auto& info = gbarecomp::android_display_info();
+    info.inset_left.store(left > 0 ? left : 0);
+    info.inset_top.store(top > 0 ? top : 0);
+    info.inset_right.store(right > 0 ? right : 0);
+    info.inset_bottom.store(bottom > 0 ? bottom : 0);
+    info.insets_known.store(true);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_org_gbarecomp_GbaNative_setDisplayDpi(JNIEnv*, jclass, jfloat xdpi,
+                                           jfloat ydpi) {
+    auto& info = gbarecomp::android_display_info();
+    info.xdpi.store(xdpi);
+    info.ydpi.store(ydpi);
+}
+#endif
+
 namespace gbarecomp {
+
+AndroidDisplayInfo& android_display_info() {
+    static AndroidDisplayInfo info;
+    return info;
+}
 
 const char* mobile_internal_storage_path() {
 #if defined(__ANDROID__)

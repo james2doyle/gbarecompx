@@ -374,7 +374,14 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
     cfg.pad_default = pad_default;
     cfg.emulate_touch = emulate_touch;
     cfg.pad_idle_hide_seconds = pad_idle_hide_seconds;
+    cfg.pad_scale = touch_pad_scale_;
     impl_->overlay().configure_touch(cfg);
+}
+
+void HostWindow::set_touch_pad_scale(float scale) {
+    // Applied by the next configure_touch (the runtime sets both together);
+    // stored regardless so the order of the two calls cannot drop it.
+    if (scale >= 0.5f && scale <= 1.5f) touch_pad_scale_ = scale;
 }
 
 
@@ -564,6 +571,7 @@ void HostWindow::set_runtime_ui(RecompRuntimeUi* /*ui*/) {}
 void HostWindow::configure_touch(bool /*policy*/, std::uint32_t /*claims*/,
                                  int /*pad_default*/, bool /*emulate_touch*/,
                                  int /*pad_idle_hide_seconds*/) {}
+void HostWindow::set_touch_pad_scale(float /*scale*/) {}
 void HostWindow::set_touch_config_dir(const char* /*dir*/) {}
 bool HostWindow::touch_pad_visible() const { return false; }
 void HostWindow::set_touch_pad_visible(bool /*visible*/) {}

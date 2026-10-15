@@ -139,8 +139,9 @@ interfaces so the recompiled game still talks to them through its own driver.
 
 ## Android
 
-The runtime supports Android through the SDL application boundary. The first
-public Android game build is
+The runtime supports Android through a raylib/NativeActivity scaffold (the
+Android base since Phase 4f; the retired shell used a different application
+boundary). The first public Android game build is
 [*WarioWare: Twisted!*](https://github.com/mstan/WarioWareTwistedRecomp/releases/tag/android-v0.0.1),
 distributed as an experimental arm64 APK with a touch-friendly setup flow,
 on-screen controls, phone gyro input, saves, and the shared in-game settings

@@ -50,12 +50,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config git ca-certificates \
-            libsdl2-dev
-          # libsdl2-dev makes this job compile the SDL backend region too
-          # (SDL2 present, runtime UI absent) — the configuration where a
-          # closing brace inside `#if GBARECOMP_RUNTIME_UI` once broke the
-          # standalone build.
+            build-essential cmake ninja-build pkg-config git ca-certificates
 
       - name: Configure
         run: >
@@ -95,6 +90,16 @@ jobs:
             libgl-dev libx11-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libxkbcommon-dev \
             libfreetype-dev libharfbuzz-dev
+
+      # raylib's FetchContent clone + build are minutes per run; cache them.
+      # Keyed on the framework CMakeLists (it carries the pinned SHA), so a
+      # pin bump misses and re-clones. No restore-keys: a partial restore
+      # could resurrect the wrong raylib source.
+      - name: Cache raylib FetchContent (clone + build)
+        uses: actions/cache@v4
+        with:
+          path: build-raylib/_deps
+          key: gbx-raylib-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Configure (fetches raylib 6 by pinned SHA)
         run: >
