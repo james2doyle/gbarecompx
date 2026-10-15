@@ -31,7 +31,10 @@
 
 namespace {
 
+using gbarecomp::Audio;
+using gbarecomp::Err;
 using gbarecomp::RaylibBackend;
+using gbarecomp::Result;
 using gbarecomp::Video;
 
 void video_defaults_clamps_and_shared_state() {
@@ -143,12 +146,63 @@ void video_refresh_hz_estimate() {
     CHECK(hz > 59.9f && hz < 60.1f);
 }
 
+void audio_defaults_and_shared_state() {
+    RaylibBackend b;
+    Audio& a = b.audio();
+
+    // Stable accessor + defaults mirroring the flat generation's.
+    CHECK(&b.audio() == &a);
+    CHECK(a.volume() == 100);
+    CHECK(a.enabled());
+    CHECK(b.volume_percent() == 100);
+    CHECK(b.audio_enabled());
+
+    // One state, two views, both directions.
+    a.set_volume(55);
+    CHECK(a.volume() == 55);
+    CHECK(b.volume_percent() == 55);
+    a.set_volume(150);
+    CHECK(a.volume() == 100);  // clamped high
+    a.set_volume(-5);
+    CHECK(a.volume() == 0);  // clamped low
+    b.set_volume(80);
+    CHECK(a.volume() == 80);
+
+    a.set_enabled(false);
+    CHECK(!a.enabled());
+    CHECK(!b.audio_enabled());
+    b.set_audio_enabled(true);
+    CHECK(a.enabled());
+}
+
+void audio_safe_without_a_device() {
+    RaylibBackend b;
+    Audio& a = b.audio();
+
+    // Unopened: there is no device to claim — claim() refuses with a
+    // static-lifetime detail (Caps::audio stays false until open succeeds).
+    // The already-claimed refusal needs a real device (or the Phase 5 fake).
+    const Result r = a.claim();
+    CHECK(!r.ok() && r.code == Err::AudioDevice && r.detail != nullptr);
+    a.release();  // safe no-op: nothing was claimed
+
+    // push() is the one cross-thread entry point; unopened it must be a safe
+    // no-op (null / zero-count / real inputs alike).
+    a.push(nullptr, 8);
+    std::vector<std::int16_t> samples(64, 0);
+    a.push(samples.data(), 0);
+    a.push(samples.data(), samples.size());
+    b.push_audio_samples(samples.data(), samples.size());
+}
+
 }  // namespace
 
 int main() {
     video_defaults_clamps_and_shared_state();
     video_safe_without_a_window();
     video_refresh_hz_estimate();
+    audio_defaults_and_shared_state();
+    audio_safe_without_a_device();
 
     std::printf("raylib_backend_v2 tests: PASS\n");
     return 0;

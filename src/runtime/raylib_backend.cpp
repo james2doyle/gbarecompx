@@ -160,6 +160,10 @@ struct RaylibBackend::Impl {
     // V2 concern implementations (created by the ctor; the flat methods
     // forward into them).
     std::unique_ptr<Video> video;
+    std::unique_ptr<Audio> audio;
+    // Audio claim (V2 ownership handshake): claim() succeeds once per
+    // open when the device came up; reset by open()/close().
+    bool audio_claimed = false;
 
     // Real, implemented state.
     std::string title;
@@ -330,6 +334,13 @@ struct RaylibBackend::Impl {
     PresentationLayout last_layout{};
     int last_drawable_w = 0, last_drawable_h = 0;
 
+    // Audio readiness. Plain state (not raylib types) kept outside the guard
+    // so the V2 AudioImpl's claim() can refuse identically in both builds;
+    // set by open()'s audio block, cleared by close().
+    bool audio_ready = false;
+    bool audio_dev_open = false;
+    bool bridge_ready = false;
+
     // Live raylib state.
 #if defined(GBARECOMP_USE_RAYLIB)
     Texture2D texture{};
@@ -347,9 +358,6 @@ struct RaylibBackend::Impl {
     // the RAB ring (rab_push) and the *audio thread* pulls resampled frames out
     // (rab_pull). RAB does the 65536 Hz -> device-rate conversion.
     AudioStream stream{};
-    bool audio_ready = false;
-    bool audio_dev_open = false;
-    bool bridge_ready = false;
     rab_bridge bridge{};
     std::mutex bridge_mu;          // guards bridge between emu + audio threads
     std::vector<int16_t> volume_buf;
@@ -1383,6 +1391,65 @@ private:
     Impl* impl_;
 };
 
+// ── V2 concern: Audio ───────────────────────────────────────────────────
+// The V2 `Audio` interface over the backend's Impl state. claim/release are
+// the V2 ownership handshake: claim succeeds once per open when the device
+// came up (the condition Caps::audio will report) and refuses a second
+// claimant or an unavailable device; release clears it. The device itself is
+// still initialized/torn down by open()/close() — claim is not a second init
+// path. push() keeps the flat behavior (no claim gate), so the flat
+// generation's callers are unaffected; it stays the one cross-thread call.
+class RaylibBackend::AudioImpl final : public Audio {
+public:
+    explicit AudioImpl(Impl* impl) : impl_(impl) {}
+
+    Result claim() override {
+        if (impl_->audio_claimed)
+            return {Err::AudioDevice, "audio already claimed"};
+        if (!impl_->audio_ready)
+            return {Err::AudioDevice, "audio device unavailable"};
+        impl_->audio_claimed = true;
+        return {};
+    }
+
+    void release() override {
+        // Single owner: a held claim is always this caller's.
+        impl_->audio_claimed = false;
+    }
+
+    void push(const std::int16_t* samples, std::size_t count) override {
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (!samples || count == 0 || !impl_->bridge_ready || !impl_->audio_ready)
+            return;
+        // Volume first, into scratch, exactly as the SDL backend does: 100 is
+        // passthrough so the common path is byte-identical to unpatched behavior.
+        if (impl_->volume != 100) {
+            impl_->volume_buf.resize(count);
+            for (std::size_t i = 0; i < count; ++i)
+                impl_->volume_buf[i] = apply_volume_gain(samples[i], impl_->volume);
+            samples = impl_->volume_buf.data();
+        }
+        std::lock_guard<std::mutex> lk(impl_->bridge_mu);
+        rab_push(&impl_->bridge, samples, static_cast<int>(count));  // mono
+#else
+        (void)samples; (void)count;
+#endif
+    }
+
+    void set_volume(int pct) override {
+        impl_->volume = std::clamp(pct, 0, 100);
+    }
+
+    int volume() const override { return impl_->volume; }
+
+    void set_enabled(bool enabled) override { impl_->audio_enabled = enabled; }
+
+    bool enabled() const override { return impl_->audio_enabled; }
+
+private:
+    Impl* impl_;
+};
+
 // raylib's AudioCallback is `void (*)(void *framesOut, unsigned int frames)` --
 // it carries NO userdata (open upstream limitation: raysan5/raylib#3911). SDL
 // gives us userdata, raylib does not, so the callback can only reach backend
@@ -1426,6 +1493,7 @@ RaylibBackend::RaylibBackend(RaylibApi* api, Clock* clock) : impl_(new Impl) {
 #endif
     impl_->clock = clock ? clock : &real_host_clock();
     impl_->video = std::make_unique<VideoImpl>(impl_.get());
+    impl_->audio = std::make_unique<AudioImpl>(impl_.get());
     // Same layout as the SDL backend's kDefaultBinds/kHotkeyDefaults, so the
     // backend is usable before any config file is read.
     raylib_default_bindings(impl_->input_bindings);
@@ -1609,6 +1677,7 @@ bool RaylibBackend::open(int scale, int base_w, int base_h, const char* title,
     }
 
     // ---- audio ----
+    impl_->audio_claimed = false;  // claims never survive a close/open cycle
     // RAB resamples the GBA's standardized 65536 Hz mono feed to the rate we
     // ask raylib for. We choose that rate, so no device-rate query is needed.
     if (impl_->api->IsAudioDeviceReady()) {
@@ -1681,6 +1750,7 @@ void RaylibBackend::close() {
 #if defined(GBARECOMP_USE_RAYLIB)
     // Stop the callback before anything it touches goes away.
     s_audio_slot.release(impl_.get());
+    impl_->audio_claimed = false;
     unload_lcd_shader(impl_.get());
     unload_dither_shader(impl_.get());
     unload_deband_shader(impl_.get());
@@ -1715,6 +1785,8 @@ void RaylibBackend::close() {
 bool RaylibBackend::is_open() const { return impl_->open; }
 
 Video& RaylibBackend::video() { return *impl_->video; }
+
+Audio& RaylibBackend::audio() { return *impl_->audio; }
 
 // ── window state: implemented (pure state) ────────────────────────────────
 void RaylibBackend::set_title(const char* title) {
@@ -1785,9 +1857,7 @@ void RaylibBackend::load_input_config(const char* dir, bool assist_tools_default
     }
 }
 
-void RaylibBackend::set_volume(int pct) {
-    impl_->volume = std::clamp(pct, 0, 100);
-}
+void RaylibBackend::set_volume(int pct) { impl_->audio->set_volume(pct); }
 
 int RaylibBackend::window_scale() const { return impl_->video->scale(); }
 
@@ -1855,16 +1925,16 @@ void RaylibBackend::reset_frame_blend() {
 }
 
 void RaylibBackend::set_audio_enabled(bool enabled) {
-    impl_->audio_enabled = enabled;
+    impl_->audio->set_enabled(enabled);
 }
 
-bool RaylibBackend::audio_enabled() const { return impl_->audio_enabled; }
+bool RaylibBackend::audio_enabled() const { return impl_->audio->enabled(); }
 
 void RaylibBackend::adjust_scale(int delta) {
     impl_->video->adjust_scale(delta);
 }
 
-int RaylibBackend::volume_percent() const { return impl_->volume; }
+int RaylibBackend::volume_percent() const { return impl_->audio->volume(); }
 
 void RaylibBackend::set_fullscreen(int mode) {
     impl_->video->set_fullscreen(mode);
@@ -2572,22 +2642,7 @@ bool RaylibBackend::copy_presented_frame(std::vector<std::uint8_t>& out,
 
 void RaylibBackend::push_audio_samples(const std::int16_t* samples,
                                        std::size_t count) {
-#if defined(GBARECOMP_USE_RAYLIB)
-    if (!samples || count == 0 || !impl_->bridge_ready || !impl_->audio_ready)
-        return;
-    // Volume first, into scratch, exactly as the SDL backend does: 100 is
-    // passthrough so the common path is byte-identical to unpatched behavior.
-    if (impl_->volume != 100) {
-        impl_->volume_buf.resize(count);
-        for (std::size_t i = 0; i < count; ++i)
-            impl_->volume_buf[i] = apply_volume_gain(samples[i], impl_->volume);
-        samples = impl_->volume_buf.data();
-    }
-    std::lock_guard<std::mutex> lk(impl_->bridge_mu);
-    rab_push(&impl_->bridge, samples, static_cast<int>(count));  // mono
-#else
-    (void)samples; (void)count;
-#endif
+    impl_->audio->push(samples, count);
 }
 
 void RaylibBackend::interp_display_tick(const std::uint8_t* rgb888,
