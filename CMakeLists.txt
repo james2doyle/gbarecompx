@@ -89,12 +89,13 @@ if(GBARECOMP_STATIC_RELEASE)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Raylib 6 — opt-in soft dependency for the Android-first reimplementation.
-# Scaffolding only: backend code is not wired through HostWindow yet, so using
-# this option just proves the dependency can be fetched/linked.
+# Raylib 6 — the window backend. The game project (FFTA) defaults this ON
+# (Phase 4c); the framework keeps OFF as its standalone default, which builds
+# a stub compile-check that needs no network.
 # ─────────────────────────────────────────────────────────────────────────────
 option(GBARECOMP_USE_RAYLIB
-    "Fetch/link raylib 6 as the windowing/input backend (experimental)" OFF)
+    "Fetch/link raylib 6 as the windowing/input backend (OFF = stub compile-check)"
+    OFF)
 
 set(GBARECOMP_RAYLIB_OK FALSE)
 if(GBARECOMP_USE_RAYLIB)
@@ -203,6 +204,10 @@ if(GBARECOMP_RAYLIB_OK)
         "RaylibBackend is built against real raylib")
     message(STATUS "gbarecompx: RaylibBackend linked against raylib 6")
 else()
+    # The effective flag must not survive a flip to OFF in the same build dir:
+    # a stale INTERNAL=ON would make parents add raylib-only targets (and the
+    # Phase 4c default probe would falsely pass).
+    unset(GBARECOMP_RAYLIB_ENABLED CACHE)
     message(STATUS "gbarecompx: RaylibBackend built stub-only "
                    "(enable GBARECOMP_USE_RAYLIB for real calls)")
 endif()
