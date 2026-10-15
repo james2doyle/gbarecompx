@@ -749,6 +749,15 @@ set(TEST_ROM_ARM_BODIES
 set(TEST_ROM_ARM_HEADER   ${TEST_ROM_ARM_OUTDIR}/recompiled.h)
 file(MAKE_DIRECTORY ${TEST_ROM_ARM_OUTDIR})
 
+# Test targets run with asserts live. CMAKE_CXX_FLAGS_RELEASE carries -DNDEBUG,
+# which silently erases every assert() in a test TU — a "passing" test that
+# checks nothing (the vacuous-assert trap; see BRINGUP 2026-10-14). -UNDEBUG is
+# appended after the build-type flags, so it wins; production targets (created
+# earlier) keep NDEBUG. `remove_definitions(-DNDEBUG)` does NOT work here:
+# NDEBUG comes from the flags string, not add_definitions(). New tests should
+# still prefer an always-active CHECK macro.
+add_compile_options(-UNDEBUG)
+
 if(EXISTS ${GBA_SUITE_ROOT}/arm/arm.gba)
     add_custom_command(
         OUTPUT  ${TEST_ROM_ARM_DISPATCH} ${TEST_ROM_ARM_BODIES}

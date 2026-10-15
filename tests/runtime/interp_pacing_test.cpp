@@ -15,11 +15,12 @@ int main() {
     assert(interp_clamp_wake_ns(9000, now, deadline) == deadline); // clamped
     assert(interp_clamp_wake_ns(9000, now, now) == 9000);         // no future deadline
 
-    // A vsync present that would exceed the deadline is held.
-    assert(interp_should_hold_for_deadline(true, 100, now, deadline));
+    // A vsync present that would exceed the deadline is held; everything else
+    // proceeds (not vsync, unknown period, or a deadline far enough out).
+    assert(!interp_should_hold_for_deadline(true, 100, now, deadline));
     assert(!interp_should_hold_for_deadline(false, 100, now, deadline));
     assert(!interp_should_hold_for_deadline(true, 0, now, deadline));
-    assert(!interp_should_hold_for_deadline(true, 100, now, now + 50));
+    assert(interp_should_hold_for_deadline(true, 100, now, now + 50));
 
     // Sleep kind selection.
     assert(interp_sleep_kind(true, 100, now + 50, now, deadline) == InterpSleep::kNone);

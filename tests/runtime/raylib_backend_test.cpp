@@ -21,9 +21,23 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 
 using gbarecomp::RaylibBackend;
 using gbarecomp::WindowBackend;
+
+// The window-lifecycle section needs a real display in real-backend builds
+// (InitWindow fails without one and open() honestly returns false); stub
+// builds need none -- open/close are honest no-window state.
+#if defined(GBARECOMP_USE_RAYLIB)
+#if defined(_WIN32) || defined(__APPLE__)
+static bool have_display() { return true; }   // always a GUI session
+#else
+static bool have_display() {
+    return std::getenv("DISPLAY") || std::getenv("WAYLAND_DISPLAY");
+}
+#endif
+#endif
 
 int main() {
     // Not open until open() succeeds.
@@ -99,6 +113,13 @@ int main() {
 
     b.set_presentation_anchor_top(true);
     b.set_view_margins(1, 2, 3, 4);
+    // Touch pad visibility is gated by touch support: with no touch controls
+    // configured the pad refuses to show (a backend must not claim a pad it
+    // cannot deliver)...
+    b.set_touch_pad_visible(true);
+    assert(!b.touch_pad_visible_value());
+    // ...and with emulation configured, the round-trip works.
+    b.configure_touch(true, 0xFFu, 1, /*emulate_touch=*/true, 30);
     b.set_touch_pad_visible(true);
     assert(b.touch_pad_visible_value());
 
@@ -137,44 +158,61 @@ int main() {
     b.gamepad_rumble(1.0f, 1.0f, 500);          // silent no-op
     b.haptic_pulse(10, 0.5f);                    // silent no-op
 
-    // open()/close() through the flat overload, and idempotence.
-    assert(b.open(3, 240, 160, "raylib skeleton", nullptr, false, false,
-                  false, false));
-    assert(b.is_open());
-    assert(b.open(3, 240, 160, "again", nullptr, false, false, false, false));
-    b.close();
-    assert(!b.is_open());
+    // ---- window lifecycle (needs a display in real-backend builds) ---------
+    bool window_ok = true;
+#if defined(GBARECOMP_USE_RAYLIB)
+    window_ok = have_display();
+#endif
+    if (!window_ok) {
+        std::printf("raylib_backend tests: window lifecycle skipped "
+                    "(no DISPLAY/WAYLAND_DISPLAY)\n");
+    } else {
+        // open()/close() through the flat overload, and idempotence.
+        assert(b.open(3, 240, 160, "raylib skeleton", nullptr, false, false,
+                      false, false));
+        assert(b.is_open());
+        assert(b.open(3, 240, 160, "again", nullptr, false, false, false, false));
+        b.close();
+        assert(!b.is_open());
 
-    // The params-struct overload and the flat overload must agree. They are two
-    // entry points to the same setup; if normalization ever moves to one and not
-    // the other, callers get silently different windows.
-    {
-        RaylibBackend flat, structured;
-        WindowBackend& f = flat;
-        WindowBackend& st = structured;
+        // The params-struct overload and the flat overload must agree. They are
+        // two entry points to the same setup; if normalization ever moves to
+        // one and not the other, callers get silently different windows.
+        //
+        // One live instance at a time: raylib has a single global window, so a
+        // second open() while another instance is open re-initializes it under
+        // the first one's feet (heap corruption, observed).
+        {
+            RaylibBackend flat, structured;
+            WindowBackend& f = flat;
+            WindowBackend& st = structured;
 
-        assert(f.open(0, 0, -3, "t", nullptr, true, true, false, false));
-        gbarecomp::WindowBackendOpenParams p;
-        p.scale = 0;
-        p.base_w = 0;
-        p.base_h = -3;
-        p.title = "t";
-        p.linear_filter = true;
-        p.sharp_filter = true;
-        assert(st.open(p));
+            assert(f.open(0, 0, -3, "t", nullptr, true, true, false, false));
+            const int flat_scale = f.window_scale();
+            const bool flat_linear = f.linear_filter_enabled();
+            f.close();
 
-        // Same normalization => same observable state.
-        assert(f.window_scale() == st.window_scale());
-        assert(f.linear_filter_enabled() == st.linear_filter_enabled());
+            gbarecomp::WindowBackendOpenParams p;
+            p.scale = 0;
+            p.base_w = 0;
+            p.base_h = -3;
+            p.title = "t";
+            p.linear_filter = true;
+            p.sharp_filter = true;
+            assert(st.open(p));
 
-        // Defaults in the struct must match what the flat form would clamp to,
-        // so `open({})` behaves like `open(3, 240, 160, ...)`.
-        assert(gbarecomp::WindowBackendOpenParams{}.scale == 3);
-        assert(gbarecomp::WindowBackendOpenParams{}.base_w == 240);
-        assert(gbarecomp::WindowBackendOpenParams{}.base_h == 160);
+            // Same normalization => same observable state.
+            assert(flat_scale == st.window_scale());
+            assert(flat_linear == st.linear_filter_enabled());
 
-        f.close();
-        st.close();
+            // Defaults in the struct must match what the flat form would clamp
+            // to, so `open({})` behaves like `open(3, 240, 160, ...)`.
+            assert(gbarecomp::WindowBackendOpenParams{}.scale == 3);
+            assert(gbarecomp::WindowBackendOpenParams{}.base_w == 240);
+            assert(gbarecomp::WindowBackendOpenParams{}.base_h == 160);
+
+            st.close();
+        }
     }
 
     // Pin the Events contract. This struct was MOVED from host_window.h into

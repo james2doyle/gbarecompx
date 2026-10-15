@@ -37,7 +37,7 @@ struct RecordingBackend : WindowBackend {
         ++hits; return true;
     }
     void close() override { ++hits; }
-    bool is_open() const override { return true; }
+    bool is_open() const override { ++hits; return true; }
 
     void set_title(const char*) override { ++hits; }
     bool assist_tools_enabled() const override { ++hits; return true; }

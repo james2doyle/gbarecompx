@@ -58,16 +58,19 @@ inline InterpSleep interp_sleep_kind(bool interp_vsync,
 
 // Advance the boundary cursor after a present that completed at `after_ns`.
 // Vsync-blocked and unknown-rate presents re-anchor (the boundary clock is no
-// longer meaningful); otherwise the cursor advances by whole periods until it
-// is strictly in the future.
+// longer meaningful); otherwise the cursor advances at least one period from
+// where it was, then whole periods until it is strictly in the future --
+// upstream SDL semantics. Bounded so a zero/lagging cursor cannot spin.
 inline std::uint64_t interp_advance_tick_ns(bool interp_vsync,
                                             std::uint64_t period_ns,
                                             std::uint64_t tick_ns,
                                             std::uint64_t after_ns) {
     if (interp_vsync || period_ns == 0) return after_ns;
-    std::uint64_t next = tick_ns == 0 ? after_ns : tick_ns;
-    // Bounded so a zero/lagging cursor cannot spin forever.
-    for (int i = 0; i < 4096 && next <= after_ns; ++i) next += period_ns;
+    std::uint64_t next = tick_ns;
+    for (int i = 0; i < 4096; ++i) {
+        next += period_ns;
+        if (next > after_ns) break;
+    }
     return next > after_ns ? next : after_ns + period_ns;
 }
 

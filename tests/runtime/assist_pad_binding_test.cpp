@@ -10,25 +10,25 @@ int main() {
     // against SDL axis codes; these must keep producing the same integers so
     // existing keybinds.ini / config.ini files stay valid.
     // SDL_CONTROLLER_AXIS_TRIGGERLEFT == 4, TRIGGERRIGHT == 5.
-    assert(assist_pad_axis(4, true) == 108);
-    assert(assist_pad_axis(5, true) == 110);
-    // And the on-disk format is stable for other axes.
-    assert(assist_pad_axis(0, true) == 100);
-    assert(assist_pad_axis(0, false) == 101);
-    assert(assist_pad_axis(1, true) == 102);
+    assert(assist_pad_axis(4, true) == 109);
+    assert(assist_pad_axis(5, true) == 111);
+    // And the on-disk format is stable for other axes (odd half = positive).
+    assert(assist_pad_axis(0, true) == 101);
+    assert(assist_pad_axis(0, false) == 100);
+    assert(assist_pad_axis(1, true) == 103);
 
     // Decode analog.
     AssistAxisBinding ab{};
-    assert(decode_assist_pad_axis(108, &ab));
+    assert(decode_assist_pad_axis(109, &ab));
     assert(ab.axis_code == 4 && ab.positive);
 
-    assert(decode_assist_pad_axis(110, &ab));
+    assert(decode_assist_pad_axis(111, &ab));
     assert(ab.axis_code == 5 && ab.positive);
 
-    assert(decode_assist_pad_axis(100, &ab));
+    assert(decode_assist_pad_axis(101, &ab));
     assert(ab.axis_code == 0 && ab.positive);
 
-    assert(decode_assist_pad_axis(101, &ab));
+    assert(decode_assist_pad_axis(100, &ab));
     assert(ab.axis_code == 0 && !ab.positive);
 
     // The encoder's documented invariants decode consistently for a sweep.

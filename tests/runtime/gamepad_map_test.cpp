@@ -58,7 +58,7 @@ int main() {
     // A single R press clears only bit 8.
     GamepadSnapshot r;
     r.buttons = kGbaKeyR;
-    assert(gamepad_to_keyinput(r) == 0x03FFu & ~(1u << 8));
+    assert(gamepad_to_keyinput(r) == (0x03FFu & ~(1u << 8)));
 
     // GLFW-vs-SDL mapping quirks. Synthetic indices, no hardware: the
     // evidenced device is the 8BitDo Lite 2 X-input GUID, whose DB entries
