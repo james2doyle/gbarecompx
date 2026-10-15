@@ -112,8 +112,11 @@ int main() {
         auto s2 = snap();
         s2.touch_gba_bits = kBitA;
         s2.suppress_game_input = true;
-        check(translate_input(s2, B, e2).keyinput == 0x03FFu,
+        const auto sup = translate_input(s2, B, e2);
+        check(sup.keyinput == 0x03FFu,
               "settings menu suppresses all game input");
+        check(sup.menu_keyinput == static_cast<std::uint16_t>(0x03FFu & ~kBitA),
+              "suppressed input still carries the raw menu levels");
     }
 
     // ---- quit is an EDGE, not a level -------------------------------------

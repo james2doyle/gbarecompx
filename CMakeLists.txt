@@ -233,9 +233,17 @@ add_library(gbarecomp_audio_drc STATIC src/runtime/recomp_audio_drc.cpp)
 
 # Phase 3a — the pure menu model (plan §3.4): no backend, no toolkit.
 add_library(gbarecomp_menu_model STATIC src/runtime/menu_model.cpp)
+target_include_directories(gbarecomp_menu_model PUBLIC src/runtime)
 target_include_directories(gbarecomp_audio_drc PUBLIC src/runtime)
 find_package(Threads REQUIRED)
 target_link_libraries(gbarecomp_audio_drc PUBLIC Threads::Threads)
+
+# Phase 3c — host-side wiring for the generic menu (plan §3.4): build the
+# default rows from a backend's settings, apply MenuResult back to the
+# backend, suppress game input while open. Backend-neutral (WindowBackendV2).
+add_library(gbarecomp_host_menu STATIC src/runtime/host_menu.cpp)
+target_include_directories(gbarecomp_host_menu PUBLIC src/runtime)
+target_link_libraries(gbarecomp_host_menu PUBLIC gbarecomp_menu_model)
 
 add_library(gbarecomp_raylib_backend STATIC src/runtime/raylib_backend.cpp
     src/runtime/raylib_api.cpp src/runtime/host_clock.cpp)
@@ -1096,6 +1104,14 @@ add_executable(menu_draw_tests tests/runtime/menu_draw_test.cpp)
 target_include_directories(menu_draw_tests PRIVATE src/runtime)
 target_link_libraries(menu_draw_tests PRIVATE gbarecomp_menu_model)
 add_test(NAME menu_draw_tests COMMAND menu_draw_tests)
+
+# Phase 3c — the host-loop wiring on the Phase 2-tail fakes: build from the
+# backend's settings, navigation + presentation, MenuResult application to
+# fake Fx/Audio/Video, the persistence hook, suppression. No display.
+add_executable(host_menu_tests tests/runtime/host_menu_test.cpp)
+target_include_directories(host_menu_tests PRIVATE src/runtime tests/runtime)
+target_link_libraries(host_menu_tests PRIVATE gbarecomp_host_menu)
+add_test(NAME host_menu_tests COMMAND host_menu_tests)
 
 # NOTE: the backend-selection and closed-window HostWindow tests deliberately
 # live in the APP build (root CMakeLists: ffta_backend_select_tests,

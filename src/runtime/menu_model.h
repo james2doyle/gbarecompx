@@ -134,6 +134,11 @@ float menu_value_float(const MenuModel& m, int row);
 void menu_set_value_int(MenuModel& m, int row, int value);
 void menu_set_value_float(MenuModel& m, int row, float value);
 
+// Append a row; returns its global index, or -1 when the model is full.
+// The safe idiom for hosts/games appending rows — never write row_count
+// directly (the capacity is a hard bound and the row walkers trust it).
+int menu_add_row(MenuModel& m, const MenuRow& row);
+
 // ── status / toast / backdrop ───────────────────────────────────────────
 // Empty/null text clears and zeroes the frame count.
 void menu_set_status(MenuModel& m, const char* text);

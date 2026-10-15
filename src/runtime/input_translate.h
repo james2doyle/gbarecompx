@@ -242,6 +242,9 @@ inline WindowBackend::Events translate_input(const InputSnapshot& s,
     }
     keys &= static_cast<std::uint16_t>(~s.pad_gba_bits);
     keys &= static_cast<std::uint16_t>(~s.touch_gba_bits);
+    // Raw levels for host UI (the generic menu navigates from these even
+    // while game input is suppressed); the masked value is the game's.
+    ev.menu_keyinput = keys;
     ev.keyinput = s.suppress_game_input ? 0x03FFu : keys;
 
     // ---- quit -------------------------------------------------------------

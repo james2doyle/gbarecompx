@@ -36,6 +36,13 @@ struct Events {
     // GBA KEYINPUT layout. Active-low: 1 = released, 0 = pressed.
     // Bits: 0=A 1=B 2=Sel 3=Sta 4=Right 5=Left 6=Up 7=Down 8=R 9=L.
     uint16_t keyinput = 0x03FF;
+    // The same levels BEFORE menu suppression (plan §3.4): `keyinput` is
+    // masked to all-released while any suppression source is active (the
+    // generic menu — the backend derives its flag from the presented model —
+    // or the legacy runtime UI), but the host menu must still navigate from
+    // the raw levels. V2 backends fill this; the flat SDL generation predates
+    // the field and leaves the default (it has no generic-menu consumer).
+    uint16_t menu_keyinput = 0x03FF;
     // Edge-triggered save-state slot hotkeys. F1..F9 load slot
     // 1..9; Shift+F1..F9 save slot 1..9. 0 = no request this pump.
     // The caller acts on these at the top of the loop (a clean

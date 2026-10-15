@@ -174,6 +174,10 @@ struct RaylibBackend::Impl {
     MenuModel* menu_model = nullptr;
     MenuGeometry menu_geometry;
     PointerState menu_pointer;
+    // Derived from the last presented MenuModel (plan §3.4): drives the
+    // input snapshot's suppress_game_input. A plain flag — no model pointer
+    // survives a frame.
+    bool menu_open = false;
     // True once a monitor-refresh probe returned a sane rate: Caps::
     // vsync_report (Video::refresh_hz() is meaningful).
     bool vsync_probed = false;
@@ -1908,6 +1912,9 @@ public:
         if (impl_->runtime_ui && recomp_runtime_ui_is_open(impl_->runtime_ui))
             s.suppress_game_input = true;
 #endif
+        // The generic menu (V2): the flag derives from the presented
+        // MenuModel's open state (plan §3.4).
+        if (impl_->menu_open) s.suppress_game_input = true;
         // gyro_rate_z stays 0: raylib exposes no gyroscope API, and silently
         // faking motion would be worse than reporting none.
         // The touch fast-forward pill is a level overlay the shared
@@ -1917,6 +1924,9 @@ public:
 #else
         impl_->touch_ff_held = false;
         out = InputSnapshot{};
+        // State-only stub: no input device, but the derived menu flag is
+        // pure state and reports the same as the raylib path.
+        out.suppress_game_input = impl_->menu_open;
 #endif
     }
 
@@ -2264,6 +2274,7 @@ public:
     MenuResult present(MenuModel& model, const PointerState& pointer) override {
         MenuResult r;
         impl_->menu_model = nullptr;  // a fresh frame's stash
+        impl_->menu_open = model.open;  // §3.4: derives suppress_game_input
 #if defined(GBARECOMP_USE_RAYLIB)
         if (!impl_->open || !impl_->api->IsWindowReady()) return r;
         RaylibOverlay ov(impl_->api, impl_->api->GetScreenWidth(),
@@ -2723,6 +2734,12 @@ void RaylibBackend::close() {
 #endif
     impl_->open = false;
     impl_->input_edges = InputEdges{};
+    // Derived menu state dies with the window (same rule as the edges), so a
+    // reopen never inherits suppression before its first present. One reset
+    // point is enough: close() is the only path into the closed state, and a
+    // closed raylib read() reports an empty snapshot (the state-only stub
+    // still reports the flag, but has no input device to leak into).
+    impl_->menu_open = false;
 }
 bool RaylibBackend::is_open() const { return impl_->open; }
 

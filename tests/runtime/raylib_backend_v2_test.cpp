@@ -41,13 +41,17 @@ using gbarecomp::FxSettings;
 using gbarecomp::Input;
 using gbarecomp::InputSnapshot;
 using gbarecomp::kRayKeyX;
+using gbarecomp::MenuModel;
 using gbarecomp::OpenParams;
 using gbarecomp::Overlay;
+using gbarecomp::PointerState;
 using gbarecomp::RaylibBackend;
 using gbarecomp::Result;
 using gbarecomp::TouchConfig;
 using gbarecomp::Video;
 using gbarecomp::WindowBackendV2;
+using gbarecomp::menu_close;
+using gbarecomp::menu_open;
 
 void video_defaults_clamps_and_shared_state() {
     RaylibBackend b;
@@ -415,6 +419,39 @@ void facade_lifecycle_contract() {
         const Result again = v2.open(OpenParams{});
         CHECK(!again.ok() && again.code == Err::AlreadyOpen);
         CHECK(v2.wait_for_foreground());
+
+        // While a presented MenuModel is open, the input snapshot's
+        // suppress_game_input derives from it (plan §3.4). The backend keeps
+        // no model pointer — only the derived flag, so nothing outlives the
+        // frame.
+        {
+            MenuModel menu;
+            InputSnapshot snap;
+            v2.menu().present(menu, PointerState{});
+            v2.input().read(snap);
+            CHECK(!snap.suppress_game_input);
+            menu_open(menu);
+            v2.menu().present(menu, PointerState{});
+            v2.input().read(snap);
+            CHECK(snap.suppress_game_input);
+            menu_close(menu);
+            v2.menu().present(menu, PointerState{});
+            v2.input().read(snap);
+            CHECK(!snap.suppress_game_input);
+
+            // Derived state resets with the lifecycle: a close/reopen must
+            // not inherit suppression before its first present.
+            menu_open(menu);
+            v2.menu().present(menu, PointerState{});
+            v2.close();
+            v2.input().read(snap);
+            CHECK(!snap.suppress_game_input);
+            CHECK(v2.open(OpenParams{}).ok());
+            v2.input().read(snap);
+            CHECK(!snap.suppress_game_input);
+            menu_close(menu);
+        }
+
         v2.close();
         CHECK(!v2.is_open());
         // Desktop supports close -> open (Caps::reopen).
