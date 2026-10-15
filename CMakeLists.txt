@@ -986,6 +986,18 @@ target_include_directories(backend_contract_tests PRIVATE src/runtime tests/runt
 target_link_libraries(backend_contract_tests PRIVATE gbarecomp_raylib_backend)
 add_test(NAME backend_contract_tests COMMAND backend_contract_tests)
 
+# Phase 4d — the per-interface surface walk (ports the deleted flat dispatch
+# tests): every method of every interface is called through its interface type
+# against the fakes, and each call must land on the composed implementation.
+add_executable(window_backend_dispatch_tests
+    tests/runtime/window_backend_dispatch_test.cpp)
+target_include_directories(window_backend_dispatch_tests PRIVATE
+    src/runtime tests/runtime)
+target_link_libraries(window_backend_dispatch_tests PRIVATE
+    gbarecomp_raylib_backend)
+add_test(NAME window_backend_dispatch_tests
+         COMMAND window_backend_dispatch_tests)
+
 # Phase 3a — the pure menu model suite (ports recomp-ui's runtime_ui_test
 # semantics to the V2 shape).
 add_executable(menu_model_tests tests/runtime/menu_model_test.cpp)
