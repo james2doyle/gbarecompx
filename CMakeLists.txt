@@ -1151,6 +1151,15 @@ target_include_directories(menu_engine_raygui_tests PRIVATE
 target_link_libraries(menu_engine_raygui_tests PRIVATE gbarecomp_menu_model)
 add_test(NAME menu_engine_raygui_tests COMMAND menu_engine_raygui_tests)
 
+# The launch screen's shared visual language (launcher_style.h): palette +
+# status-line decision, raylib-free and headless-testable. The backend TU
+# (launcher_raygui.cpp) maps the values to Colors; the wiring guard
+# (tools/check_launch_screen_wiring.py) source-pins the same constants.
+add_executable(launcher_style_tests tests/runtime/launcher_style_test.cpp)
+target_include_directories(launcher_style_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime")
+add_test(NAME launcher_style_tests COMMAND launcher_style_tests)
+
 # Phase 4d — the per-interface surface walk (ports the deleted flat dispatch
 # tests): every method of every interface is called through its interface type
 # against the fakes, and each call must land on the composed implementation.

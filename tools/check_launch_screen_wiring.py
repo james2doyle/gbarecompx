@@ -70,6 +70,55 @@ def check_retired_view_hygiene(setup_java: str) -> tuple[bool, list[str]]:
     return (not failures, failures)
 
 
+# ---- launch style (the shared pre-boot visual language) ---------------------
+#
+# The desktop raygui launch screen and the Android setup activity are the
+# SAME screen on two platforms ("exactly one pre-boot surface per
+# platform"); GbaSetupActivity.buildContent() transcribed the desktop
+# layout natively and evolved a full visual language. launcher_style.h is
+# the desktop's transcription of that language back — palette pinned
+# constant-for-constant below, so the two surfaces cannot drift silently.
+
+LAUNCH_PALETTE = {
+    "kBackground": "0x070B14",        # page background
+    "kPanel": "0x1A1F2E",             # box-art panel fill
+    "kPanelStroke": "0x303A50",       # panel stroke + divider
+    "kAccent": "0x4ED8FF",            # action-button fill, busy text
+    "kAccentText": "0x08101B",        # action-button label
+    "kReadyGreen": "0x78EBAB",        # verified path / "● Verified and ready"
+    "kAmber": "0xFFD34E",             # import prompt / attention
+    "kTitlePlaceholder": "0xCBD4EE",  # no-art placeholder title
+    "kMuted": "0x848FAD",             # checkbox / info line
+    "kFootnote": "0x6E7894",          # privacy footnote
+}
+
+
+def check_launch_style(style_h: str, launcher_cpp: str,
+                       style_h_exists: bool = True) -> tuple[bool, list[str]]:
+    failures = []
+    if not style_h_exists:
+        return (False, ["src/runtime/launcher_style.h is missing — the launch "
+                        "screen's palette and status-line rules must live in "
+                        "the shared style header, not inline in the backend"])
+    for name, hexv in LAUNCH_PALETTE.items():
+        if hexv not in style_h:
+            failures.append(
+                f"launcher_style.h must pin {name}={hexv} (the Android setup "
+                "activity's palette — the two pre-boot surfaces share one style)")
+    if "rom_status_line(" not in launcher_cpp:
+        failures.append(
+            "launcher_raygui.cpp must draw the ROM status through "
+            "rom_status_line() (the shared status decision, not inline colors)")
+    for retired in ("Select a ROM to begin", "0x9F, 0xFF, 0x9F",
+                    "0x88, 0x99, 0xAA"):
+        if retired in launcher_cpp:
+            failures.append(
+                f"launcher_raygui.cpp carries retired launch-screen content: "
+                f"{retired!r} (the Android setup activity's wording and "
+                "palette replaced it)")
+    return (not failures, failures)
+
+
 # ---- self-test fixtures -----------------------------------------------------
 
 GOOD_MOBILE = 'args.emplace_back("--no-launcher");\n...std::remove("debug-args.txt");\n'
@@ -78,6 +127,11 @@ GOOD_RUNTIME = 'if (s == "--no-launcher") {\n            continue;\n        }\n'
 BAD_RUNTIME = 'if (s == "--no-bios-hle") {\n            continue;\n        }\n'
 GOOD_SETUP = 'if (biosButton != null) biosButton.setEnabled(!busy);\n'
 BAD_SETUP = 'biosButton.setEnabled(!busy);\n'
+GOOD_STYLE_H = "constexpr std::uint32_t kAccent = 0x4ED8FF;\n" + "".join(
+    f"{n} = {v};\n" for n, v in LAUNCH_PALETTE.items())
+BAD_STYLE_H = GOOD_STYLE_H.replace("0x78EBAB", "0x9FFF9F")
+GOOD_LAUNCHER_CPP = "rom_status_line(ready, model.rom_path());\n"
+BAD_LAUNCHER_CPP = 'DrawText("Select a ROM to begin", x, y, 16, RED);\n'
 
 
 def self_test() -> int:
@@ -103,6 +157,24 @@ def self_test() -> int:
     ok, _ = check_retired_view_hygiene(BAD_SETUP)
     if ok:
         print("FAIL self-test: unguarded setBusy passed")
+        failures += 1
+
+    ok, _ = check_launch_style(GOOD_STYLE_H, GOOD_LAUNCHER_CPP)
+    if not ok:
+        print("FAIL self-test: good style fixtures rejected:", _)
+        failures += 1
+    ok, _ = check_launch_style(BAD_STYLE_H, GOOD_LAUNCHER_CPP)
+    if ok:
+        print("FAIL self-test: drifted palette passed")
+        failures += 1
+    ok, _ = check_launch_style(GOOD_STYLE_H, GOOD_LAUNCHER_CPP,
+                               style_h_exists=False)
+    if ok:
+        print("FAIL self-test: missing style header passed")
+        failures += 1
+    ok, _ = check_launch_style(GOOD_STYLE_H, BAD_LAUNCHER_CPP)
+    if ok:
+        print("FAIL self-test: retired status wording passed")
         failures += 1
 
     if failures:
@@ -143,6 +215,18 @@ def main() -> int:
         failures += 1
     else:
         print("PASS setup screen retired-view hygiene (no NPE)")
+
+    style_path = REPO / "src" / "runtime" / "launcher_style.h"
+    launcher_cpp = (REPO / "src" / "runtime" / "launcher_raygui.cpp").read_text()
+    ok, msgs = check_launch_style(
+        style_path.read_text() if style_path.is_file() else "", launcher_cpp,
+        style_h_exists=style_path.is_file())
+    for m in msgs:
+        print("FAIL launch style: " + m)
+    if not ok:
+        failures += 1
+    else:
+        print("PASS launch style (shared palette + status-line decision)")
 
     return 1 if failures else 0
 

@@ -23,6 +23,7 @@
 
 #include "launch_screen_model.h"
 #include "asset_picker.h"
+#include "launcher_style.h"
 
 namespace gbarecomp {
 namespace {
@@ -31,6 +32,13 @@ constexpr int kWindowW = 720;
 constexpr int kWindowH = 480;
 constexpr int kBtnW = 200;
 constexpr int kBtnH = 48;
+
+// launcher_style.h values are raylib-free uint32 RGB; this TU renders them.
+Color rgb(std::uint32_t v) {
+    return Color{static_cast<unsigned char>((v >> 16) & 0xFF),
+                 static_cast<unsigned char>((v >> 8) & 0xFF),
+                 static_cast<unsigned char>(v & 0xFF), 0xFF};
+}
 
 enum Focus { kFocusPlay = 0, kFocusSelect = 1, kFocusCount = 2 };
 
@@ -221,11 +229,12 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
 
         // ── render ───────────────────────────────────────────────────────
         BeginDrawing();
-        ClearBackground(Color{0x07, 0x0B, 0x14, 0xFF});
+        ClearBackground(rgb(launcher_style::kBackground));
 
         // Even split visual divider between the left image column and the
         // right controls column.
-        DrawLine(kWindowW / 2, 0, kWindowW / 2, kWindowH, Color{0x30, 0x3A, 0x50, 0xFF});
+        DrawLine(kWindowW / 2, 0, kWindowW / 2, kWindowH,
+                 rgb(launcher_style::kPanelStroke));
 
         if (have_boxart) {
             DrawTexturePro(boxart,
@@ -233,7 +242,7 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
                                      static_cast<float>(boxart.height)},
                            layout.boxart, Vector2{0, 0}, 0.0f, WHITE);
         } else {
-            DrawRectangleRec(layout.boxart, Color{0x1A, 0x1F, 0x2E, 0xFF});
+            DrawRectangleRec(layout.boxart, rgb(launcher_style::kPanel));
             int tw = MeasureText("FFTA", 40);
             DrawText("FFTA", layout.boxart.x + (layout.boxart.width - (float)tw) / 2.0f,
                      layout.boxart.y + layout.boxart.height / 2 - 20, 40, WHITE);
@@ -261,17 +270,16 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
             SetWindowFocused();
         }
 
+        // The ROM status line — the shared decision (launcher_style.h): the
+        // resolved path in verified green, or the import prompt in amber.
         const float right_x = static_cast<float>(kWindowW / 2) + 20.0f;
-        if (ready) {
-            DrawText(model.rom_path().c_str(), (int)right_x, 105, 16,
-                     Color{0x9F, 0xFF, 0x9F, 0xFF});
-        } else {
-            DrawText("Select a ROM to begin", (int)right_x, 105, 16,
-                     Color{0x88, 0x99, 0xAA, 0xFF});
-        }
+        const launcher_style::StatusLine status =
+            launcher_style::rom_status_line(ready, model.rom_path());
+        DrawText(status.text.c_str(), (int)right_x, 105, (int)status.size,
+                 rgb(status.color));
         if (!notice.empty()) {
             DrawText(notice.c_str(), (int)right_x, 280, 12,
-                     Color{0xFF, 0x66, 0x66, 0xFF});
+                     rgb(launcher_style::kAmber));
         }
 
         EndDrawing();
