@@ -1168,6 +1168,30 @@ target_include_directories(launcher_skip_tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/runtime")
 add_test(NAME launcher_skip_tests COMMAND launcher_skip_tests)
 
+# The launcher's DRAW LOOP, headless: launcher_raygui.cpp runs for real
+# against a recording raylib stub (stub_raylib/raylib.h + the stub TU,
+# which also carries raygui's implementation, mirroring raygui_impl.cpp's
+# role). run() is steppable frame by frame — scripted input, recorded
+# draws, no display, no raylib fetch (the stub raylib.h needs none).
+add_executable(launcher_raygui_tests
+    tests/runtime/launcher_raygui_test.cpp
+    tests/runtime/launcher_raylib_stub.cpp
+    src/runtime/launcher_raygui.cpp
+    src/runtime/asset_picker.cpp
+    src/runtime/host_platform.cpp
+    src/gba/crc32.cpp
+    src/gba/sha1.cpp)
+target_include_directories(launcher_raygui_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime/stub_raylib"
+    src/runtime src/gba src/armv4t src/vendor)
+target_compile_definitions(launcher_raygui_tests PRIVATE
+    GBARECOMP_USE_RAYLIB=1)
+target_link_libraries(launcher_raygui_tests PRIVATE gbarecomp_tinyfiledialogs)
+if(WIN32 OR MSYS)
+    target_link_libraries(launcher_raygui_tests PRIVATE comdlg32 ole32 winmm)
+endif()
+add_test(NAME launcher_raygui_tests COMMAND launcher_raygui_tests)
+
 # Phase 4d — the per-interface surface walk (ports the deleted flat dispatch
 # tests): every method of every interface is called through its interface type
 # against the fakes, and each call must land on the composed implementation.
