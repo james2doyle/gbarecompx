@@ -74,6 +74,15 @@ AssetResult resolve_asset(const std::string& argv_path,
 AssetResult validate_asset_path(const std::string& path,
                                 const AssetSpec& spec);
 
+// Path of one sidecar state file in the launcher cache root (the .exe's
+// directory; the working directory when argv0 is empty). Exposed for
+// launch-screen state that rides beside the asset caches — the
+// "Skip this screen on launch when ready" flag (launcher_skip.h) reads and
+// writes skip_launcher_on_boot here, and the skip path reads rom.cfg
+// through it to decide "ready" WITHOUT ever opening a picker.
+std::string launcher_state_path(const std::string& argv0,
+                                const char* filename);
+
 // Platform-neutral dialog icon hints for the show_dialog seam. The real
 // implementation maps these to MessageBoxA icons (Win32) or tinyfd_messageBox
 // icon types (elsewhere); tests ignore them.

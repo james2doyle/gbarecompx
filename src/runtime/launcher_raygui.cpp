@@ -23,7 +23,11 @@
 
 #include "launch_screen_model.h"
 #include "asset_picker.h"
+#include "launcher_skip.h"
 #include "launcher_style.h"
+
+#include <fstream>
+#include <sstream>
 
 namespace gbarecomp {
 namespace {
@@ -67,7 +71,21 @@ void draw_action_button(const launcher_style::Rect& r, const char* label,
              rgb(vis.text));
 }
 
-enum Focus { kFocusPlay = 0, kFocusSelect = 1, kFocusCount = 2 };
+enum Focus { kFocusPlay = 0, kFocusSelect = 1, kFocusSkip = 2, kFocusCount = 3 };
+
+// Sidecar state IO (one-line files beside the asset caches).
+std::string read_sidecar(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) return "";
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+void write_sidecar(const std::string& path, const std::string& content) {
+    std::ofstream f(path, std::ios::trunc);
+    if (f) f << content;
+}
 
 struct Layout {
     launcher_style::Rect play;
@@ -117,7 +135,36 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
     const std::string argv0 = cfg.argv0 ? cfg.argv0 : ".";
     const std::string staged_bios = cfg.staged_bios ? cfg.staged_bios : "";
 
-    LaunchScreenModel model(make_rom_spec(), argv0, staged_bios);
+    const AssetSpec rom_spec = make_rom_spec();
+    const std::string skip_path = launcher_state_path(
+        argv0, launcher_skip::kStateFilename);
+    bool skip_state =
+        launcher_skip::parse_state(read_sidecar(skip_path));
+
+    // ── the skip decision, BEFORE any window opens ──────────────────────
+    // (the activity: onCreate → skipLauncherOnBoot → launchGame, no setup
+    // screen). The cached ROM is validated here — never resolved — so the
+    // skip path cannot open a picker: with no valid cache the screen shows
+    // ("when ready" is not met).
+    {
+        const std::string cached = read_sidecar(
+            launcher_state_path(argv0, rom_spec.cache_filename));
+        std::size_t b = cached.find_first_not_of(" \t\r\n");
+        if (b != std::string::npos) {
+            std::size_t e = cached.find_last_not_of(" \t\r\n");
+            const AssetResult v =
+                validate_asset_path(cached.substr(b, e - b + 1), rom_spec);
+            if (launcher_skip::should_skip_screen(skip_state, v.ok)) {
+                LauncherResult result;
+                result.kind = LauncherResult::Kind::Launch;
+                result.rom = v.path;
+                result.bios = staged_bios;
+                return result;
+            }
+        }
+    }
+
+    LaunchScreenModel model(rom_spec, argv0, staged_bios);
 
     InitWindow(kWindowW, kWindowH, launcher_style::kGameTitle);
     SetTargetFPS(60);
@@ -185,7 +232,7 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
         // Escape quits, R opens the ROM picker.
         if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_RIGHT) ||
             IsKeyPressed(KEY_TAB)) {
-            focus = (focus == kFocusPlay) ? kFocusSelect : kFocusPlay;
+            focus = static_cast<Focus>((focus + 1) % kFocusCount);
         }
         if (IsKeyPressed(KEY_R)) {
             auto r = resolve_asset("", make_rom_spec(), argv0, true);
@@ -209,10 +256,14 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
                     pending.bios = staged_bios;
                     have_pending = true;
                 }
-            } else {
+            } else if (focus == kFocusSelect) {
                 auto r = resolve_asset("", make_rom_spec(), argv0, true);
                 if (r.ok) model.apply(LaunchScreenInput::RomPicked, r.path);
                 else notice = r.error;
+            } else {
+                skip_state = !skip_state;
+                write_sidecar(skip_path,
+                              launcher_skip::serialize_state(skip_state));
             }
         }
 
@@ -221,7 +272,7 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
         if (IsGamepadAvailable(0)) {
             if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT) ||
                 IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) {
-                focus = (focus == kFocusPlay) ? kFocusSelect : kFocusPlay;
+                focus = static_cast<Focus>((focus + 1) % kFocusCount);
             }
             if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
                 if (focus == kFocusPlay) {
@@ -232,9 +283,13 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
                         pending.bios = staged_bios;
                         have_pending = true;
                     }
-                } else {
+                } else if (focus == kFocusSelect) {
                     auto r = resolve_asset("", make_rom_spec(), argv0, true);
                     if (r.ok) model.apply(LaunchScreenInput::RomPicked, r.path);
+                } else {
+                    skip_state = !skip_state;
+                    write_sidecar(skip_path,
+                                  launcher_skip::serialize_state(skip_state));
                 }
             }
             if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
@@ -344,6 +399,38 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
             if (r.ok) model.apply(LaunchScreenInput::RomPicked, r.path);
             else notice = r.error;
             SetWindowFocused();
+        }
+
+        // The skip checkbox (the activity's row: muted label, default ON).
+        // Toggling persists immediately; the state takes effect on the NEXT
+        // launch — the skip decision runs before any window exists.
+        {
+            const Rectangle cb{right_x, 322.0f, 24.0f, 24.0f};
+            if (focus == kFocusSkip) {
+                DrawRectangleLinesEx(
+                    Rectangle{cb.x - 5.0f, cb.y - 5.0f, cb.width + 10.0f,
+                              cb.height + 10.0f},
+                    1.0f, rgb(launcher_style::kTitlePlaceholder));
+            }
+            const int saved_size = GuiGetStyle(DEFAULT, TEXT_SIZE);
+            const int saved_color = GuiGetStyle(DEFAULT, TEXT_COLOR_NORMAL);
+            const int saved_cb_color =
+                GuiGetStyle(CHECKBOX, TEXT_COLOR_NORMAL);
+            GuiSetStyle(DEFAULT, TEXT_SIZE, 14);
+            const int muted =
+                static_cast<int>((launcher_style::kMuted << 8) | 0xFFu);
+            GuiSetStyle(DEFAULT, TEXT_COLOR_NORMAL, muted);
+            GuiSetStyle(CHECKBOX, TEXT_COLOR_NORMAL, muted);
+            bool checked = skip_state;
+            if (GuiCheckBox(cb, launcher_skip::kSkipLabel, &checked) &&
+                checked != skip_state) {
+                skip_state = checked;
+                write_sidecar(skip_path,
+                              launcher_skip::serialize_state(checked));
+            }
+            GuiSetStyle(DEFAULT, TEXT_SIZE, saved_size);
+            GuiSetStyle(DEFAULT, TEXT_COLOR_NORMAL, saved_color);
+            GuiSetStyle(CHECKBOX, TEXT_COLOR_NORMAL, saved_cb_color);
         }
 
         if (!notice.empty()) {

@@ -120,7 +120,8 @@ def check_launch_style(style_h: str, launcher_cpp: str,
                      "wrap_words(", "action_button_layout(",
                      "action_button_visual(", "rect_contains(",
                      "DrawRectangleRounded", "kPlayLabel", "kSelectLabel",
-                     "art_panel_layout("):
+                     "art_panel_layout(", "kSkipLabel", "should_skip_screen(",
+                     "GuiCheckBox(", "launcher_state_path("):
         if required not in launcher_cpp:
             failures.append(
                 f"launcher_raygui.cpp must draw through launcher_style::{required} "
@@ -150,7 +151,9 @@ BAD_STYLE_H = GOOD_STYLE_H.replace("0x78EBAB", "0x9FFF9F")
 GOOD_LAUNCHER_CPP = ("rom_status_line(ready, model.rom_path());\n"
                      "kGameTitle kPrivacyFootnote kTitlePlaceholder wrap_words(\n"
                      "action_button_layout( action_button_visual( rect_contains(\n"
-                     "DrawRectangleRounded kPlayLabel kSelectLabel\n")
+                     "DrawRectangleRounded kPlayLabel kSelectLabel\n"
+                     "art_panel_layout( kSkipLabel should_skip_screen( "
+                     "GuiCheckBox( launcher_state_path(\n")
 BAD_LAUNCHER_CPP = 'DrawText("Select a ROM to begin", x, y, 16, RED);\n'
 BAD_LAUNCHER_CPP_FFTA = 'DrawText("FFTA", x, y, 40, WHITE);\n'
 BAD_LAUNCHER_CPP_GUIGUI = 'if (GuiButton(layout.play, "Play")) {}\n'

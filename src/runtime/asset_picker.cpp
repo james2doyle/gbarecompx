@@ -232,6 +232,11 @@ AssetResult load_and_validate(const std::string& path,
 
 }  // namespace
 
+std::string launcher_state_path(const std::string& argv0,
+                                const char* filename) {
+    return cache_path(exe_dir_from(argv0), filename);
+}
+
 AssetResult resolve_asset(const std::string& argv_path,
                           const AssetSpec& spec,
                           const std::string& argv0,
