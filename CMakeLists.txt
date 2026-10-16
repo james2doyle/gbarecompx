@@ -907,6 +907,8 @@ add_test(NAME launcher_contract_tests COMMAND launcher_contract_tests)
 
 # raygui link guard (moved from FFTA tests/unit): confirms raygui/raygui.h
 # compiles and its symbols resolve from gbarecomp_raylib_backend. Headless.
+# Only meaningful when raylib was actually fetched (raygui.h includes raylib.h).
+if(GBARECOMP_RAYLIB_OK)
 add_executable(raygui_links_tests
     tests/runtime/test_raygui_links.cpp)
 target_include_directories(raygui_links_tests PRIVATE
@@ -915,6 +917,7 @@ target_link_libraries(raygui_links_tests PRIVATE
     gbarecomp_runtime)
 target_compile_options(raygui_links_tests PRIVATE -UNDEBUG)
 add_test(NAME raygui_links COMMAND raygui_links_tests)
+endif()
 
 add_executable(mod_audio_tests
     tests/mod_audio/test_main.cpp
