@@ -8,7 +8,10 @@
 #     suite takes its full path instead of the Err::Window early-out. One job,
 #     two tiers — a standalone gl-xvfb job was folded in (same binary, so a
 #     separate job added minutes for no new compilation).
-#   * guard    — the seam-completeness checker and its self-tests (once ported)
+#   * guard    — source-shape guards and their self-tests: the menu View-row
+#     wiring (must live outside the retired recomp-ui gate — it once
+#     vanished from every product build behind that dead define) and, when
+#     ported, the seam-completeness checker.
 #   * headless — the framework with raylib on PLATFORM_MEMORY (rlsw software
 #     GL): full ctest plus the present/readback/lifecycle smoke, DISPLAY unset.
 #     No GL/X11 dev packages needed (the memory platform links neither).
@@ -229,6 +232,8 @@ jobs:
 
       - name: Guard + self-tests
         run: |
+          python3 tools/check_menu_view_wiring.py --self-test
+          python3 tools/check_menu_view_wiring.py
           if [ -f tools/check_raylib_backend_complete.py ]; then
             python3 tools/check_raylib_backend_complete.py
             python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
