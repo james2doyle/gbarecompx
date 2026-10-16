@@ -129,12 +129,16 @@ int main() {
         // The page background and the divider.
         CHECK(!clears().empty() && clears()[0].color == rgb(kBackground));
         // Title row, status prompt, button labels, footnote — all present
-        // on frame 0.
-        CHECK(has_text(0, kGameTitle));
+        // on frame 0. The WORDING is pinned as literals here (not through
+        // the shared constants): the constants only prove the draw path is
+        // wired — the proof this suite must give is what the player READS.
+        // (Negative-controlled: a label change fails this suite AND
+        // launcher_style_tests.)
+        CHECK(has_text(0, "Final Fantasy Tactics Advance"));
         CHECK(has_text(0, "Choose your clean cartridge dump (.gba)."));
-        CHECK(has_text(0, kPlayLabel));
-        CHECK(has_text(0, kSelectLabel));
-        CHECK(has_text(0, std::string(gbarecomp::launcher_skip::kSkipLabel)));
+        CHECK(has_text(0, "PLAY"));
+        CHECK(has_text(0, "SELECT ROM"));
+        CHECK(has_text(0, "Skip this screen on launch when ready"));
         // The footnote wraps at the column (line boundaries are the wrap's
         // business, not the assertion's).
         {
