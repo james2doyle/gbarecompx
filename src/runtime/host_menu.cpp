@@ -18,6 +18,9 @@ namespace {
 const char* const kFullscreenChoices[] = {"Windowed", "Borderless",
                                           "Fullscreen"};
 
+// The View row order is the ViewMode order (Native / Adaptive / 16:9).
+const char* const kViewChoices[] = {"Native", "Adaptive", "16:9"};
+
 }  // namespace
 
 void HostMenu::build(WindowBackend& backend) {
@@ -81,6 +84,23 @@ void HostMenu::build(WindowBackend& backend) {
         row.int_value = video.fps_readout() ? 1 : 0;
         row.section = display;
         add(row, Bind::FpsReadout);
+    }
+    if (view_get_ && view_available_) {
+        // Last in Display so the earlier rows keep their positions: the
+        // mode lives in the host loop (see set_view_mode_endpoint), the
+        // menu only seeds and forwards.
+        int seeded = view_get_(view_user_);
+        if (seeded < static_cast<int>(ViewMode::Native) ||
+            seeded > static_cast<int>(ViewMode::Fixed16x9))
+            seeded = static_cast<int>(ViewMode::Native);
+        MenuRow row;
+        row.kind = MenuRowKind::Choice;
+        row.label = "View";
+        row.choices = kViewChoices;
+        row.choice_count = 3;
+        row.int_value = seeded;
+        row.section = display;
+        add(row, Bind::ViewMode);
     }
 
     // ── Graphics ────────────────────────────────────────────────────────
@@ -314,6 +334,15 @@ bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
             // Unreachable via changed_row (Action rows return action_row).
             menu_close(model_);
             break;
+        case Bind::ViewMode: {
+            const int v = menu_value_int(model_, row);
+            if (view_set_) view_set_(view_user_, v);
+            // Reseed from the host: the setter owns the mode, the model
+            // only proposed it (mirrors the Fullscreen reseed above).
+            menu_set_value_int(
+                model_, row, view_get_ ? view_get_(view_user_) : v);
+            break;
+        }
         }
         if (apply_hook_ && bind != Bind::Resume) {
             menu_set_status(model_, "Saved");

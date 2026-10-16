@@ -76,6 +76,7 @@ constexpr int kRayKeyEscape = 256;
 constexpr int kRayKeyEnter = 257;
 constexpr int kRayKeyTab = 258;
 constexpr int kRayKeyBackspace = 259;
+constexpr int kRayKeyDelete = 261;
 constexpr int kRayKeyRight = 262;
 constexpr int kRayKeyLeft = 263;
 constexpr int kRayKeyDown = 264;
@@ -123,6 +124,7 @@ inline int raylib_key_from_name(const char* name) {
     if (b == "space") return kRayKeySpace;
     if (b == "escape" || b == "esc") return kRayKeyEscape;
     if (b == "backspace") return kRayKeyBackspace;
+    if (b == "delete" || b == "del") return kRayKeyDelete;
     if (b == "backslash") return kRayKeyBackslash;
     if (b == "right" || b == "rightarrow") return kRayKeyRight;
     if (b == "left" || b == "leftarrow") return kRayKeyLeft;
@@ -198,6 +200,7 @@ inline const char* raylib_hotkey_name(int h) {
         case HK_SOLAR_BRIGHTER: return "SolarBrighter";
         case HK_SOLAR_DIMMER: return "SolarDimmer";
         case HK_SOLAR_LIVE: return "SolarLive";
+        case HK_MENU: return "Menu";
         default: return "";
     }
 }
@@ -210,6 +213,7 @@ inline const char* raylib_hotkey_default(int h) {
         case HK_PAUSE: return "Shift+P";
         case HK_TURBO: return "Tab";
         case HK_DISPLAY_PERF: return "F";
+        case HK_MENU: return "Delete";
         default: return "";
     }
 }
@@ -302,6 +306,7 @@ inline int sdl_scancode_to_raylib_key(int sc) {
         case 67: return kRayKeyF10;
         case 68: return kRayKeyF11;
         case 69: return kRayKeyF12;
+        case 76: return kRayKeyDelete;   // SDL_SCANCODE_DELETE
         case 79: return kRayKeyRight;       // SDL_SCANCODE_RIGHT
         case 80: return kRayKeyLeft;        // SDL_SCANCODE_LEFT
         case 81: return kRayKeyDown;        // SDL_SCANCODE_DOWN

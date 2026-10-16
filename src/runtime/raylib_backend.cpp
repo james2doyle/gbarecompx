@@ -124,6 +124,7 @@ static_assert(kRayKeyEscape == KEY_ESCAPE, "keymap drift");
 static_assert(kRayKeyEnter == KEY_ENTER, "keymap drift");
 static_assert(kRayKeyTab == KEY_TAB, "keymap drift");
 static_assert(kRayKeyBackspace == KEY_BACKSPACE, "keymap drift");
+static_assert(kRayKeyDelete == KEY_DELETE, "keymap drift");
 static_assert(kRayKeyRight == KEY_RIGHT, "keymap drift");
 static_assert(kRayKeyLeft == KEY_LEFT, "keymap drift");
 static_assert(kRayKeyDown == KEY_DOWN, "keymap drift");
@@ -1588,10 +1589,35 @@ public:
 
         // Poll exactly the bound keys, not the whole keyboard: IsKeyDown per key
         // is cheap, and this keeps the snapshot identical in shape to what the
-        // config file means.
+        // config file means. OR in IsKeyPressed plus the GetKeyPressed queue
+        // so a tap that presses and releases between two presents (raylib
+        // only refreshes key state on PollInputEvents inside EndDrawing)
+        // still appears held for one pump. IsKeyPressed alone is NOT enough:
+        // it is previous==0 && current==1 at Poll time, so a press+release
+        // inside one Poll interval reads up/up and is missed — only the
+        // queue (enqueued on the PRESS callback) sees it. Without the queue,
+        // quick Delete taps fall between pumps and never form the
+        // translate_input edge; double-taps merely double the odds that one
+        // press spans a Poll.
         const InputBindings& b = impl_->input_bindings;
+        int queued[16];
+        int queued_count = 0;
+        for (int k = impl_->api->GetKeyPressed();
+             k != 0 && queued_count < 16;
+             k = impl_->api->GetKeyPressed())
+            queued[queued_count++] = k;
         auto poll = [&](HostKey k) {
-            if (k != kHostKeyNone && impl_->api->IsKeyDown(k)) s.hold(k);
+            if (k == kHostKeyNone) return;
+            if (impl_->api->IsKeyDown(k) || impl_->api->IsKeyPressed(k)) {
+                s.hold(k);
+                return;
+            }
+            for (int i = 0; i < queued_count; ++i) {
+                if (queued[i] == k) {
+                    s.hold(k);
+                    return;
+                }
+            }
         };
         for (int bit = 0; bit < 10; ++bit) poll(b.gba_key[bit]);
         for (int i = 0; i < 9; ++i) poll(b.slot_key[i]);
@@ -2012,6 +2038,15 @@ public:
             apply_launcher_line(impl_->input_bindings, impl_->assist_tools,
                                 impl_->fast_forward_multiplier, key, val);
         });
+
+        // Effective Menu trigger (the Delete-key debug need): one line on
+        // stderr so a "Delete does nothing" report can rule out a config
+        // override vs a missed edge without a debugger.
+        {
+            const HotkeyBinding& mb = impl_->input_bindings.hotkeys[HK_MENU];
+            std::fprintf(stderr, "raylib_backend: Menu hotkey key=%d mods=%u\n",
+                         mb.key, mb.mods);
+        }
     }
 
     const InputBindings& bindings() const override {

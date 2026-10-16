@@ -26,7 +26,7 @@ void check(bool ok, const char* what) {
 enum : HostKey {
     kNone = kHostKeyNone,
     kA = 100, kB, kSelect, kStart, kRight, kLeft, kUp, kDown, kR, kL,
-    kF1, kF2, kF3, kF4, kF5, kF6, kF7, kF8, kF9,
+    kF1, kF2, kF3, kF4, kF5, kF6, kF7, kF8, kF9, kDelete,
     kTab, kP, kReturn, kF, kAssistRewind, kAssistFast,
 };
 
@@ -197,6 +197,19 @@ int main() {
         s3.hold(kReturn);                   // right key, wrong modifier
         check(!translate_input(s3, B, e3).toggle_fullscreen,
               "Return alone does not fire Alt+Return");
+    }
+
+    // ---- menu hotkey is edge-triggered -----------------------------------
+    {
+        InputBindings b = B;
+        b.hotkeys[HK_MENU] = {kDelete, kModNone};
+        InputEdges e;
+        auto s = snap();
+        s.hold(kDelete);
+        check(translate_input(s, b, e).toggle_menu, "Delete toggles the menu");
+        check(!translate_input(s, b, e).toggle_menu, "held Delete fires once");
+        InputSnapshot up = snap();
+        check(!translate_input(up, b, e).toggle_menu, "release clears it");
     }
 
     // ---- turbo is LEVEL triggered ------------------------------------------

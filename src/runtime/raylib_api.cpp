@@ -133,6 +133,7 @@ struct RealRaylibApi final : RaylibApi {
 
     bool IsKeyDown(int key) override { return ::IsKeyDown(key); }
     bool IsKeyPressed(int key) override { return ::IsKeyPressed(key); }
+    int GetKeyPressed() override { return ::GetKeyPressed(); }
     bool IsMouseButtonPressed(int button) override {
         return ::IsMouseButtonPressed(button);
     }

@@ -3382,6 +3382,46 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     const bool menu_available =
         menu_backend != nullptr && menu_backend->caps().menu;
     bool menu_pointer_down = false;
+#if defined(GBARECOMP_RUNTIME_UI)
+    // Generic-menu View row (Native / Adaptive / 16:9): the mode lives in
+    // runtime_ui_context (applied per-frame by sync_resize_driven_view); the
+    // menu only seeds from it and forwards changes through the dirty flag.
+    // The mapping is explicit — the menu order is not the legacy enum order.
+    std::fprintf(stderr,
+                     "[dbg] startup: view_mode=%d view_width=%d scale=%d "
+                     "fullscreen=%d\n",
+                     static_cast<int>(runtime_ui_context.view_mode),
+                     args.view_width, args.scale, args.fullscreen);
+        host_menu.set_view_mode_endpoint(
+        [](void* u) -> int {
+            const auto* ctx = static_cast<const RuntimeUiContext*>(u);
+            switch (ctx->view_mode) {
+            case RECOMP_RUNTIME_UI_VIEW_ADAPTIVE:
+                return static_cast<int>(gbarecomp::ViewMode::Adaptive);
+            case RECOMP_RUNTIME_UI_VIEW_FIXED_16_9:
+                return static_cast<int>(gbarecomp::ViewMode::Fixed16x9);
+            default:
+                return static_cast<int>(gbarecomp::ViewMode::Native);
+            }
+        },
+        [](void* u, int m) {
+            auto* ctx = static_cast<RuntimeUiContext*>(u);
+            switch (static_cast<gbarecomp::ViewMode>(m)) {
+            case gbarecomp::ViewMode::Adaptive:
+                ctx->view_mode = RECOMP_RUNTIME_UI_VIEW_ADAPTIVE;
+                break;
+            case gbarecomp::ViewMode::Fixed16x9:
+                ctx->view_mode = RECOMP_RUNTIME_UI_VIEW_FIXED_16_9;
+                break;
+            default:
+                ctx->view_mode = RECOMP_RUNTIME_UI_VIEW_NATIVE;
+                break;
+            }
+            ctx->view_mode_dirty = true;
+        },
+        &runtime_ui_context,
+        opts.resize_driven_view && opts.max_resize_view_width > 240);
+#endif
 
     // Host-window save-state slots: the ROM path with a .stateN extension.
     // Shift+F1..F9 writes slots 1..9 and F1..F9 restores them; a runtime menu
@@ -3650,6 +3690,22 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         capture_rewind_point();
         auto ev = win.pump();
         if (menu_available) {
+            // Keyboard trigger (desktop): Delete by default, rebindable via
+            // config.ini [KeyMap] Menu. The touch gestures below are the
+            // touch-device trigger. Edge-triggered in translate_input, so a
+            // hold toggles exactly once; a hotkey is never game input, so
+            // the opening press cannot leak into the game.
+            if (ev.toggle_menu) {
+                // Toggle: edge-triggered in translate_input, so a hold flips
+                // exactly once; a hotkey is never game input, so neither the
+                // opening nor the closing press can leak into the game.
+                if (!host_menu.suppress_game_input()) {
+                    host_menu.open(*menu_backend);
+                    TouchHub::instance().cancel_all(touch_clock_ms());
+                } else {
+                    host_menu.close();
+                }
+            }
             // Engine touch gestures (plan §3d): the host policy opens the
             // generic menu on any engine action and lets Back close it. The
             // SDL backend consumes these inside its own pump; on raylib they

@@ -725,6 +725,65 @@ void toggle_close_and_hook_cleared() {
 
 }  // namespace
 
+// ── 22. The View row follows the host's view-mode endpoint ─────────────
+struct ViewEndpoint {
+    int mode = 0;  // 0 Native, 1 Adaptive, 2 16:9 (ViewMode order)
+    int sets = 0;
+    int last_set = -1;
+};
+
+int view_get_fn(void* user) {
+    return static_cast<ViewEndpoint*>(user)->mode;
+}
+
+void view_set_fn(void* user, int mode) {
+    auto* v = static_cast<ViewEndpoint*>(user);
+    v->mode = mode;  // the host applies synchronously, like view_mode
+    v->last_set = mode;
+    ++v->sets;
+}
+
+void view_row_follows_endpoint() {
+    FakeBackend backend;
+    open_fake(backend);
+
+    // No endpoint: no View row (games without a resize opt-in).
+    {
+        HostMenu host;
+        host.build(backend);
+        CHECK(row_by_label(host.model(), "View") < 0);
+    }
+    // Endpoint present but unavailable: still no row.
+    {
+        HostMenu host;
+        ViewEndpoint v;
+        host.set_view_mode_endpoint(view_get_fn, view_set_fn, &v, false);
+        host.build(backend);
+        CHECK(row_by_label(host.model(), "View") < 0);
+    }
+    // Available: seeded from the getter; cycling forwards to the setter.
+    {
+        HostMenu host;
+        ViewEndpoint v;
+        v.mode = 1;  // Adaptive
+        host.set_view_mode_endpoint(view_get_fn, view_set_fn, &v, true);
+        host.open(backend);
+        const int display = section_by_title(host.model(), "Display");
+        const int view = row_by_label(host.model(), "View");
+        CHECK(view >= 0);
+        CHECK(gbarecomp::menu_value_int(host.model(), view) == 1);
+        select_row(host.model(), display, view);
+        press(host, backend, kRight);  // Adaptive -> 16:9
+        CHECK(v.sets == 1);
+        CHECK(v.last_set == 2);
+        CHECK(gbarecomp::menu_value_int(host.model(), view) == 2);
+        press(host, backend, kRight);  // wraps -> Native
+        CHECK(v.last_set == 0);
+        CHECK(gbarecomp::menu_value_int(host.model(), view) == 0);
+        host.close();
+    }
+}
+
 int main() {
     build_seeds_from_backend();
     open_seeds_and_suppresses();
@@ -747,6 +806,7 @@ int main() {
     every_default_bind_applies();
     rebuild_hook_reappends_rows();
     toggle_close_and_hook_cleared();
+    view_row_follows_endpoint();
 
     std::printf("host_menu tests: PASS\n");
     return 0;

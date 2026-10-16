@@ -32,6 +32,11 @@
 
 namespace gbarecomp {
 
+// View-mode vocabulary for the endpoint below (menu order = numeric order).
+// The host owns the mode (it also owns the ppu geometry the mode drives);
+// the menu only seeds from get() and forwards changes to set().
+enum class ViewMode : int { Native = 0, Adaptive = 1, Fixed16x9 = 2 };
+
 class HostMenu {
 public:
     HostMenu() = default;
@@ -89,6 +94,22 @@ public:
         apply_user_ = user;
     }
 
+    // View-mode endpoint (host policy; optional): the View row
+    // (Native / Adaptive / 16:9) is framework content, but the mode lives in
+    // the host loop next to the geometry it drives. When set with
+    // available=true, build() appends the row seeded from get() (clamped to
+    // the ViewMode range), and apply() forwards accepted changes to set() —
+    // which the host applies on its frame (e.g. through a dirty flag the
+    // present path already polls). Null get disarms. Games keep the rebuild
+    // hook for their own rows; this endpoint is the host's own.
+    void set_view_mode_endpoint(int (*get)(void*), void (*set)(void*, int),
+                                void* user, bool available) {
+        view_get_ = get;
+        view_set_ = set;
+        view_user_ = user;
+        view_available_ = available;
+    }
+
     // Apply one MenuResult (public so hosts can feed results they produce
     // themselves, e.g. hotkey-driven changes). Returns true when a change or
     // action was handled.
@@ -116,6 +137,7 @@ private:
         AudioEnabled,
         Volume,
         Resume,
+        ViewMode,
     };
 
     MenuModel model_;
@@ -127,6 +149,10 @@ private:
     void* rebuild_user_ = nullptr;
     void (*apply_hook_)(void*, WindowBackend&, const MenuResult&) = nullptr;
     void* apply_user_ = nullptr;
+    int (*view_get_)(void*) = nullptr;
+    void (*view_set_)(void*, int) = nullptr;
+    void* view_user_ = nullptr;
+    bool view_available_ = false;
 };
 
 }  // namespace gbarecomp

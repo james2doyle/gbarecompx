@@ -57,6 +57,7 @@ enum HostHotkey {
     HK_SOLAR_BRIGHTER,
     HK_SOLAR_DIMMER,
     HK_SOLAR_LIVE,
+    HK_MENU,  // generic settings menu toggle (default Delete, desktop trigger)
     HK_COUNT
 };
 
@@ -289,6 +290,7 @@ inline WindowBackend::Events translate_input(const InputSnapshot& s,
             case HK_SOLAR_BRIGHTER: ev.solar_brighter = true;    break;
             case HK_SOLAR_DIMMER:   ev.solar_dimmer = true;      break;
             case HK_SOLAR_LIVE:     ev.solar_live = true;        break;
+            case HK_MENU:           ev.toggle_menu = true;         break;
             default: break;
         }
     }

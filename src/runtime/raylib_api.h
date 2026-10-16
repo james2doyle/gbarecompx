@@ -92,6 +92,11 @@ struct RaylibApi {
     // ── input ───────────────────────────────────────────────────────────
     virtual bool IsKeyDown(int key) = 0;
     virtual bool IsKeyPressed(int key) = 0;
+    // Queued presses since the last Poll (EndDrawing). Unlike IsKeyPressed
+    // (previous==0 && current==1 at Poll time), this catches a tap that
+    // presses AND releases between two Polls: GLFW enqueues the PRESS during
+    // Poll even though the frame-end level is up. Drain per read; 0 = empty.
+    virtual int GetKeyPressed() = 0;
     virtual bool IsMouseButtonPressed(int button) = 0;
     virtual bool IsMouseButtonDown(int button) = 0;
     virtual int GetMouseX() = 0;

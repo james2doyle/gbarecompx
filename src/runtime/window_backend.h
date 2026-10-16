@@ -62,6 +62,9 @@ struct Events {
     bool     volume_up = false;
     bool     volume_down = false;
     bool     toggle_fps = false;
+    // Generic settings menu toggle (config.ini [KeyMap] Menu, default Delete).
+    // The caller opens/closes the HostMenu; edge-triggered like the rest.
+    bool     toggle_menu = false;
     // Horizontal mouse velocity while the left button is held. The runtime
     // maps this host-neutral delta onto cartridge gyroscope sample units.
     int      gyro_delta_x = 0;

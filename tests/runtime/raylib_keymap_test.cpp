@@ -102,7 +102,8 @@ int main() {
     }
     {
         const HotkeyBinding hb = parse_raylib_hotkey("Ctrl+Alt+Delete");
-        check(hb.key == kRayKeyNone, "unknown key part -> unbound");
+        check(hb.key == 261 && hb.mods == (kModCtrl | kModAlt),
+              "Ctrl+Alt+Delete parses with mods");
     }
     check(parse_raylib_hotkey("").key == kRayKeyNone, "empty hotkey unbound");
     check(parse_raylib_hotkey(nullptr).key == kRayKeyNone, "null hotkey unbound");
@@ -122,6 +123,12 @@ int main() {
           "default Turbo is Tab");
     check(std::string(raylib_hotkey_default(HK_DISPLAY_PERF)) == "F",
           "default DisplayPerf is F");
+    check(std::string(raylib_hotkey_name(HK_MENU)) == "Menu",
+          "hotkey name Menu");
+    check(std::string(raylib_hotkey_default(HK_MENU)) == "Delete",
+          "default Menu is Delete (the desktop menu trigger)");
+    check(raylib_key_from_name("Delete") == 261, "Delete parses");
+    check(raylib_key_from_name("del") == 261, "del parses");
     check(std::string(raylib_hotkey_default(HK_VOLUME_UP)) == "",
           "default VolumeUp is unbound");
 
@@ -232,6 +239,8 @@ int main() {
         check(apply_keymap_line(b, "Turbo", "Tab"), "Turbo line applies");
         check(b.hotkeys[HK_TURBO].key == 258, "Turbo is Tab");
         check(apply_keymap_line(b, "Pause", "Shift+P"), "Pause line applies");
+        check(apply_keymap_line(b, "Menu", "Delete"), "Menu line applies");
+        check(b.hotkeys[HK_MENU].key == 261, "Menu is Delete");
         check(!apply_keymap_line(b, "FutureHotkey", "F1"),
               "unknown hotkey ignored");
         bool tools = true;
