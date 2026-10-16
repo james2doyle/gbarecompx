@@ -227,8 +227,13 @@ void RayguiMenuEngine::draw(HostOverlay& surface, const MenuModel& m) {
                 switch (row.kind) {
                 case MenuRowKind::Toggle: {
                     bool on = row.int_value != 0;
+                    // The value text rides the toggle itself — "On"/"Off",
+                    // the legacy renderer's exact wording (menu_draw.h).
+                    // GuiToggle centers its text on the control, and the
+                    // active base (selection blue) carries the state color.
                     (void)GuiToggle(
-                        Rectangle{value_x, ty, value_w, row_h}, "", &on);
+                        Rectangle{value_x, ty, value_w, row_h},
+                        on ? "On" : "Off", &on);
                     break;
                 }
                 case MenuRowKind::StepInt:
