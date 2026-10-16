@@ -160,6 +160,45 @@ int main() {
             if (t.color == rgb(kTitleWhite)) white_title = true;
         }
         CHECK(amber_prompt && white_title);
+        // ── text SIZES, pinned by value ──────────────────────────────────
+        // raylib's default font is a 10px-native bitmap with a POINT
+        // filter: sizes landing between integer multiples (the old 22/28)
+        // shear the glyphs ragged. Sizes are part of the reviewed surface
+        // — a size change must fail HERE and be re-pinned deliberately,
+        // exactly like the wording pins above.
+        {
+            auto size_of_first = [&](const std::string& exact) {
+                for (const auto& t : texts())
+                    if (t.frame == 0 && t.text == exact) return t.size;
+                return -1.0f;
+            };
+            auto size_of_first_containing = [&](const std::string& needle) {
+                for (const auto& t : texts())
+                    if (t.frame == 0 &&
+                        t.text.find(needle) != std::string::npos)
+                        return t.size;
+                return -1.0f;
+            };
+            // Title row at 2x the native grid; the placeholder (no box
+            // art in the harness) wraps the same title at 3x.
+            CHECK(size_of_first("Final Fantasy Tactics Advance") == 20.0f);
+            CHECK(size_of_first_containing("Final Fantasy") == 30.0f);
+            CHECK(size_of_first("PLAY") == 20.0f);
+            CHECK(size_of_first("SELECT ROM") == 16.0f);
+            CHECK(size_of_first("Choose your clean cartridge dump (.gba).") ==
+                  16.0f);
+            for (const auto& t : texts()) {
+                if (t.frame != 0) continue;
+                const bool pinned = t.size == 12.0f || t.size == 14.0f ||
+                                    t.size == 16.0f || t.size == 20.0f ||
+                                    t.size == 30.0f;
+                CHECK(pinned);  // every launch-screen text, closed set
+            }
+            // The checkbox is the only raygui widget: its label rides
+            // DrawTextCodepoint at the row's TEXT_SIZE.
+            for (const auto& cp : gbarecomp::launcher_stub::codepoints())
+                if (cp.frame == 0) CHECK(cp.size == 14.0f);
+        }
         // Two rounded button fills; PLAY is DIMMED while not ready, SELECT
         // ROM is full accent.
         int play_fills = 0, select_fills = 0, dimmed = 0, accent = 0;
@@ -262,10 +301,13 @@ int main() {
         const gbarecomp::LauncherResult r = backend->run(cfg);
         CHECK(r.kind == gbarecomp::LauncherResult::Kind::Launch);
         CHECK(r.rom == fx.rom);
-        // The ready screen drew the resolved path in the verified green.
+        // The ready screen drew the resolved path in the verified green,
+        // at the status line's 14 (the size pin lives with the color pin).
         bool green_path = false;
         for (const auto& t : texts())
-            if (t.frame == 0 && t.color == rgb(kReadyGreen)) green_path = true;
+            if (t.frame == 0 && t.color == rgb(kReadyGreen) &&
+                t.size == 14.0f)
+                green_path = true;
         CHECK(green_path);
     }
 
