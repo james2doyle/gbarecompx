@@ -11,18 +11,22 @@
 //
 // RED STATE: includes support/fake_raylib_api.h, which does not exist yet.
 // The build must fail until the fake lands.
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 // Included unconditionally so the RED state (missing header) fails in every
 // config, not just raylib-ON: the stub branch below never uses the fake.
 #include "support/fake_raylib_api.h"
 
-#define CHECK(x)                                                             \
+// Variadic so a call containing commas inside parentheses (the grid compares
+// below) still arrives as one expression.
+#define CHECK(...)                                                           \
     do {                                                                     \
-        if (!(x)) {                                                          \
+        if (!(__VA_ARGS__)) {                                                \
             std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__,      \
-                          __LINE__, #x);                                      \
+                          __LINE__, #__VA_ARGS__);                            \
             std::exit(1);                                                    \
         }                                                                    \
     } while (0)
@@ -161,6 +165,119 @@ void linear_filter_reaches_texture() {
     b.close();
 }
 
+// 9. The game-grid uniforms the scale-aware passes depend on are uploaded
+// with the CURRENT layout's origin and scale, and recomputed on resize.
+//
+// This is the wiring half of the LCD-grid change: lcd_shader_test proves the
+// mask is right given a grid, and this proves the backend hands the shader the
+// right grid. A fake that returned -1 for every lookup (its old behaviour)
+// could not observe it at all, so the uniform recording is the enabler.
+//
+// The negative controls matter: a stale uGrid (from the previous layout) must
+// fail, or the test would pass on a resize bug that shipped as "the grid slides
+// when you resize the window".
+void grid_uniforms_track_the_layout() {
+    FakeRaylibApi fake;
+    fake.screen_w = 1920;
+    fake.screen_h = 1280;  // exact 8x, image at the origin
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    FxSettings s = b.fx().settings();
+    s.lcd = true;
+    s.lcd_dither = 1.0f;
+    b.fx().apply(s);
+    CHECK(b.fx().settings().lcd);
+
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+
+    float grid[4] = {0, 0, 0, 0};
+    CHECK(fake.uniform_value("uGrid", grid, 4),
+          "the grid program resolved and uploaded uGrid");
+    CHECK(grid[0] == 0.0f && grid[1] == 0.0f);
+    CHECK(std::fabs(grid[2] - 8.0f) < 1e-4f &&
+          std::fabs(grid[3] - 8.0f) < 1e-4f);  // 8 drawable px per game px
+    float size[2] = {0, 0};
+    CHECK(fake.uniform_value("uGameSize", size, 2));
+    CHECK(size[0] == 240.0f && size[1] == 160.0f);  // logical framebuffer
+
+    // Resize to 1080p: the image is 1620x1080 at x=150 -- offset AND
+    // fractional. The upload must follow within the same drawable.
+    fake.screen_w = 1920;
+    fake.screen_h = 1080;
+    b.video().present(frame.data(), false);
+    CHECK(fake.uniform_value("uGrid", grid, 4));
+    CHECK(grid[0] == 150.0f && grid[1] == 0.0f);  // letterbox offset
+    CHECK(std::fabs(grid[2] - 6.75f) < 1e-4f &&
+          std::fabs(grid[3] - 6.75f) < 1e-4f);   // fractional scale
+    b.close();
+}
+
+// 10. Both scale-aware programs get the grid: the dither cell is indexed by
+// game pixel too, so a grid on the LCD program alone would leave the dither
+// still screen-space. Render targets must exist for the dither pass to run at
+// all (id 0 silently degrades it), which is why the fake's default changed.
+void dither_program_gets_the_grid_too() {
+    FakeRaylibApi fake;
+    fake.screen_w = 960;
+    fake.screen_h = 640;  // 4x
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    FxSettings s = b.fx().settings();
+    s.lcd_dither = 1.0f;
+    b.fx().apply(s);
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    CHECK(fake.uniform_written("uGrid"));  // dither-only path
+    float grid[4] = {0, 0, 0, 0};
+    CHECK(fake.uniform_value("uGrid", grid, 4));
+    CHECK(std::fabs(grid[2] - 4.0f) < 1e-4f);  // dither sees the same scale
+    b.close();
+}
+
+// 11. A driver that refuses every uniform lookup must not crash or write
+// garbage: the backend guards each upload on loc >= 0, and that is the whole
+// reason the guards exist. Nothing should be recorded as named-written.
+void unknown_uniform_locations_degrade_cleanly() {
+    FakeRaylibApi fake;
+    fake.unknown_shader_locations = true;
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    FxSettings s = b.fx().settings();
+    s.lcd = true;
+    b.fx().apply(s);
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    CHECK(!fake.uniform_written("uGrid"));  // lookups failed
+    CHECK(b.fx().settings().lcd);  // request still stands (capability rule)
+    b.close();
+}
+
+// 12. Every pass off -> no grid uploads at all. With nothing running the frame
+// must stay byte-identical to the pre-shader path, and the uniforms are part
+// of that contract: nothing is written when nothing runs.
+//
+// Note the dither is ON by default (kLcdDefaultDither = 1.0), so it has to be
+// turned off explicitly here -- which is itself worth pinning: with the
+// dither left at its default, uGrid IS written, because the dither pass now
+// needs the grid too.
+void all_passes_off_writes_no_grid() {
+    FakeRaylibApi fake;
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    FxSettings s = b.fx().settings();
+    s.lcd = false;
+    s.lcd_dither = 0.0f;
+    s.lcd_deband = 0.0f;
+    b.fx().apply(s);
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    CHECK(!fake.uniform_written("uGrid"));
+    CHECK(!fake.uniform_written("uGameSize"));
+    CHECK(fake.uniform_writes == 0);  // no program is even current
+    b.close();
+}
+
 int main() {
     init_window_failure_is_a_window_error();
     audio_unavailable_refuses_claim();
@@ -170,6 +287,10 @@ int main() {
     window_scale_resizes_the_window();
     fullscreen_drives_window_state();
     linear_filter_reaches_texture();
+    grid_uniforms_track_the_layout();
+    dither_program_gets_the_grid_too();
+    unknown_uniform_locations_degrade_cleanly();
+    all_passes_off_writes_no_grid();
 
     std::printf("raylib_api_fake tests: PASS\n");
     return 0;

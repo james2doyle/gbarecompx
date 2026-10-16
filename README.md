@@ -21,8 +21,8 @@ What the raylib backend delivers that SDL2 could not:
 
 | Feature | What it does | Status |
 |---|---|---|
-| LCD subpixel-grid shader | GPU-side RGB mask (period 3), pre-mask gain | Opt-in, default off; invisible to frame hashes (`GBARECOMP_LCD_SHADER` / `[video] lcd_shader`) |
-| Bayer dither | Screen-space pass against BGR555 gradient banding | Own program + target, independent of the grid (`lcd_dither`) |
+| LCD subpixel-grid shader | GPU-side RGB triad + dark rows, one per **game** pixel (scale-aware, anti-aliased), pre-mask gain | Opt-in, default off; invisible to frame hashes (`GBARECOMP_LCD_SHADER` / `[video] lcd_shader`) |
+| Bayer dither | One cell per **game** pixel, against BGR555 gradient banding | Own program + target, independent of the grid (`lcd_dither`) |
 | Adaptive deband | Vertical ±2-tap pass in display LSB | Default off (`lcd_deband`) |
 | Headless tier | rlsw software GL + `PLATFORM_MEMORY`: present/readback with no display server | `-DGBARECOMP_RAYLIB_HEADLESS=ON` (shaders compiled out there) |
 

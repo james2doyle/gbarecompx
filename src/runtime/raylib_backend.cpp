@@ -272,15 +272,25 @@ struct RaylibBackend::Impl {
 #if defined(GBARECOMP_USE_RAYLIB)
     Shader lcd_shader_handle{};
     int lcd_boost_loc = -1;
+    // Game-grid uniforms: (origin_x, origin_y, scale_x, scale_y) and the
+    // logical framebuffer size. Without them the grid indexed gl_FragCoord
+    // directly, so its periods were drawable pixels rather than game pixels.
+    int lcd_grid_loc = -1;
+    int lcd_gamesize_loc = -1;
     Shader dither_handle{};
     int dither_loc = -1;
+    // Same grid uniforms as the LCD program: the dither cell is indexed by
+    // game pixel too, so it needs the same origin/scale.
+    int dither_grid_loc = -1;
+    int dither_gamesize_loc = -1;
     Shader deband_handle{};
     int deband_loc = -1;
     int deband_texel_loc = -1;
     // Chained fullscreen targets: deband renders game→A, dither renders A→B
     // (or game→A when alone), the screen blit reads the last stage.
-    // Fullscreen because dither is screen-space; deband samples game texels
-    // through the same geometry.
+    // Fullscreen because these passes sit between the last stage and the
+    // screen; deband samples game texels through the same geometry, and
+    // dither/grid address game space through the uGrid uniforms.
     RenderTexture2D post_a_target{};
     RenderTexture2D post_b_target{};
 #endif
@@ -473,6 +483,10 @@ void RaylibBackend::load_lcd_shader(RaylibBackend::Impl* impl) {
     }
     impl->lcd_boost_loc =
         impl->api->GetShaderLocation(impl->lcd_shader_handle, "boost");
+    impl->lcd_grid_loc =
+        impl->api->GetShaderLocation(impl->lcd_shader_handle, "uGrid");
+    impl->lcd_gamesize_loc =
+        impl->api->GetShaderLocation(impl->lcd_shader_handle, "uGameSize");
     impl->lcd_shader_ready = true;
     std::fprintf(stderr, "raylib_backend: LCD shader enabled\n");
 #else
@@ -486,6 +500,8 @@ void RaylibBackend::unload_lcd_shader(RaylibBackend::Impl* impl) {
     impl->api->UnloadShader(impl->lcd_shader_handle);
     impl->lcd_shader_handle = Shader{};
     impl->lcd_boost_loc = -1;
+    impl->lcd_grid_loc = -1;
+    impl->lcd_gamesize_loc = -1;
     impl->lcd_shader_ready = false;
 #else
     (void)impl;
@@ -507,6 +523,10 @@ void RaylibBackend::load_dither_shader(RaylibBackend::Impl* impl) {
         return;
     }
     impl->dither_loc = impl->api->GetShaderLocation(impl->dither_handle, "dither");
+    impl->dither_grid_loc =
+        impl->api->GetShaderLocation(impl->dither_handle, "uGrid");
+    impl->dither_gamesize_loc =
+        impl->api->GetShaderLocation(impl->dither_handle, "uGameSize");
     impl->dither_ready = true;
     std::fprintf(stderr, "raylib_backend: dither shader enabled\n");
 #else
@@ -520,6 +540,8 @@ void RaylibBackend::unload_dither_shader(RaylibBackend::Impl* impl) {
     impl->api->UnloadShader(impl->dither_handle);
     impl->dither_handle = Shader{};
     impl->dither_loc = -1;
+    impl->dither_grid_loc = -1;
+    impl->dither_gamesize_loc = -1;
     impl->dither_ready = false;
 #else
     (void)impl;
@@ -1004,6 +1026,12 @@ public:
         impl_->api->BeginDrawing();
         impl_->api->ClearBackground(impl_->api->GetColor(0x070B14));  // matches the SDL clear color
         if (layout.width > 0 && layout.height > 0) {
+            // Where the game grid sits on the drawable, and how big a game
+            // pixel is there. Uploaded to the grid and dither programs so both
+            // index the frame in GAME space; recomputed every frame because it
+            // moves whenever the drawable is resized.
+            const gbarecomp::PresentGrid grid = gbarecomp::resolve_present_grid(
+                layout, impl_->base_w, impl_->base_h);
             const Rectangle src{0.0f, 0.0f,
                                 static_cast<float>(impl_->base_w),
                                 static_cast<float>(impl_->base_h)};
@@ -1012,11 +1040,13 @@ public:
                                 static_cast<float>(layout.width),
                                 static_cast<float>(layout.height)};
             // Independent stages, evaluated separately so every knob works alone:
-            // sharp prescale, deband pass, dither pass, LCD pass. Dither is
-            // screen-space, so it runs at drawable resolution through a
-            // fullscreen post target — never inside the game/sharp targets.
-            // Deband samples game texels through the same geometry. The overlay
-            // below stays unshaded too (pad UI must remain legible).
+            // sharp prescale, deband pass, dither pass, LCD pass. Dither and
+            // the grid are indexed in GAME space (uGrid carries the image
+            // origin and the scale) but still run at drawable resolution
+            // through a fullscreen post target -- never inside the game/sharp
+            // targets, whose geometry is not the screen. Deband samples game
+            // texels through the same geometry. The overlay below stays
+            // unshaded too (pad UI must remain legible).
             const bool lcd = impl_->lcd_shader && impl_->lcd_shader_ready;
             // Deband stands alone: active whenever threshold > 0, grid or not.
             // Lazily compiled — config can enable it after open().
@@ -1070,6 +1100,27 @@ public:
                                    impl_->lcd_boost_loc, &impl_->lcd_boost,
                                    SHADER_UNIFORM_FLOAT);
             };
+            // Same placement rule for the grid: origin+scale as a vec4, the
+            // logical framebuffer size as a vec2. Guarded on location >= 0
+            // like every other uniform here, so a program that did not expose
+            // one (or a stub api) writes nothing.
+            auto upload_grid = [&](Shader program, int grid_loc, int size_loc) {
+                if (grid_loc >= 0) {
+                    const float g[4] = {
+                        static_cast<float>(grid.origin_x),
+                        static_cast<float>(grid.origin_y), grid.scale_x,
+                        grid.scale_y};
+                    impl_->api->SetShaderValue(program, grid_loc, g,
+                                               SHADER_UNIFORM_VEC4);
+                }
+                if (size_loc >= 0) {
+                    const float s[2] = {
+                        static_cast<float>(grid.game_w),
+                        static_cast<float>(grid.game_h)};
+                    impl_->api->SetShaderValue(program, size_loc, s,
+                                               SHADER_UNIFORM_VEC2);
+                }
+            };
             // A failed post target degrades gracefully: drop that pass, keep the
             // rest, never drop the frame.
             if (deband && !ensure_post_target(impl_, 0, dw, dh)) deband = false;
@@ -1088,9 +1139,13 @@ public:
                     impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_loc,
                                    &impl_->lcd_deband, SHADER_UNIFORM_FLOAT);
                 if (impl_->deband_texel_loc >= 0) {
-                    const float texel[2] = {
-                        1.0f / static_cast<float>(impl_->base_w),
-                        1.0f / static_cast<float>(impl_->base_h)};
+                    // One GAME pixel in source UV -- independent of the drawn size,
+                    // and still correct against the sharp pre-upscale target (its
+                    // 1/base_w step spans exactly `factor` sharp texels).
+                    const gbarecomp::TexelStep step =
+                        gbarecomp::shader_deband_texel_step(impl_->base_w,
+                                                             impl_->base_h);
+                    const float texel[2] = {step.x, step.y};
                     impl_->api->SetShaderValue(impl_->deband_handle, impl_->deband_texel_loc,
                                    texel, SHADER_UNIFORM_VEC2);
                 }
@@ -1111,6 +1166,10 @@ public:
                 if (impl_->dither_loc >= 0)
                     impl_->api->SetShaderValue(impl_->dither_handle, impl_->dither_loc,
                                    &impl_->lcd_dither, SHADER_UNIFORM_FLOAT);
+                // The Bayer cell is indexed by game pixel, so the dither needs
+                // the same grid the LCD pass uses.
+                upload_grid(impl_->dither_handle, impl_->dither_grid_loc,
+                            impl_->dither_gamesize_loc);
                 // NOTE: pass_rect is already fullscreen when chaining (a previous
                 // pass wrote the whole target), so dst would double-letterbox.
                 // Both passes render the layout rect into a fullscreen target, so
@@ -1138,6 +1197,10 @@ public:
                 if (lcd) {
                     impl_->api->BeginShaderMode(impl_->lcd_shader_handle);
                     upload_boost();
+                    // The mask is anchored to the game grid: one triad per game
+                    // pixel, one dark row per game row, bars unshaded.
+                    upload_grid(impl_->lcd_shader_handle, impl_->lcd_grid_loc,
+                                impl_->lcd_gamesize_loc);
                     impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
                                    0.0f, WHITE);
                     impl_->api->EndShaderMode();

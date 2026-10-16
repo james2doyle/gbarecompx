@@ -20,7 +20,21 @@
 
 #include "raylib_api.h"
 
+#include <map>
+#include <string>
+#include <vector>
+
 namespace gbarecomp::testing {
+
+// One SetShaderValue call, recovered by name so a test can assert WHAT was
+// uploaded rather than merely that something was.
+struct ShaderUniformWrite {
+    std::string name;
+    int loc = -1;
+    int type = 0;
+    int components = 0;
+    float values[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+};
 
 class FakeRaylibApi final : public RaylibApi {
 public:
@@ -81,10 +95,18 @@ public:
         last_texture_filter = filter;
         (void)texture;
     }
+    // Non-zero id by default: the backend treats id == 0 as "target creation
+    // failed" and silently degrades the pass, which would hide the uniform
+    // uploads a test is here to observe. render_texture_id = 0 models the
+    // failure path.
     RenderTexture2D LoadRenderTexture(int width, int height) override {
-        (void)width;
-        (void)height;
-        return RenderTexture2D{};
+        load_render_texture_calls++;
+        last_rt_w = width;
+        last_rt_h = height;
+        RenderTexture2D rt{};
+        rt.id = render_texture_id;
+        rt.texture.id = render_texture_id ? 2 : 0;
+        return rt;
     }
     void UnloadRenderTexture(RenderTexture2D target) override {
         (void)target;
@@ -120,27 +142,73 @@ public:
         (void)fontSize;
         return 0;
     }
-
     // ── shaders ───────────────────────────────────────────────────────
+    // Locations are handed out per NAME so a test can assert a uniform was
+    // uploaded with the right value -- the grid uniforms are exactly that kind
+    // of claim ("uGrid == origin+scale of the current layout"), and a fake
+    // that returned -1 for everything could never observe it.
+    // unknown_shader_locations models a driver that refuses every lookup,
+    // which is the case the backend's `loc >= 0` guards exist for.
     Shader LoadShaderFromMemory(const char* vsCode,
                                 const char* fsCode) override {
         (void)vsCode;
-        (void)fsCode;
-        return Shader{0, nullptr};
+        uniform_names.clear();
+        shader_source = fsCode ? fsCode : nullptr;
+        return Shader{shader_id, nullptr};
     }
     void UnloadShader(Shader shader) override { (void)shader; }
     int GetShaderLocation(Shader shader, const char* uniformName) override {
         (void)shader;
-        (void)uniformName;
-        return -1;
+        if (!uniformName) return -1;
+        if (unknown_shader_locations) return -1;
+        auto it = uniform_names.find(uniformName);
+        if (it != uniform_names.end()) return it->second;
+        const int loc = next_uniform_location++;
+        uniform_names[uniformName] = loc;
+        return loc;
     }
     void SetShaderValue(Shader shader, int locIndex, const void* value,
                         int uniformType) override {
         (void)shader;
-        (void)locIndex;
-        (void)value;
-        (void)uniformType;
+        uniform_writes++;
+        if (locIndex < 0 || !value) return;
+        // Component count by uniform type (raylib's SHADER_UNIFORM_*), so a
+        // vec4 write is recorded whole and a float write does not over-read.
+        int comps = 1;
+        switch (uniformType) {
+            case SHADER_UNIFORM_VEC2: comps = 2; break;
+            case SHADER_UNIFORM_VEC3: comps = 3; break;
+            case SHADER_UNIFORM_VEC4: comps = 4; break;
+            default: comps = 1; break;
+        }
+        ShaderUniformWrite w{};
+        w.loc = locIndex;
+        w.type = uniformType;
+        w.components = comps;
+        const float* f = static_cast<const float*>(value);
+        for (int i = 0; i < comps; ++i) w.values[i] = f[i];
+        for (const auto& kv : uniform_names)
+            if (kv.second == locIndex) w.name = kv.first;
+        uniform_write_log.push_back(w);
     }
+    // Last value written to a named uniform, or false if never written.
+    bool uniform_value(const char* uniformName, float* out,
+                       int components) const {
+        for (auto it = uniform_write_log.rbegin();
+             it != uniform_write_log.rend(); ++it) {
+            if (it->name == uniformName && it->components == components) {
+                for (int i = 0; i < components; ++i) out[i] = it->values[i];
+                return true;
+            }
+        }
+        return false;
+    }
+    bool uniform_written(const char* uniformName) const {
+        for (const ShaderUniformWrite& w : uniform_write_log)
+            if (w.name == uniformName) return true;
+        return false;
+    }
+    void clear_uniform_writes() { uniform_write_log.clear(); }
     void BeginShaderMode(Shader shader) override { (void)shader; }
     void EndShaderMode() override {}
     bool IsShaderValid(Shader shader) override {
@@ -291,6 +359,16 @@ public:
     bool window_ready = true;
     unsigned int texture_id = 1;
     bool shader_valid = true;
+    unsigned int shader_id = 0;
+    int render_texture_id = 7;
+    int load_render_texture_calls = 0;
+    int last_rt_w = 0, last_rt_h = 0;
+    bool unknown_shader_locations = false;
+    const char* shader_source = nullptr;
+    int next_uniform_location = 1;
+    int uniform_writes = 0;
+    std::map<std::string, int> uniform_names;
+    std::vector<ShaderUniformWrite> uniform_write_log;
     bool audio_ready = false;
     bool audio_stream_ok = true;
     int monitor_count = 1;
