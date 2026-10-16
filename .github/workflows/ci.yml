@@ -232,11 +232,12 @@ jobs:
 
       - name: Guard + self-tests
         run: |
+          python3 -m pip install --quiet "capstone==5.0.7"
           python3 tools/check_menu_view_wiring.py --self-test
           python3 tools/check_menu_view_wiring.py
+          python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
           if [ -f tools/check_raylib_backend_complete.py ]; then
             python3 tools/check_raylib_backend_complete.py
-            python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
           else
             echo "completeness checker not ported into this tree yet (release phase)"
           fi
