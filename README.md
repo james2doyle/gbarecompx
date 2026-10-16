@@ -1,4 +1,4 @@
-# GBARecomp
+# GBARecompX
 
 Static recompilation of Game Boy Advance games to native code: the game's
 actual ARM instructions — and its BIOS — are compiled once, ahead of time,
