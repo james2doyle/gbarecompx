@@ -47,6 +47,31 @@ inherits upstream's license terms (see [License](#license)).
   Android scaffold with touch controls and a complete
   suspend/resume/relaunch lifecycle.
 
+## What replaced upstream's SDL2 host and recomp-ui
+
+Upstream hosted games through SDL2 and drove menus through recomp-ui (a
+separate UI checkout with its own renderer and font stack). Both are gone
+here, replaced by lighter things the framework owns outright.
+
+**SDL2 host → the raylib window backend:**
+
+| Capability | The SDL2 era | The raylib era |
+|---|---|---|
+| Host layer | SDL2 window/audio/input glue; SDL2 dev packages on every build machine | One backend-neutral seam; raylib 6 fetched by CMake at configure time; no system GUI packages anywhere |
+| Display effects | CPU blits; CRT-style filters at best | GPU-side LCD subpixel-grid shader (one cell per game pixel, scale-aware, anti-aliased), Bayer dither against BGR555 banding, adaptive deband — each an independent pass, off by default, invisible to frame hashes |
+| Headless / CI | A display server required for anything visual | Software-GL headless tier: present/readback with no display server at all |
+| Android | The SDLActivity shell and its class-loader quirks | A direct NativeActivity scaffold: touch controls, suspend/resume, no SDL |
+| Contracts | Discovered by absence of effect | Capabilities, errors and threading are contracts in one interface |
+
+**recomp-ui → the raygui launcher + the in-game menu:**
+
+| Capability | The recomp-ui era | The raygui era |
+|---|---|---|
+| Footprint | A separate UI submodule; SDL2, freetype and harfbuzz cross-compiled for every platform; its own renderer to keep in sync | One raygui header (zlib) + tinyfiledialogs for native dialogs; everything links into the single game binary |
+| Pre-boot experience | None — CLI flags or a config file | A launch screen: Play, select ROM (drag-and-drop included), first-boot picker, gamepad navigation, optional box art |
+| In-game settings | The recomp-ui menu surface, carried per backend | The framework's own generic menu: every row applied live and persisted per game, including the widescreen View modes |
+| Mods surface | recomp-ui's Mods UI | The launcher-seam option surface, hidden unless the game supplies a catalog |
+
 ## How a consumer game uses it
 
 A game repo pins this framework as a submodule and describes itself in a
