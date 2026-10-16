@@ -655,6 +655,17 @@ int main() {
         check(used,
               "every grid program reads origin and scale; LCD splits the axes");
     }
+    // The mask must MULTIPLY the frame. Writing it as the output colour is a
+    // one-token mistake that leaves every CPU-side assertion true while the
+    // screen turns into a flat wash (shipped once; see the shaded-output check
+    // in the raylib present suite for the GPU-side proof).
+    check(std::strstr(kLcdShaderFragment330, "tex.rgb * mask") != nullptr,
+          "LCD 330 masks the texel rather than replacing it");
+    check(std::strstr(kLcdShaderFragmentES100, "tex.rgb * mask") != nullptr,
+          "LCD ES100 masks the texel rather than replacing it");
+    check(std::strstr(kDitherFragment330, "finalColor = tex") != nullptr,
+          "dither perturbs the texel in place");
+
     // The bars exemption: the early-out must exist in the shader, not just in
     // the CPU mirror, or the letterbox gets striped/dithered again.
     check(std::strstr(kLcdShaderFragment330, "p.x < ext.x") != nullptr,

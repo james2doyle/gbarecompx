@@ -554,7 +554,8 @@ inline constexpr const char* kLcdShaderFragmentES100 =
     "    } else {\n"
     "        dark = mod(floor(g.y), 2.0) < 1.0 ? 1.0 : 0.0;\n"
     "    }\n"
-    "    gl_FragColor = vec4(mix(stripe, vec3(0.7), dark), tex.a);\n"
+    "    vec3 mask = mix(stripe, vec3(0.7), dark);\n"
+    "    gl_FragColor = vec4(tex.rgb * mask, tex.a);\n"
     "}\n";
 
 inline constexpr const char* kDitherFragmentES100 =
@@ -660,7 +661,8 @@ inline constexpr const char* kLcdShaderFragment330 =
     "    } else {\n"
     "        dark = mod(floor(g.y), 2.0) < 1.0 ? 1.0 : 0.0;\n"
     "    }\n"
-    "    finalColor = vec4(mix(stripe, vec3(0.7), dark), tex.a);\n"
+    "    vec3 mask = mix(stripe, vec3(0.7), dark);\n"
+    "    finalColor = vec4(tex.rgb * mask, tex.a);\n"
     "}\n";
 
 // Standalone dither pass: the same Bayer step as its own program, so
