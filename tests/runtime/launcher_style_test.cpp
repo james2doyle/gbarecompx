@@ -87,6 +87,63 @@ int main() {
         CHECK(none.empty());
     }
 
+    // Action buttons: the activity's visual language — cyan fills, navy
+    // bold-caps labels, PLAY the big action (58dp→62px), SELECT ROM smaller
+    // (48dp→48px), stacked in the right column with a clear gap.
+    {
+        const ButtonLayout lay = action_button_layout(720, 480);
+        CHECK(lay.play.w == 220.0f && lay.play.h == 62.0f);
+        CHECK(lay.select.w == 220.0f && lay.select.h == 48.0f);
+        CHECK(lay.play.x == lay.select.x);
+        CHECK(lay.play.x > 720 / 2);            // right column
+        CHECK(lay.select.y >= lay.play.y + lay.play.h + 8.0f);  // clear gap
+        CHECK(lay.play.y > 105.0f);             // below the status line
+        CHECK(lay.select.y + lay.select.h < 480.0f - 60.0f);  // footnote space
+    }
+
+    // Labels are ALL CAPS, matching the activity's action buttons.
+    CHECK(std::string(kPlayLabel) == "PLAY");
+    CHECK(std::string(kSelectLabel) == "SELECT ROM");
+    CHECK(std::string(kRomDialogTitle) == "Select ROM");
+
+    // Visual decision: normal = cyan/navy; focused = ring visible (keyboard
+    // and gamepad focus must be SEEABLE — the touch-only activity has no
+    // analog); disabled = the dimmed fill at the activity's 0.35 alpha, and
+    // the ring survives dimming (focus visibility matters most when the
+    // action is unavailable).
+    {
+        const ButtonVisual normal = action_button_visual(true, false, false);
+        CHECK(normal.fill == kAccent);
+        CHECK(normal.text == kAccentText);
+        CHECK(normal.ring == 0);
+        const ButtonVisual focused = action_button_visual(true, true, false);
+        CHECK(focused.fill == kAccent);
+        CHECK(focused.ring != 0);
+        const ButtonVisual disabled = action_button_visual(false, false, false);
+        CHECK(disabled.fill == kAccentDisabled);
+        CHECK(disabled.text == kAccentText);
+        CHECK(disabled.ring == 0);
+        const ButtonVisual disabled_focused =
+            action_button_visual(false, true, false);
+        CHECK(disabled_focused.fill == kAccentDisabled);
+        CHECK(disabled_focused.ring != 0);
+        // Hover changes nothing (the activity is flat cyan; the pointer is
+        // the hover affordance).
+        const ButtonVisual hovered = action_button_visual(true, false, true);
+        CHECK(hovered.fill == kAccent && hovered.ring == 0);
+    }
+
+    // Hit-test: inside/outside, and the boundary itself is inside.
+    {
+        const Rect r{10.0f, 20.0f, 200.0f, 50.0f};
+        CHECK(rect_contains(r, 10.0f, 20.0f));
+        CHECK(rect_contains(r, 209.9f, 69.9f));
+        CHECK(rect_contains(r, 110.0f, 45.0f));
+        CHECK(!rect_contains(r, 9.9f, 45.0f));
+        CHECK(!rect_contains(r, 210.1f, 45.0f));
+        CHECK(!rect_contains(r, 110.0f, 70.1f));
+    }
+
     // Not ready: the import prompt, in amber — the activity's exact wording
     // (refreshRomStatus' not-ready branch).
     {

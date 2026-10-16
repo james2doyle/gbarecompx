@@ -91,6 +91,7 @@ LAUNCH_PALETTE = {
     "kMuted": "0x848FAD",             # checkbox / info line
     "kFootnote": "0x6E7894",          # privacy footnote
     "kTitleWhite": "0xFFFFFF",        # game title row
+    "kAccentDisabled": "0x205366",    # action button at the activity's 0.35 alpha
 }
 
 
@@ -112,15 +113,20 @@ def check_launch_style(style_h: str, launcher_cpp: str,
             "rom_status_line() (the shared status decision, not inline colors)")
     # Title row + placeholder + footnote come from the shared constants (the
     # activity draws config.title; the placeholder IS the title when the art
-    # is absent — not a nickname).
+    # is absent — not a nickname). Action buttons come from the shared
+    # layout/visual decisions, drawn rounded (the activity's 14dp corners —
+    # raygui has no corner-radius style property, so GuiButton is retired).
     for required in ("kGameTitle", "kPrivacyFootnote", "kTitlePlaceholder",
-                     "wrap_words("):
+                     "wrap_words(", "action_button_layout(",
+                     "action_button_visual(", "rect_contains(",
+                     "DrawRectangleRounded", "kPlayLabel", "kSelectLabel"):
         if required not in launcher_cpp:
             failures.append(
                 f"launcher_raygui.cpp must draw through launcher_style::{required} "
-                "(the shared title/placeholder/footnote spec)")
+                "(the shared title/placeholder/footnote/button spec)")
     for retired in ("Select a ROM to begin", "0x9F, 0xFF, 0x9F",
-                    "0x88, 0x99, 0xAA", '"FFTA"'):
+                    "0x88, 0x99, 0xAA", '"FFTA"', "GuiButton(", '"Play"',
+                    '"Select ROM"'):
         if retired in launcher_cpp:
             failures.append(
                 f"launcher_raygui.cpp carries retired launch-screen content: "
@@ -141,9 +147,12 @@ GOOD_STYLE_H = "constexpr std::uint32_t kAccent = 0x4ED8FF;\n" + "".join(
     f"{n} = {v};\n" for n, v in LAUNCH_PALETTE.items())
 BAD_STYLE_H = GOOD_STYLE_H.replace("0x78EBAB", "0x9FFF9F")
 GOOD_LAUNCHER_CPP = ("rom_status_line(ready, model.rom_path());\n"
-                     "kGameTitle kPrivacyFootnote kTitlePlaceholder wrap_words(\n")
+                     "kGameTitle kPrivacyFootnote kTitlePlaceholder wrap_words(\n"
+                     "action_button_layout( action_button_visual( rect_contains(\n"
+                     "DrawRectangleRounded kPlayLabel kSelectLabel\n")
 BAD_LAUNCHER_CPP = 'DrawText("Select a ROM to begin", x, y, 16, RED);\n'
 BAD_LAUNCHER_CPP_FFTA = 'DrawText("FFTA", x, y, 40, WHITE);\n'
+BAD_LAUNCHER_CPP_GUIGUI = 'if (GuiButton(layout.play, "Play")) {}\n'
 
 
 def self_test() -> int:
@@ -191,6 +200,10 @@ def self_test() -> int:
     ok, _ = check_launch_style(GOOD_STYLE_H, BAD_LAUNCHER_CPP_FFTA)
     if ok:
         print("FAIL self-test: retired FFTA placeholder passed")
+        failures += 1
+    ok, _ = check_launch_style(GOOD_STYLE_H, BAD_LAUNCHER_CPP_GUIGUI)
+    if ok:
+        print("FAIL self-test: retired GuiButton passed")
         failures += 1
 
     if failures:

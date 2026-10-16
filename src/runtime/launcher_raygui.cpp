@@ -30,8 +30,6 @@ namespace {
 
 constexpr int kWindowW = 720;
 constexpr int kWindowH = 480;
-constexpr int kBtnW = 200;
-constexpr int kBtnH = 48;
 
 // launcher_style.h values are raylib-free uint32 RGB; this TU renders them.
 Color rgb(std::uint32_t v) {
@@ -45,17 +43,45 @@ float measure_raylib(const char* text, float size) {
     return MeasureText(text, static_cast<int>(size));
 }
 
+Rectangle to_raylib(launcher_style::Rect r) {
+    return Rectangle{r.x, r.y, r.w, r.h};
+}
+
+// The action button, drawn in the activity's style: rounded cyan fill, navy
+// caps label, focus ring. raygui's GuiButton is retired here — it has no
+// corner-radius style property and no focus visual; the keyboard/gamepad
+// focus machinery picks the focused button and this draws + hit-tests it.
+void draw_action_button(const launcher_style::Rect& r, const char* label,
+                        float text_size, bool enabled, bool focused,
+                        bool hovered) {
+    const launcher_style::ButtonVisual vis =
+        launcher_style::action_button_visual(enabled, focused, hovered);
+    DrawRectangleRounded(to_raylib(r), 0.30f, 8, rgb(vis.fill));
+    if (vis.ring != 0) {
+        DrawRectangleRoundedLinesEx(to_raylib(r), 0.30f, 8, 2.0f,
+                                    rgb(vis.ring));
+    }
+    const int tw = MeasureText(label, static_cast<int>(text_size));
+    DrawText(label, r.x + (r.w - static_cast<float>(tw)) / 2.0f,
+             r.y + (r.h - text_size) / 2.0f, static_cast<int>(text_size),
+             rgb(vis.text));
+}
+
 enum Focus { kFocusPlay = 0, kFocusSelect = 1, kFocusCount = 2 };
 
 struct Layout {
-    Rectangle play{0, 0, static_cast<float>(kBtnW), static_cast<float>(kBtnH)};
-    Rectangle select{0, 0, static_cast<float>(kBtnW), static_cast<float>(kBtnH)};
+    launcher_style::Rect play;
+    launcher_style::Rect select;
     Rectangle boxart{0, 0, 320, 320};
 };
 
 Layout compute_layout(int art_w, int art_h) {
     Layout l;
-    (void)art_h;
+    // Action buttons: the shared layout decision (launcher_style.h).
+    const launcher_style::ButtonLayout buttons =
+        launcher_style::action_button_layout(kWindowW, kWindowH);
+    l.play = buttons.play;
+    l.select = buttons.select;
     const float aspect = (art_h > 0) ? (float)art_w / (float)art_h : (456.0f / 528.0f);
     const float box_w = 320.0f;
     const float box_h = box_w / aspect;
@@ -63,10 +89,6 @@ Layout compute_layout(int art_w, int art_h) {
     const float box_left = static_cast<float>((kWindowW / 2) - (int)box_w) / 2.0f;
     const float box_top  = (static_cast<float>(kWindowH) - box_h) / 2.0f;
     l.boxart = Rectangle{box_left, box_top, box_w, box_h};
-    // Right column: Play then Select ROM, stacked.
-    const float right_x = static_cast<float>(kWindowW / 2) + 20.0f;
-    l.play = Rectangle{right_x, 150.0f, 220.0f, static_cast<float>(kBtnH)};
-    l.select = Rectangle{right_x, 212.0f, 220.0f, static_cast<float>(kBtnH)};
     return l;
 }
 
@@ -77,7 +99,7 @@ AssetSpec make_rom_spec() {
     AssetSpec spec;
     spec.display_name = "GBA ROM";
     spec.dialog_filter = "GBA ROM (*.gba)\0*.gba\0";
-    spec.dialog_title = "Select ROM";
+    spec.dialog_title = launcher_style::kRomDialogTitle;
     spec.cache_filename = "rom.cfg";
     spec.expected_size = 0;
     spec.expected_sha1 = nullptr;
@@ -274,9 +296,29 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
         DrawText(launcher_style::kGameTitle, (int)(kWindowW / 2 + 20.0f), 58,
                  22, rgb(launcher_style::kTitleWhite));
 
-        // Play button: disabled until Ready.
-        if (!ready) GuiSetState(STATE_DISABLED);
-        if (GuiButton(layout.play, "Play") && ready) {
+        // The ROM status line — the shared decision (launcher_style.h): the
+        // resolved path in verified green, or the import prompt in amber.
+        const float right_x = static_cast<float>(kWindowW / 2) + 20.0f;
+        const launcher_style::StatusLine status =
+            launcher_style::rom_status_line(ready, model.rom_path());
+        DrawText(status.text.c_str(), (int)right_x, 105, (int)status.size,
+                 rgb(status.color));
+
+        // Action buttons: draw first, then mouse hit-test (draw order keeps
+        // the ring on top of nothing; hit-test mirrors the drawn rects).
+        const Vector2 mouse = GetMousePosition();
+        const bool play_hovered =
+            launcher_style::rect_contains(layout.play, mouse.x, mouse.y);
+        const bool select_hovered =
+            launcher_style::rect_contains(layout.select, mouse.x, mouse.y);
+        draw_action_button(layout.play, launcher_style::kPlayLabel, 22.0f,
+                           ready, focus == kFocusPlay, play_hovered);
+        draw_action_button(layout.select, launcher_style::kSelectLabel, 16.0f,
+                           true, focus == kFocusSelect, select_hovered);
+
+        // PLAY: disabled until Ready — a click on a disabled button does
+        // nothing (apply_play() also guards).
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && play_hovered && ready) {
             auto out = model.apply(LaunchScreenInput::PlayPressed);
             if (out == LaunchScreenOutput::Launch) {
                 pending.kind = LauncherResult::Kind::Launch;
@@ -285,24 +327,15 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
                 have_pending = true;
             }
         }
-        GuiSetState(STATE_NORMAL);
-
-        if (GuiButton(layout.select, "Select ROM")) {
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && select_hovered) {
             auto r = resolve_asset("", make_rom_spec(), argv0, true);
             if (r.ok) model.apply(LaunchScreenInput::RomPicked, r.path);
             else notice = r.error;
             SetWindowFocused();
         }
 
-        // The ROM status line — the shared decision (launcher_style.h): the
-        // resolved path in verified green, or the import prompt in amber.
-        const float right_x = static_cast<float>(kWindowW / 2) + 20.0f;
-        const launcher_style::StatusLine status =
-            launcher_style::rom_status_line(ready, model.rom_path());
-        DrawText(status.text.c_str(), (int)right_x, 105, (int)status.size,
-                 rgb(status.color));
         if (!notice.empty()) {
-            DrawText(notice.c_str(), (int)right_x, 280, 12,
+            DrawText(notice.c_str(), (int)right_x, 288, 12,
                      rgb(launcher_style::kAmber));
         }
 
