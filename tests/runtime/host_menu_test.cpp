@@ -763,6 +763,9 @@ void view_row_follows_endpoint() {
         CHECK(row_by_label(host.model(), "View") < 0);
     }
     // Available: seeded from the getter; cycling forwards to the setter.
+    // Two choices only (Native / Adaptive): a fixed CLI width is not a
+    // menu-representable state, and the legacy 16:9 choice lied about
+    // non-285 fixed widths (--view-width 320 displayed "16:9").
     {
         HostMenu host;
         ViewEndpoint v;
@@ -773,14 +776,27 @@ void view_row_follows_endpoint() {
         const int view = row_by_label(host.model(), "View");
         CHECK(view >= 0);
         CHECK(gbarecomp::menu_value_int(host.model(), view) == 1);
+        // Legacy Fixed16x9 (2) from an old config or a fixed CLI width
+        // seeds as Native: the row is a binary adaptive-or-not now.
+        {
+            ViewEndpoint legacy;
+            legacy.mode = 2;
+            HostMenu host2;
+            host2.set_view_mode_endpoint(view_get_fn, view_set_fn,
+                                         &legacy, true);
+            host2.open(backend);
+            const int view2 = row_by_label(host2.model(), "View");
+            CHECK(gbarecomp::menu_value_int(host2.model(), view2) == 0);
+            host2.close();
+        }
         select_row(host.model(), display, view);
-        press(host, backend, kRight);  // Adaptive -> 16:9
+        press(host, backend, kRight);  // Adaptive wraps -> Native
         CHECK(v.sets == 1);
-        CHECK(v.last_set == 2);
-        CHECK(gbarecomp::menu_value_int(host.model(), view) == 2);
-        press(host, backend, kRight);  // wraps -> Native
         CHECK(v.last_set == 0);
         CHECK(gbarecomp::menu_value_int(host.model(), view) == 0);
+        press(host, backend, kRight);  // Native -> Adaptive
+        CHECK(v.last_set == 1);
+        CHECK(gbarecomp::menu_value_int(host.model(), view) == 1);
         host.close();
     }
 }

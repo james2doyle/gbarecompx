@@ -1809,15 +1809,15 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     runtime_ui_context.opts = &opts;
     runtime_ui_context.view_mode = resize_view_enabled
         ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
-        : args.view_width > 240 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
-                                : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+        : RECOMP_RUNTIME_UI_VIEW_NATIVE;
     // Saved View mode fills in when the CLI said nothing about the view
-    // (no --resize-view, no --view-width). CLI always wins.
-    if (!args.resize_view && !args.view_width_given)
+    // (no --resize-view, no --view-width). CLI always wins, and any fixed
+    // width (e.g. --view-width 320) stays Native: the menu row is a binary
+    // adaptive-or-not, so a fixed width must not display as "16:9".
+    if (!resize_view_enabled && !args.resize_view && !args.view_width_given)
         runtime_ui_context.view_mode =
             menu_settings.view_mode == 1 ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
-        : menu_settings.view_mode == 2 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
-                                       : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+                                         : RECOMP_RUNTIME_UI_VIEW_NATIVE;
     // Engine extras followed by the game's own. recomp-ui keeps a pointer to
     // this array, so it must outlive the menu — hence function scope here
     // rather than inside the construction block below.
