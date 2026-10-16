@@ -31,6 +31,7 @@
 #include "gba_rom_header.h"
 #include "host_platform.h"
 #include "host_menu.h"
+#include "menu_settings.h"
 #include "host_window.h"
 #include "touch_input.h"
 #include "runtime_arm.h"
@@ -201,6 +202,17 @@ struct Args {
     bool lcd_dither_given = false;
     float lcd_deband = 0.0f;        // --lcd-deband 0.0..16.0: vertical smooth
     bool lcd_deband_given = false;  // threshold in LSB (0 = off)
+    // Explicitly-given markers for the menu-persisted settings: a given
+    // CLI flag beats config.ini, which beats the built-in default. Same
+    // precedence the LCD group uses. Without these, a config value would
+    // either be ignored or clobber an explicit CLI choice.
+    bool scale_given = false;
+    bool fullscreen_given = false;
+    bool volume_given = false;
+    bool linear_filter_given = false;
+    bool frame_blend_given = false;
+    bool frame_interp_given = false;
+    bool view_width_given = false;  // existing flag: guards the view seed
     float gyro_sensitivity = 0.25f; // --gyro-sensitivity 0.25..4.00
     // [audio] shadow = true|false — arm the MP2K verified-enhancement shadow
     // mixer (default off). GBARECOMP_AUDIO_SHADOW overrides at launch.
@@ -975,6 +987,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
                 if (err) *err = "invalid --scale value";
                 return false;
             }
+            args->scale_given = true;
             continue;
         }
         if (s == "--tcp") {
@@ -1012,6 +1025,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
                 if (err) *err = "invalid --view-width value (expected >= 240)";
                 return false;
             }
+            args->view_width_given = true;
             continue;
         }
         if (s == "--resize-view") {
@@ -1074,6 +1088,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
         }
         if (s == "--fullscreen") {
             args->fullscreen = 1;  // bare flag: borderless (back-compat)
+            args->fullscreen_given = true;
             continue;
         }
         if (s.rfind("--fullscreen=", 0) == 0) {
@@ -1085,6 +1100,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
             if (v < 0) v = 0;
             if (v > 2) v = 2;
             args->fullscreen = v;
+            args->fullscreen_given = true;
             continue;
         }
         if (s == "--volume") {
@@ -1094,6 +1110,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
                 if (err) *err = "invalid --volume value (expected 0..100)";
                 return false;
             }
+            args->volume_given = true;
             continue;
         }
         if (s == "--linear-filter") {
@@ -1105,6 +1122,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
                 return false;
             }
             args->linear_filter = lf != 0;
+            args->linear_filter_given = true;
             continue;
         }
         if (s == "--frame-blend") {
@@ -1116,6 +1134,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
                 return false;
             }
             args->frame_blend = fb != 0;
+            args->frame_blend_given = true;
             continue;
         }
         if (s == "--frame-interp") {
@@ -1127,6 +1146,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
                 return false;
             }
             args->frame_interp = fi != 0;
+            args->frame_interp_given = true;
             continue;
         }
         if (s == "--lcd-shader") {
@@ -1761,6 +1781,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     bool resize_view_enabled =
         args.resize_view && opts.resize_driven_view &&
         opts.max_resize_view_width > 240 && args.window;
+    // Menu-persisted settings: loaded here (before the RuntimeUiContext is
+    // seeded, so the View row starts from the saved mode) from config.ini
+    // next to the exe — the same directory load_input_config reads later.
+    // CLI wins wherever an explicit flag was given (given-flags below).
+    MenuSettings menu_settings;
+    {
+        std::string early_dir = ".";
+        if (argc > 0 && argv[0] && argv[0][0]) {
+            std::filesystem::path p(argv[0]);
+            if (p.has_parent_path()) early_dir = p.parent_path().string();
+        }
+        load_menu_settings(early_dir.c_str(), menu_settings);
+    }
+
     // Record the decision and every gate that fed it: a silent 240 view is
     // otherwise hard to triage (especially on device, where the applied-geometry
     // line only prints when the view actually changes).
@@ -1777,6 +1811,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
         : args.view_width > 240 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
                                 : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+    // Saved View mode fills in when the CLI said nothing about the view
+    // (no --resize-view, no --view-width). CLI always wins.
+    if (!args.resize_view && !args.view_width_given)
+        runtime_ui_context.view_mode =
+            menu_settings.view_mode == 1 ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
+        : menu_settings.view_mode == 2 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
+                                       : RECOMP_RUNTIME_UI_VIEW_NATIVE;
     // Engine extras followed by the game's own. recomp-ui keeps a pointer to
     // this array, so it must outlive the menu — hence function scope here
     // rather than inside the construction block below.
@@ -3080,11 +3121,14 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             return 1;
         }
         // --frame-blend startup default (menu row drives the same flag at
-        // runtime; both default off so faithful runs stay byte-exact).
-        win.set_frame_blend(args.frame_blend);
+        // runtime; both default off so faithful runs stay byte-exact). The
+        // CLI value wins when given; the menu-persisted value fills in.
+        win.set_frame_blend(args.frame_blend_given ? args.frame_blend
+                                                    : menu_settings.frame_blend != 0.0f);
         // --frame-interp startup default, same shape (menu row drives it
         // live; the decoupled wait below only ticks while this is on).
-        win.set_frame_interp(args.frame_interp);
+        win.set_frame_interp(args.frame_interp_given ? args.frame_interp
+                                                     : menu_settings.frame_interp);
         // `presented` TCP command (issue #9 blend verification): exact bytes
         // uploaded to the display, post color-grade and post-blend — the
         // only way to observe the blend stage, which sits after the guest
@@ -3136,6 +3180,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             if (args.lcd_boost_given) win.set_lcd_boost(args.lcd_boost);
             if (args.lcd_dither_given) win.set_lcd_dither(args.lcd_dither);
             if (args.lcd_deband_given) win.set_lcd_deband(args.lcd_deband);
+            // Menu-persisted settings ([Menu] + [video] LCD keys in config.ini
+            // next to the exe, the same directory load_input_config reads):
+            // parsed into one struct, applied ONLY where the CLI did not
+            // explicitly set a value (given-flag precedence, same rule as the
+            // LCD group). CLI values themselves are applied below at their
+            // existing sites, after win.open() where a window must exist.
+            // Written back by the host menu's apply hook and flushed at exit.
+            if (!args.lcd_shader_given) win.set_lcd_shader(menu_settings.lcd);
+            if (!args.lcd_boost_given) win.set_lcd_boost(menu_settings.lcd_boost);
+            if (!args.lcd_dither_given) win.set_lcd_dither(menu_settings.lcd_dither);
+            if (!args.lcd_deband_given) win.set_lcd_deband(menu_settings.lcd_deband);
             win.set_touch_pad_scale(args.touch_pad_scale);
             win.configure_touch(opts.input_frame != nullptr,
                                 opts.touch_gesture_claims,
@@ -3183,9 +3238,18 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                          "(reads, touch_*, game commands, queued savestates; no step)\n",
                          observe_port);
         }
-        if (args.fullscreen) win.set_fullscreen(args.fullscreen);
-        win.set_volume(args.volume);
-        win.set_fps_readout(opts.show_fps_by_default);
+        // Fullscreen: CLI given wins; else the menu-persisted mode. Volume,
+        // FPS readout, linear filter and scale follow the same precedence.
+        win.set_fullscreen(args.fullscreen_given ? args.fullscreen
+                                                 : menu_settings.fullscreen);
+        win.set_volume(args.volume_given ? args.volume
+                                         : menu_settings.volume);
+        win.set_fps_readout(opts.show_fps_by_default || menu_settings.show_fps);
+        if (!args.linear_filter_given)
+            win.set_linear_filter(menu_settings.linear_filter);
+        if (!args.scale_given)
+            win.adjust_scale(menu_settings.scale - win.window_scale());
+        win.set_audio_enabled(menu_settings.audio_enabled);
 #if defined(GBARECOMP_RUNTIME_UI)
         runtime_ui_context.window = &win;
         runtime_ui_context.gyro_sensitivity = &args.gyro_sensitivity;
@@ -3384,14 +3448,84 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     // backend keeps the recomp-ui path until Phase 4 deletes it. The host
     // owns the model and the trigger policy (Phase 3d): engine touch gestures
     // (unclaimed long-press, three-finger tap, Back) open it, Back closes it,
-    // and the presentation runs once per frame after pump(). Persistence is
-    // the host's apply hook — deliberately unwired for now (the legacy
-    // in-game menu did not persist either); see BRINGUP.
+    // and the presentation runs once per frame after pump(). Persistence:
+    // the apply hook writes menu_settings back to config.ini (below), and
+    // the loaded values seeded the window state in the open block.
+    // Menu-persisted settings were loaded before the RuntimeUiContext seed
+    // (see above); the apply hook below keeps them current and persists.
     HostMenu host_menu;
     WindowBackend* menu_backend = win.backend_v2();
     const bool menu_available =
         menu_backend != nullptr && menu_backend->caps().menu;
     bool menu_pointer_down = false;
+    // Config directory the menu settings live in: the same one
+    // load_input_config reads (next to the exe on desktop; the app files
+    // dir wherever the platform put it). Computed once here.
+    std::string menu_config_dir = ".";
+    {
+        std::filesystem::path p(argv && argv[0] ? argv[0] : "");
+        if (!p.empty() && p.has_parent_path())
+            menu_config_dir = p.parent_path().string();
+    }
+    // Apply hook: after HostMenu handled a change, read the model back into
+    // menu_settings and persist to config.ini. The write is cheap (a few
+    // lines) and only fires on real changes, so per-change is fine.
+    if (menu_available) {
+        struct HookCtx {
+            MenuSettings* ms;
+            HostMenu* host;
+            const char* dir;
+        };
+        HookCtx hook_ctx{&menu_settings, &host_menu,
+                         menu_config_dir.c_str()};
+        host_menu.set_apply_hook(
+            [](void* user, WindowBackend& window, const MenuResult&) {
+                auto* ctx = static_cast<HookCtx*>(user);
+                MenuSettings& ms = *ctx->ms;
+                const MenuModel& model = ctx->host->model();
+                auto row_by_label = [&](const char* label) -> int {
+                    for (int i = 0; i < model.row_count; ++i)
+                        if (model.rows[i].label &&
+                            std::strcmp(model.rows[i].label, label) == 0)
+                            return i;
+                    return -1;
+                };
+                auto apply_row = [&](const char* label, bool& b) {
+                    const int row = row_by_label(label);
+                    if (row >= 0) b = menu_value_int(model, row) != 0;
+                };
+                auto apply_row_int = [&](const char* label, int& v) {
+                    const int row = row_by_label(label);
+                    if (row >= 0) v = menu_value_int(model, row);
+                };
+                apply_row_int("Fullscreen", ms.fullscreen);
+                apply_row_int("Window scale", ms.scale);
+                apply_row("Linear filter", ms.linear_filter);
+                apply_row("Show FPS", ms.show_fps);
+                apply_row("Audio", ms.audio_enabled);
+                apply_row_int("Volume", ms.volume);
+                if (const int row = row_by_label(
+                        "LCD ghosting (frame blending)");
+                    row >= 0)
+                    ms.frame_blend =
+                        menu_value_int(model, row) != 0 ? 1.0f : 0.0f;
+                apply_row("Frame interpolation (experimental)",
+                          ms.frame_interp);
+                if (const int row = row_by_label("LCD"); row >= 0)
+                    ms.lcd = menu_value_int(model, row) != 0;
+                if (const int row = row_by_label("LCD boost"); row >= 0)
+                    ms.lcd_boost = menu_value_float(model, row);
+                if (const int row = row_by_label("LCD dither"); row >= 0)
+                    ms.lcd_dither = menu_value_float(model, row);
+                if (const int row = row_by_label("LCD deband"); row >= 0)
+                    ms.lcd_deband = menu_value_float(model, row);
+                if (const int row = row_by_label("View"); row >= 0)
+                    ms.view_mode = menu_value_int(model, row);
+                save_menu_settings(ctx->dir, ms);
+                window.audio().set_enabled(ms.audio_enabled);
+            },
+            &hook_ctx);
+    }
 #if defined(GBARECOMP_RUNTIME_UI)
     // Generic-menu View row (Native / Adaptive / 16:9): the mode lives in
     // runtime_ui_context (applied per-frame by sync_resize_driven_view); the

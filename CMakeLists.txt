@@ -1038,6 +1038,12 @@ target_include_directories(raylib_api_fake_tests PRIVATE src/runtime tests/runti
 target_link_libraries(raylib_api_fake_tests PRIVATE gbarecomp_raylib_backend)
 add_test(NAME raylib_api_fake_tests COMMAND raylib_api_fake_tests)
 
+# Menu settings persistence round-trip (red-first: menu_settings.h lands
+# with the implementation below).
+add_executable(menu_settings_tests tests/runtime/menu_settings_test.cpp)
+target_include_directories(menu_settings_tests PRIVATE src/runtime tests/runtime)
+add_test(NAME menu_settings_tests COMMAND menu_settings_tests)
+
 # Phase 3a — the pure menu model suite (ports recomp-ui's runtime_ui_test
 # semantics to the V2 shape).
 add_executable(menu_model_tests tests/runtime/menu_model_test.cpp)
