@@ -38,7 +38,11 @@ struct MenuSettings {
     int scale = 3;            // 1..8
     bool linear_filter = false;
     bool show_fps = false;
-    int view_mode = 0;        // 0 Native, 1 Adaptive, 2 16:9
+    // View row: 0 Native, 1 Adaptive, 2 Fixed. When Fixed, fixed_width is
+    // the actual width the mode resolves to (the CLI's --view-width or the
+    // saved value; 0 = unset, falls back to the legacy 16:9 width).
+    int view_mode = 0;
+    int fixed_width = 0;
     // [Menu] audio.
     bool audio_enabled = true;
     int volume = 100;         // 0..100
@@ -112,10 +116,13 @@ inline bool apply_menu_settings_line(MenuSettings& m, const char* key,
     if (ci_key(key, "scale")) return parse_clamped_int(val, 1, 8, &m.scale);
     if (ci_key(key, "linear_filter")) return parse_toggle(val, &m.linear_filter);
     if (ci_key(key, "show_fps")) return parse_toggle(val, &m.show_fps);
+    if (ci_key(key, "view_width"))
+        return parse_clamped_int(val, 240, 1024, &m.fixed_width);
     if (ci_key(key, "view")) {
         if (ci_key(val, "native") || ci_key(val, "0")) { m.view_mode = 0; return true; }
         if (ci_key(val, "adaptive") || ci_key(val, "1")) { m.view_mode = 1; return true; }
-        if (ci_key(val, "16:9") || ci_key(val, "16x9") || ci_key(val, "2")) {
+        if (ci_key(val, "fixed") || ci_key(val, "16:9") ||
+            ci_key(val, "16x9") || ci_key(val, "2")) {
             m.view_mode = 2;
             return true;
         }
@@ -221,8 +228,10 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
     f << "show_fps = " << (m.show_fps ? 1 : 0) << "\n";
     const char* view = m.view_mode == 1
                            ? "adaptive"
-                           : (m.view_mode == 2 ? "16:9" : "native");
+                           : (m.view_mode == 2 ? "fixed" : "native");
     f << "view = " << view << "\n";
+    if (m.view_mode == 2 && m.fixed_width >= 240)
+        f << "view_width = " << m.fixed_width << "\n";
     f << "audio_enabled = " << (m.audio_enabled ? 1 : 0) << "\n";
     f << "volume = " << m.volume << "\n";
     f << "frame_interp = " << (m.frame_interp ? 1 : 0) << "\n";

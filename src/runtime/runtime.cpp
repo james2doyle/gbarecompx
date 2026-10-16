@@ -1794,6 +1794,8 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         }
         load_menu_settings(early_dir.c_str(), menu_settings);
     }
+    // Fixed width for the View row's Fixed mode (set right after load).
+    int menu_fixed_view_width = (160 * 16 + 8) / 9;
 
     // Record the decision and every gate that fed it: a silent 240 view is
     // otherwise hard to triage (especially on device, where the applied-geometry
@@ -1809,15 +1811,24 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     runtime_ui_context.opts = &opts;
     runtime_ui_context.view_mode = resize_view_enabled
         ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
-        : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+        : args.view_width > 240 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
+                                : RECOMP_RUNTIME_UI_VIEW_NATIVE;
     // Saved View mode fills in when the CLI said nothing about the view
-    // (no --resize-view, no --view-width). CLI always wins, and any fixed
-    // width (e.g. --view-width 320) stays Native: the menu row is a binary
-    // adaptive-or-not, so a fixed width must not display as "16:9".
-    if (!resize_view_enabled && !args.resize_view && !args.view_width_given)
+    // (no --resize-view, no --view-width). CLI always wins. The row is
+    // three-state (Native / Adaptive / Fixed), so a fixed width displays
+    // as Fixed — honestly, with its actual width carried below.
+    if (!resize_view_enabled && !args.resize_view && !args.view_width_given) {
         runtime_ui_context.view_mode =
             menu_settings.view_mode == 1 ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
-                                         : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+            : menu_settings.view_mode == 2 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
+                                           : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+    }
+    // The fixed width the Fixed mode resolves to: the CLI's explicit
+    // --view-width, else the saved setting, else the legacy 16:9 default.
+    menu_fixed_view_width =
+        args.view_width_given ? args.view_width
+        : menu_settings.fixed_width > 0 ? menu_settings.fixed_width
+        : (160 * 16 + 8) / 9;
     // Engine extras followed by the game's own. recomp-ui keeps a pointer to
     // this array, so it must outlive the menu — hence function scope here
     // rather than inside the construction block below.
@@ -2995,7 +3006,8 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                     break;
             }
             const gbarecomp::MenuViewGeometry step = gbarecomp::menu_view_step(
-                mode, static_cast<int>(opts.max_view_width));
+                mode, static_cast<int>(opts.max_view_width),
+                menu_fixed_view_width);
             resize_view_enabled = step.resize_driven;
             win.set_resize_driven_view(resize_view_enabled);
             if (!resize_view_enabled) {
@@ -3475,9 +3487,10 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             MenuSettings* ms;
             HostMenu* host;
             const char* dir;
+            int* fixed_width;
         };
         HookCtx hook_ctx{&menu_settings, &host_menu,
-                         menu_config_dir.c_str()};
+                         menu_config_dir.c_str(), &menu_fixed_view_width};
         host_menu.set_apply_hook(
             [](void* user, WindowBackend& window, const MenuResult&) {
                 auto* ctx = static_cast<HookCtx*>(user);
@@ -3519,8 +3532,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                     ms.lcd_dither = menu_value_float(model, row);
                 if (const int row = row_by_label("LCD deband"); row >= 0)
                     ms.lcd_deband = menu_value_float(model, row);
-                if (const int row = row_by_label("View"); row >= 0)
+                if (const int row = row_by_label("View"); row >= 0) {
                     ms.view_mode = menu_value_int(model, row);
+                    if (ms.view_mode == 2 && *ctx->fixed_width > 0)
+                        ms.fixed_width = *ctx->fixed_width;
+                }
                 save_menu_settings(ctx->dir, ms);
                 window.audio().set_enabled(ms.audio_enabled);
             },

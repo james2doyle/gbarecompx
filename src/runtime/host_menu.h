@@ -51,20 +51,24 @@ inline MenuToggleAction menu_toggle_step(bool toggle_edge, bool menu_open) {
 }
 
 // The View dirty step sync_resize_driven_view consumes: a framework mode
-// maps to either drawable-driven geometry (Adaptive) or a fixed width now
-// (Native / 16:9 clamped to the game's validated maximum). Pure so the
-// policy is testable without a window; the host loop applies the result.
+// maps to either drawable-driven geometry (Adaptive), 240 (Native), or a
+// fixed width (Fixed). `fixed_width` carries the actual fixed width — the
+// CLI's --view-width or the saved setting; 0 means no width was carried,
+// so a legacy 16:9-shaped fixed mode falls back to 285. Pure so the policy
+// is testable without a window; the host loop applies the result.
 struct MenuViewGeometry {
     bool resize_driven = false;
     int fixed_width = 240;
 };
 
-inline MenuViewGeometry menu_view_step(ViewMode mode, int max_view_width) {
+inline MenuViewGeometry menu_view_step(ViewMode mode, int max_view_width,
+                                       int fixed_width) {
     if (mode == ViewMode::Adaptive) return {true, -1};
-    const int fixed = (mode == ViewMode::Fixed16x9)
-        ? std::min(max_view_width, (160 * 16 + 8) / 9)
-        : 240;
-    return {false, fixed < 240 ? 240 : fixed};
+    int fixed = 240;
+    if (mode == ViewMode::Fixed16x9)
+        fixed = fixed_width > 0 ? fixed_width : (160 * 16 + 8) / 9;
+    fixed = std::clamp(fixed, 240, std::max(240, max_view_width));
+    return {false, fixed};
 }
 
 class HostMenu {

@@ -18,12 +18,11 @@ namespace {
 const char* const kFullscreenChoices[] = {"Windowed", "Borderless",
                                           "Fullscreen"};
 
-// The View row order is the ViewMode order, reduced to the two states the
-// menu represents honestly: Native and Adaptive. A fixed CLI width
-// (--view-width 320) or a legacy 16:9 config is NOT menu-representable —
-// the row is a binary "is the view adaptive" now, and the seed below maps
-// any non-adaptive mode to Native instead of mislabeling it "16:9".
-const char* const kViewChoices[] = {"Native", "Adaptive"};
+// The View row order is the ViewMode order (Native / Adaptive / Fixed).
+// The third state is honestly named "Fixed", not "16:9": it means the view
+// is fixed at the current fixed width — which may be 285 (legacy 16:9) or
+// any other carried width such as a --view-width 320 CLI run.
+const char* const kViewChoices[] = {"Native", "Adaptive", "Fixed"};
 
 }  // namespace
 
@@ -95,13 +94,13 @@ void HostMenu::build(WindowBackend& backend) {
         // menu only seeds and forwards.
         int seeded = view_get_(view_user_);
         if (seeded < static_cast<int>(ViewMode::Native) ||
-            seeded > static_cast<int>(ViewMode::Adaptive))
+            seeded > static_cast<int>(ViewMode::Fixed16x9))
             seeded = static_cast<int>(ViewMode::Native);
         MenuRow row;
         row.kind = MenuRowKind::Choice;
         row.label = "View";
         row.choices = kViewChoices;
-        row.choice_count = 2;
+        row.choice_count = 3;
         row.int_value = seeded;
         row.section = display;
         add(row, Bind::ViewMode);

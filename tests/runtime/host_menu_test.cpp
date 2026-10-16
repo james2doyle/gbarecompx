@@ -763,9 +763,9 @@ void view_row_follows_endpoint() {
         CHECK(row_by_label(host.model(), "View") < 0);
     }
     // Available: seeded from the getter; cycling forwards to the setter.
-    // Two choices only (Native / Adaptive): a fixed CLI width is not a
-    // menu-representable state, and the legacy 16:9 choice lied about
-    // non-285 fixed widths (--view-width 320 displayed "16:9").
+    // Three honest states (Native / Adaptive / Fixed): a fixed CLI width
+    // (--view-width 320) is expanded, not native, so it seeds as Fixed —
+    // the legacy bug displayed it as "16:9", which is only true at 285.
     {
         HostMenu host;
         ViewEndpoint v;
@@ -776,22 +776,24 @@ void view_row_follows_endpoint() {
         const int view = row_by_label(host.model(), "View");
         CHECK(view >= 0);
         CHECK(gbarecomp::menu_value_int(host.model(), view) == 1);
-        // Legacy Fixed16x9 (2) from an old config or a fixed CLI width
-        // seeds as Native: the row is a binary adaptive-or-not now.
+        // A fixed CLI width (view_get reports legacy 2) seeds as Fixed.
         {
-            ViewEndpoint legacy;
-            legacy.mode = 2;
+            ViewEndpoint fixed;
+            fixed.mode = 2;
             HostMenu host2;
             host2.set_view_mode_endpoint(view_get_fn, view_set_fn,
-                                         &legacy, true);
+                                         &fixed, true);
             host2.open(backend);
             const int view2 = row_by_label(host2.model(), "View");
-            CHECK(gbarecomp::menu_value_int(host2.model(), view2) == 0);
+            CHECK(gbarecomp::menu_value_int(host2.model(), view2) == 2);
             host2.close();
         }
         select_row(host.model(), display, view);
-        press(host, backend, kRight);  // Adaptive wraps -> Native
+        press(host, backend, kRight);  // Adaptive -> Fixed
         CHECK(v.sets == 1);
+        CHECK(v.last_set == 2);
+        CHECK(gbarecomp::menu_value_int(host.model(), view) == 2);
+        press(host, backend, kRight);  // Fixed wraps -> Native
         CHECK(v.last_set == 0);
         CHECK(gbarecomp::menu_value_int(host.model(), view) == 0);
         press(host, backend, kRight);  // Native -> Adaptive
@@ -822,19 +824,26 @@ void menu_toggle_step_decides_open_and_close() {
 
 // ── 24. The View dirty step: framework mode -> geometry policy ──────────
 // Pins the policy sync_resize_driven_view consumes: Adaptive is
-// drawable-driven, the fixed modes resolve to a width now.
+// drawable-driven, Native is 240, Fixed resolves to the carried width.
 void menu_view_step_resolves_geometry_policy() {
     using gbarecomp::menu_view_step;
     using gbarecomp::MenuViewGeometry;
     using gbarecomp::ViewMode;
-    MenuViewGeometry nat = menu_view_step(ViewMode::Native, 448);
+    MenuViewGeometry nat = menu_view_step(ViewMode::Native, 448, 0);
     CHECK(!nat.resize_driven && nat.fixed_width == 240);
-    MenuViewGeometry ad = menu_view_step(ViewMode::Adaptive, 448);
+    MenuViewGeometry ad = menu_view_step(ViewMode::Adaptive, 448, 0);
     CHECK(ad.resize_driven);
-    MenuViewGeometry wide = menu_view_step(ViewMode::Fixed16x9, 448);
-    CHECK(!wide.resize_driven && wide.fixed_width == 285);  // 16:9 at 160 lines
-    MenuViewGeometry clamped = menu_view_step(ViewMode::Fixed16x9, 240);
+    // Fixed carries its own width: --view-width 320 stays 320, not 16:9's
+    // 285; legacy 16:9 configs (no carried width) fall back to 285.
+    MenuViewGeometry fixed320 = menu_view_step(ViewMode::Fixed16x9, 448, 320);
+    CHECK(!fixed320.resize_driven && fixed320.fixed_width == 320);
+    MenuViewGeometry fixedLegacy = menu_view_step(ViewMode::Fixed16x9, 448, 0);
+    CHECK(!fixedLegacy.resize_driven && fixedLegacy.fixed_width == 285);
+    // Both directions clamp to the game's validated maximum.
+    MenuViewGeometry clamped = menu_view_step(ViewMode::Fixed16x9, 240, 320);
     CHECK(!clamped.resize_driven && clamped.fixed_width == 240);
+    MenuViewGeometry clampedLow = menu_view_step(ViewMode::Fixed16x9, 448, 100);
+    CHECK(!clampedLow.resize_driven && clampedLow.fixed_width == 240);
 }
 
 int main() {
