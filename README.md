@@ -1,5 +1,11 @@
 # GBARecomp
 
+> **Fork note:** this tree is a noncommercial fork of
+> [`mstan/gbarecomp`](https://github.com/mstan/gbarecomp) (frozen as
+> `4cc306b`, then diverged: the raylib 6 window backend, the V2 backend
+> seam, and the headless tier). Fork modifications are under the same
+> terms — see [License](#license).
+
 **A general-purpose static recompiler for the Game Boy Advance.** GBARecomp
 translates ARM7TDMI ARM and Thumb machine code into C++, compiles it into a
 native application, and links it against a shared GBA hardware runtime.
@@ -232,6 +238,23 @@ Windows, the supplied Clang-MinGW toolchain and automatic ccache/sccache
 integration can reduce large clean builds substantially; see
 [`docs/BUILD_PERFORMANCE.md`](docs/BUILD_PERFORMANCE.md).
 
+## Window backend (raylib 6)
+
+The host window/audio/input layer is the backend-neutral V2 seam
+(`src/runtime/window_backend.h`: `Video`/`Audio`/`Input`/`Fx`/`Overlay`/
+`Menu` + facade); raylib 6 is its first implementation
+(`src/runtime/raylib_backend.cpp`, fetched by pinned SHA — see
+`THIRD_PARTY_ATTRIBUTION.md`). The SDL backend is gone.
+
+What the raylib backend delivers that SDL2 could not:
+
+| Feature | What it does | Status |
+|---|---|---|
+| LCD subpixel-grid shader | GPU-side RGB mask (period 3), pre-mask gain | Opt-in, default off; invisible to frame hashes (`GBARECOMP_LCD_SHADER` / `[video] lcd_shader`) |
+| Bayer dither | Screen-space pass against BGR555 gradient banding | Own program + target, independent of the grid (`lcd_dither`) |
+| Adaptive deband | Vertical ±2-tap pass in display LSB | Default off (`lcd_deband`) |
+| Headless tier | rlsw software GL + `PLATFORM_MEMORY`: present/readback with no display server | `-DGBARECOMP_RAYLIB_HEADLESS=ON` (shaders compiled out there) |
+
 ## Architecture
 
 | Path | Purpose |
@@ -282,9 +305,11 @@ project with similar cartridge hardware.
 
 ## License
 
-See [`LICENSE`](LICENSE). Nintendo GBA BIOS images, game ROMs, saves, and
-extracted game assets remain copyrighted by their respective owners and are
-not distributed by this project.
+This fork is distributed under the **PolyForm Noncommercial License
+1.0.0** — noncommercial use only; see [`LICENSE`](LICENSE). Fork
+modifications are under the same terms. Nintendo GBA BIOS images, game
+ROMs, saves, and extracted game assets remain copyrighted by their
+respective owners and are not distributed by this project.
 
 ---
 

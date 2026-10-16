@@ -66,3 +66,14 @@ libmgba itself is linked only into the opt-in oracle binary
   stack (`pthread_attr_setstacksize`, matching `kMobileGameStackBytes`),
   because raylib is glue-thread-bound and the game runs on that thread.
   See `platform/android/native_app_glue/README.md`.
+
+## raylib
+
+- **Upstream:** https://github.com/raysan5/raylib (6.0,
+  `dbc56a87da87d973a9c5baa4e7438a9d20121d28`)
+- **Author:** Ramon Santamaria and contributors
+- **License:** zlib/libpng
+- **Used as:** the window/audio/input backend (`src/runtime/raylib_backend.cpp`
+  via `src/runtime/raylib_api.h`), fetched by pinned SHA at configure time
+  (`FetchContent`; also usable from a parent-provided target or the headless
+  `PLATFORM_MEMORY` build). Not vendored; no modifications.
