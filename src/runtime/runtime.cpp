@@ -3482,15 +3482,23 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
     // Apply hook: after HostMenu handled a change, read the model back into
     // menu_settings and persist to config.ini. The write is cheap (a few
     // lines) and only fires on real changes, so per-change is fine.
+    //
+    // The hook context lives at FUNCTION scope, not inside the if: the hook
+    // pointer outlives this block by the whole run, and a scoped context left
+    // the hook reading a dead stack slot on every settings change (determinis-
+    // tic SIGSEGV on arm64 -- the reuse pattern zeroed it; x86-64 got lucky
+    // and kept the original bytes, which is why desktop appeared fine). The
+    // registration itself stays inside the if: without a menu there is no
+    // hook to register.
+    struct HookCtx {
+        MenuSettings* ms;
+        HostMenu* host;
+        const char* dir;
+        int* fixed_width;
+    };
+    HookCtx hook_ctx{&menu_settings, &host_menu,
+                     menu_config_dir.c_str(), &menu_fixed_view_width};
     if (menu_available) {
-        struct HookCtx {
-            MenuSettings* ms;
-            HostMenu* host;
-            const char* dir;
-            int* fixed_width;
-        };
-        HookCtx hook_ctx{&menu_settings, &host_menu,
-                         menu_config_dir.c_str(), &menu_fixed_view_width};
         host_menu.set_apply_hook(
             [](void* user, WindowBackend& window, const MenuResult&) {
                 auto* ctx = static_cast<HookCtx*>(user);
