@@ -2447,12 +2447,20 @@ private:
 class RaylibBackend::MenuImpl final : public Menu {
 public:
     explicit MenuImpl(Impl* impl) : impl_(impl) {
-        engine_ = make_menu_engine();
+        // The Impl OWNS the engine: draw_pending_menu() is a free function
+        // and cannot reach MenuImpl's privates, so the engine lives on Impl
+        // and both present() and draw_pending_menu() reach it through impl_.
+        // (The first cut assigned a MenuImpl-private member instead — the
+        // draw path read a never-assigned null and silently rendered
+        // nothing: Delete opened the menu, suppressed input, and painted
+        // nothing. Found by the TCP KEYINPUT probe: suppression flipped
+        // with no visible overlay.)
+        impl_->menu_engine = make_menu_engine();
     }
 
     bool available() const override {
 #if defined(GBARECOMP_USE_RAYLIB)
-        return engine_->available();
+        return impl_->menu_engine && impl_->menu_engine->available();
 #else
         return false;  // stub build: state only, no presentation
 #endif
@@ -2467,7 +2475,7 @@ public:
         impl_->menu_open = model.open;  // §3.4: derives suppress_game_input
 #if defined(GBARECOMP_USE_RAYLIB)
         if (impl_->open && impl_->api->IsWindowReady() &&
-            engine_->available()) {
+            impl_->menu_engine && impl_->menu_engine->available()) {
             // Stash for draw_pending_menu() (the frame context lives in
             // VideoImpl::present). The model is host-owned and outlives the
             // frame; the engine renders it read-only.
@@ -2481,7 +2489,6 @@ public:
 
 private:
     Impl* impl_;
-    std::unique_ptr<MenuEngine> engine_;
 };
 
 // Draw the menu frame stashed by MenuImpl::present through the pluggable
@@ -2503,7 +2510,22 @@ void RaylibBackend::draw_pending_menu(RaylibBackend::Impl* impl) {
                      impl->base_w, impl->base_h, impl->px_per_mm,
                      impl->safe_left, impl->safe_top, impl->safe_right,
                      impl->safe_bottom, touch_clock_ms());
-    if (impl->menu_engine) impl->menu_engine->draw(ov, *model);
+    if (!impl->menu_engine) {
+        // Unreachable since the engine is assigned in MenuImpl's
+        // constructor — if this ever fires, say so loudly once instead of
+        // silently rendering nothing (the 2026-10-16 regression: the menu
+        // opened, input suppressed, and no one could tell the draw was
+        // skipped). menu_render_contract_tests catches it functionally.
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::fprintf(stderr,
+                         "raylib_backend: menu stashed but no engine — "
+                         "MenuImpl wiring bug, draw skipped\n");
+        }
+        return;
+    }
+    impl->menu_engine->draw(ov, *model);
 #else
     (void)impl;
 #endif

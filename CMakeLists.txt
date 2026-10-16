@@ -1117,6 +1117,20 @@ target_include_directories(backend_contract_tests PRIVATE src/runtime tests/runt
 target_link_libraries(backend_contract_tests PRIVATE gbarecomp_raylib_backend)
 add_test(NAME backend_contract_tests COMMAND backend_contract_tests)
 
+# The settings overlay actually renders (menu_render_contract_test.cpp):
+# open the real backend, stash an open MenuModel, present a guest frame,
+# assert the readback pixels moved — catches a silent no-draw (the
+# 2026-10-16 wiring bug class) that contract/engine unit tests cannot see.
+# Display-gated: open() failing with Err::Window prints + passes, so
+# headless boxes skip the render assertion (CI's xvfb job runs it).
+add_executable(menu_render_contract_tests
+    tests/runtime/menu_render_contract_test.cpp)
+target_include_directories(menu_render_contract_tests
+    PRIVATE src/runtime tests/runtime)
+target_link_libraries(menu_render_contract_tests
+    PRIVATE gbarecomp_raylib_backend)
+add_test(NAME menu_render_contract_tests COMMAND menu_render_contract_tests)
+
 # Phase 4d — the per-interface surface walk (ports the deleted flat dispatch
 # tests): every method of every interface is called through its interface type
 # against the fakes, and each call must land on the composed implementation.
