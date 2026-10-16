@@ -121,6 +121,9 @@ Use this path if you want to create the playable game `.exe` yourself.
 ```sh
 pacman -S --needed mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-SDL2
 ```
+(`mingw-w64-x86_64-SDL2` is for the recomp-ui launcher, which keeps its own
+SDL platform glue; the framework backend needs no system package — raylib is
+fetched by CMake at configure time.)
 
 5. Clone the game repo. Example:
 

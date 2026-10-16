@@ -14,7 +14,7 @@ Normal gameplay should not pay for diagnostic capture unless the corresponding f
 | MMIO write trace | `GBARECOMP_MMIO_CAP=1` | 262144-entry MMIO ring allocation and committed-IO write logging |
 | MMIO CSV dump | `GBARECOMP_MMIO_DUMP=<path>` | Also arms MMIO capture so shutdown dumps contain history |
 | FIFO timer trace | `GBARECOMP_AUDIO_FIFO_TRACE=1` | Direct-sound FIFO timer trace entries and storage |
-| Present cadence trace | `GBARECOMP_PRESENT_CADENCE=1` | SDL/DWM present timing, cadence ring allocation, periodic summaries, close-time CSV dump |
+| Present cadence trace | `GBARECOMP_PRESENT_CADENCE=1` | raylib present timing, cadence ring allocation, periodic summaries, close-time CSV dump |
 | Frame-phase trace | `GBARECOMP_FRAME_PHASE=<path>` | Per-presented-frame wall-clock timestamp collection and CSV dump |
 | Hang watchdog | `GBARECOMP_HANG_WATCHDOG=1` | Runtime hang trip detection; tune with `GBARECOMP_HANG_SECONDS` |
 
@@ -76,7 +76,11 @@ Benchmark caveats:
 
 The final headless CTest run passed 29/29 tests, recorded in `.local/final-headless-ctest.log`. This includes the focused enabled/disabled diagnostic capture tests, raw color LUT tests, codegen trace guard coverage, interpreter smoke, bus/DMA/timer checks, PPU smoke, audio DRC, mod audio/state, save/config, symbol lookup, and self-heal cluster checks. The named ARM, Thumb, and IRQ test executables currently include stub coverage, so they should not be read as substantive ISA or IRQ validation.
 
-A separate `.local/build-release-sdl` configuration found SDL2 at `C:/msys64/mingw64` and compiled the SDL-backed runtime/`host_window.cpp` path. The SDL dummy host-window smoke was run with present-cadence off and on; the enabled run dumped 4 presents to `.local/present_cadence_smoke.csv`.
+Historical (SDL era — the desktop backend has since moved to raylib): a separate
+`.local/build-release-sdl` configuration found SDL2 at `C:/msys64/mingw64` and
+compiled the SDL-backed runtime/`host_window.cpp` path. The SDL dummy
+host-window smoke was run with present-cadence off and on; the enabled run
+dumped 4 presents to `.local/present_cadence_smoke.csv`.
 
 The MinishCap baseline-vs-current integration smoke in `.local/runtime-validation.md` built the existing generated MinishCap sources twice: once against baseline engine `425d941`, and once against this worktree. The first smoke ran 60 headless frames and matched the same `final_pc=0x08016e94`, `steps=115`, `cycles=9076584`, `ppu_frames=60`, `unmapped=0`, `io_unhandled=0`, three BIOS ARM fallback misses, and `2,289,244` interpreted instructions. The final `frame60.bmp`, EEPROM save, coverage JSON, and miss fragment were byte-identical by SHA-256.
 

@@ -100,7 +100,8 @@ divergence. The new `cosim_state_hash` must cover ALL of:
   (`sweep_cycles`, `envelope_cycles`, `length_cycles`, `waveform_phase`), SOUND2, SOUND3
   wave RAM + position, SOUND4 noise LFSR; SOUNDCNT_L/H/X; `samples_generated_`. **AUDIT:
   burndown axis-7 notes SOUND3/4 are NOT serialized in the save-state — do not inherit
-  that gap into the co-sim hash.** EXCLUDE the host SDL audio buffer/resampler.
+  that gap into the co-sim hash.** EXCLUDE the host audio buffer/resampler
+(raylib sink).
 - **4 DMA channels** (`gba_dma.{h,cpp}`, `gba_io.cpp`): src/dst/count/control PLUS the
   **internal latched src/dst/remaining**, the DMA-sound/HBlank/video-capture (DMA3) mode
   state, and the `dma_steal_cycles_` accumulator (the cycle-stealing fix).
@@ -114,7 +115,7 @@ divergence. The new `cosim_state_hash` must cover ALL of:
 - **Routing / SMC state**: any dirty-RAM / self-heal overlay bitmap that affects
   dispatch/interp routing.
 
-**EXCLUDE (host-only — false divergences otherwise):** SDL/host audio buffers &
+**EXCLUDE (host-only — false divergences otherwise):** host audio buffers &
 resampler, function pointers, the self-heal JIT overlay tables / DLL handles,
 generated-dispatch pointers, malloc addresses, file handles, struct padding, uninitialized
 bytes. Serialize little-endian explicitly; arrays in fixed order; any event/deadline queue
@@ -139,7 +140,7 @@ that backend exists, and NBA×2 before believing recomp-vs-NBA.
 
 1. **recomp-vs-recomp = 0 divergence** across the attract run. Proves determinism +
    hashing + that all host-only state is excluded. Likely nondeterminism suspects: the
-   audio thread / SDL sink (force headless, single-thread, no host audio), and the **RTC
+   audio thread / host sink (force headless, single-thread, no host audio), and the **RTC
    host-time leak** (`gba_rtc.cpp` reads `std::time`) — pin it with `RECOMP_RTC_EPOCH`.
    MinishCap has no RTC (cold×2 already identical → cleanest first fixture); FRLG/RSE
    MUST set the epoch knob.

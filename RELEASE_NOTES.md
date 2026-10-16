@@ -1,5 +1,8 @@
 # gbarecomp v0.1.0
 
+> Inherited from upstream `mstan/gbarecomp`; describes upstream state —
+> history, not truth.
+
 First tagged cut of the static GBA recompiler. Phase 2.8.D milestone:
 the recompiled GBA BIOS executes via `runtime_dispatch` on the host C
 stack with the interpreter strictly off the hot path. Minish Cap reaches

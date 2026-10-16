@@ -332,8 +332,8 @@ The current product smoke passes Emerald on Windows/Linux and Mario Kart on
 Windows in both admission modes: 120 cold ticks, then 60 further ticks in new
 processes loading the paired archives. Each round produces identical archives
 on both peers and leaves original saves unchanged. Windows also passes with
-only system directories on PATH after staging SDL2 and the three MinGW runtime
-DLLs beside each executable. The final Windows host/transport suite passes all
+only system directories on PATH: the static release stages no third-party
+DLLs (SDL2 is a forbidden import, enforced by the packager). The final Windows host/transport suite passes all
 20 cases; Linux passes eight product/host cases. Five consecutive Windows
 rollback runs and five save-request/outage runs pass the bilateral stop fix.
 

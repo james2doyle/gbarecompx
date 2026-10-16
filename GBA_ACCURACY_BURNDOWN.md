@@ -1,5 +1,8 @@
 # GBA Accuracy Burndown (living doc)
 
+> Inherited from upstream `mstan/gbarecomp`; describes upstream state —
+> history, not truth.
+
 Companion scorecard for the faithful GBA recompiler core, modeled 1:1 on the
 psxrecomp `ACCURACY_BURNDOWN.md` 7-axis framework
 (`C:\Projects\psxrecomp\_wt-tomba2\psxrecomp\ACCURACY_BURNDOWN.md`). That project

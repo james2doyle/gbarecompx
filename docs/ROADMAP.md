@@ -1,5 +1,8 @@
 # Roadmap
 
+> Inherited from upstream `mstan/gbarecomp`; describes upstream state —
+> history, not truth.
+
 Phases are intentionally narrow. Each one must be **measurably**
 done before the next is started. "Looks like it boots" is not a
 phase-completion criterion.

@@ -1,5 +1,8 @@
 # Known Issues
 
+> Inherited from upstream `mstan/gbarecomp`; describes upstream state —
+> history, not truth.
+
 Issues that are known, tracked, and intentionally deferred. Entries
 are ordered by severity, not chronology. New issues go in the
 section that matches their impact; closed issues stay (with a

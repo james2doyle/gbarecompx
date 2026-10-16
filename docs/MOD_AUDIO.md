@@ -10,10 +10,11 @@ slots and 8 voices; full fixed-voice allocation uses deterministic round-robin
 replacement.
 
 The emulation thread mixes sources into the native producer PCM buffer before
-the normal launcher volume and host clock-domain bridge. SDL only consumes that
+the normal launcher volume and host clock-domain bridge. The host backend
+(raylib `AudioStream` sink) only consumes that
 already-mixed queue. Fixed-clip controls never allocate, lock, invoke
-callbacks, or touch SDL. The optional pull callback runs only in the producer
-mixer, never on SDL's consumer callback.
+callbacks, or touch the host audio API. The optional pull callback runs only
+in the producer mixer, never on the consumer callback.
 
 ## Trusted pull stream
 
@@ -38,8 +39,8 @@ unchanged.
 
 The pull callback receives no more than
 `GBA_MOD_AUDIO_MAX_STREAM_CALLBACK_FRAMES` (1024) frames. It must be bounded:
-no allocation, locks, blocking I/O, SDL use, guest execution, or re-entry into
-mod audio. Returning fewer frames ends the stream voice; returning more than
+no allocation, locks, blocking I/O, host-audio use, guest execution, or
+re-entry into mod audio. Returning fewer frames ends the stream voice; returning more than
 requested is rejected and stops it. Mixer scratch storage is fixed.
 
 The capability holder may set native gain to 0..100 before overlays are added.
