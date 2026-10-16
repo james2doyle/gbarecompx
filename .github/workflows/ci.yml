@@ -37,15 +37,6 @@ jobs:
       - name: Submodules
         run: git submodule update --init --recursive
 
-      - name: Submodule patches
-        run: |
-          # arm-recomp-core carries a local patch (plan Phase 0):
-          # in-tree change on top of the pinned upstream submodule.
-          if [ -f tools/patches/arm-recomp-core-local.patch ]; then
-            git -C external/arm-recomp-core apply \
-              ../../tools/patches/arm-recomp-core-local.patch
-          fi
-
       - name: System packages
         run: |
           sudo apt-get update
@@ -93,13 +84,6 @@ jobs:
 
       - name: Submodules
         run: git submodule update --init --recursive
-
-      - name: Submodule patches
-        run: |
-          if [ -f tools/patches/arm-recomp-core-local.patch ]; then
-            git -C external/arm-recomp-core apply \
-              ../../tools/patches/arm-recomp-core-local.patch
-          fi
 
       - name: System packages (GL + X11 headers for the raylib build, Xvfb + llvmpipe for the virtual-display tier)
         run: |
@@ -181,13 +165,6 @@ jobs:
 
       - name: Submodules
         run: git submodule update --init --recursive
-
-      - name: Submodule patches
-        run: |
-          if [ -f tools/patches/arm-recomp-core-local.patch ]; then
-            git -C external/arm-recomp-core apply \
-              ../../tools/patches/arm-recomp-core-local.patch
-          fi
 
       # NOTE: no GL/X11 dev packages here. The memory platform links neither
       # (undefined GLFW references were the Phase 5.2 red); plain build tools
