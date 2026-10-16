@@ -804,6 +804,23 @@ void menu_toggle_step_decides_open_and_close() {
     CHECK(menu_toggle_step(true, open) == MenuToggleAction::Open);
 }
 
+// ── 24. The View dirty step: framework mode -> geometry policy ──────────
+// Pins the policy sync_resize_driven_view consumes: Adaptive is
+// drawable-driven, the fixed modes resolve to a width now.
+void menu_view_step_resolves_geometry_policy() {
+    using gbarecomp::menu_view_step;
+    using gbarecomp::MenuViewGeometry;
+    using gbarecomp::ViewMode;
+    MenuViewGeometry nat = menu_view_step(ViewMode::Native, 448);
+    CHECK(!nat.resize_driven && nat.fixed_width == 240);
+    MenuViewGeometry ad = menu_view_step(ViewMode::Adaptive, 448);
+    CHECK(ad.resize_driven);
+    MenuViewGeometry wide = menu_view_step(ViewMode::Fixed16x9, 448);
+    CHECK(!wide.resize_driven && wide.fixed_width == 285);  // 16:9 at 160 lines
+    MenuViewGeometry clamped = menu_view_step(ViewMode::Fixed16x9, 240);
+    CHECK(!clamped.resize_driven && clamped.fixed_width == 240);
+}
+
 int main() {
     build_seeds_from_backend();
     open_seeds_and_suppresses();
@@ -828,6 +845,7 @@ int main() {
     toggle_close_and_hook_cleared();
     view_row_follows_endpoint();
     menu_toggle_step_decides_open_and_close();
+    menu_view_step_resolves_geometry_policy();
 
     std::printf("host_menu tests: PASS\n");
     return 0;

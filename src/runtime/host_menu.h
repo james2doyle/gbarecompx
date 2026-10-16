@@ -25,6 +25,7 @@
 // is where games re-append their rows.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 
 #include "menu_model.h"
@@ -47,6 +48,23 @@ enum class MenuToggleAction { None, Open, Close };
 inline MenuToggleAction menu_toggle_step(bool toggle_edge, bool menu_open) {
     if (!toggle_edge) return MenuToggleAction::None;
     return menu_open ? MenuToggleAction::Close : MenuToggleAction::Open;
+}
+
+// The View dirty step sync_resize_driven_view consumes: a framework mode
+// maps to either drawable-driven geometry (Adaptive) or a fixed width now
+// (Native / 16:9 clamped to the game's validated maximum). Pure so the
+// policy is testable without a window; the host loop applies the result.
+struct MenuViewGeometry {
+    bool resize_driven = false;
+    int fixed_width = 240;
+};
+
+inline MenuViewGeometry menu_view_step(ViewMode mode, int max_view_width) {
+    if (mode == ViewMode::Adaptive) return {true, -1};
+    const int fixed = (mode == ViewMode::Fixed16x9)
+        ? std::min(max_view_width, (160 * 16 + 8) / 9)
+        : 240;
+    return {false, fixed < 240 ? 240 : fixed};
 }
 
 class HostMenu {
