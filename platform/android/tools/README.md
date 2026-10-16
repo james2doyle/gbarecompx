@@ -18,7 +18,7 @@ the resulting APK path(s) and size. Exits with gradle's own exit code.
 
 ```powershell
 # Debug build, default ABIs (arm64-v8a,x86_64), engine/UI roots as pinned
-# by the game's settings/build.gradle (or GBARECOMP_ROOT/RECOMP_UI_ROOT env).
+# by the game's settings/build.gradle (or the GBARECOMP_ROOT env).
 .\build-apk.ps1 -GameAndroidDir C:\Projects\gbarecomp\EmeraldRecomp-android-touch\android
 
 # Private build embedding a verified ROM + BIOS dump (never distribute the

@@ -7,9 +7,9 @@ set(GBARECOMP_ENABLE_MODS ON CACHE BOOL "" FORCE)
 add_subdirectory("${GBARECOMP_ROOT}" gbarecomp_build EXCLUDE_FROM_ALL)
 ```
 
-The default is `OFF`. Opting in also enables recomp-ui's Mods surface, which
-still remains hidden unless the game supplies a catalog through
-`RunOptions::mod_game_id`.
+The default is `OFF`. Opting in also enables the engine's mod-package
+loading surface (launcher seam), which still remains hidden unless the
+game supplies a catalog through `RunOptions::mod_game_id`.
 
 ## Trusted native mod state
 
@@ -146,7 +146,8 @@ the runtime's stock-image gate. Resolution fails before boot if an enabled
 feature targets another image, names a missing trusted plugin, or collides with
 another feature claiming the same plugin ID.
 
-Options follow recomp-ui's feature schema:
+Options follow the engine's mod feature schema (the launcher-seam
+option surface):
 
 ```toml
 [[option]]

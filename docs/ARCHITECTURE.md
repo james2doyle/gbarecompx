@@ -119,9 +119,10 @@ SVC mode with PC=0, and hands off to the interpreter. From there:
    and IRQs trap to BIOS at `0x00000018`. The interpreter runs those
    bytes just like any other code.
 
-Per `PRINCIPLES.md` "BIOS is sacred," there is no HLE path. The
-BIOS lives at `bios/gba_bios.bin` (user-provided, hash-verified;
-see `bios/README.md`).
+Per `PRINCIPLES.md` "BIOS is sacred," there is no HLE path. The BIOS —
+by default the clean-room emibios build the consumer ships; a retail
+dump (`bios/gba_bios.bin`) stays an accepted alternative — is
+hash-verified (see `bios/README.md`).
 
 Implications for the architecture:
 

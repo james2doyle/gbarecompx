@@ -38,8 +38,35 @@ Every row is applied live and persisted: changes are written to `[Menu]`
 (plus the LCD keys in `[video]`) in `config.ini` next to the executable
 (`src/runtime/menu_settings.h`), so they survive restarts on desktop and
 Android alike. An explicitly given CLI flag beats the saved value, which
-beats the built-in default. Save-state slots are not menu rows yet (the
-F-key and TCP paths are the interfaces).
+beats the built-in default. The View row (Native / Adaptive / Fixed)
+appears when the game opts into resize-driven view; its wiring is
+source-shape-guarded (the CI `guard` job). Save-state slots are not menu
+rows yet (the F-key and TCP paths are the interfaces).
+
+## Pre-boot launch screen
+
+A raygui launch screen (`src/runtime/launcher_raygui.cpp`) sits before any
+game boots: Play / Select ROM (drag-and-drop included) / first-boot picker,
+gamepad-navigable, with tinyfiledialogs backing the native dialogs. Any
+explicit CLI flag (`--rom`, `--bios`, `--no-window`, `--frames`,
+`--load-state`, `--tcp`) skips the screen. A game can stage box art as
+`assets/img/boxart.png` beside the executable. Settings live only in the
+in-game menu.
+
+## Default BIOS
+
+The default launch BIOS is the clean-room **emibios** build
+(LGPL-3.0-or-later, https://github.com/coolbho3k/emibios) — the consumer
+repo ships it, and the runtime's default SHA-1 gate expects it; a retail
+dump stays an accepted alternative. See `bios/README.md`.
+
+## Framework tools
+
+`tools/` carries the framework-protocol tooling — the mGBA-oracle
+diff/lockstep drivers, the playtest→heal loop, ring/trace queries, the TCP
+close/watchdog probes, GBA static analysis — with tests under
+`tools/tests/` (the CI `guard` job runs them). They run from a game
+checkout; see `tools/README.md`.
 
 ## Android
 

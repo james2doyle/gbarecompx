@@ -87,8 +87,9 @@ frame, which shifts IRQ arrival relative to guest code. A title that
 enables it must re-run its strict-static gate and seed any newly
 reached interior resume points; the skip is not free of coverage work.
 
-- The BIOS image is the user's own dump (`bios/gba_bios.bin`); see
-  `bios/README.md` for hash/policy.
+- The BIOS image defaults to the clean-room emibios build the consumer
+  repo ships; a retail dump (`bios/gba_bios.bin`) stays an accepted
+  alternative — see `bios/README.md` for hash/policy.
 - The runtime loads the BIOS, refuses to start if the hash is
   unrecognized, and dispatches every PC < `0x4000` through the
   BIOS dispatch table emitted by `gba_recompile --bios`.

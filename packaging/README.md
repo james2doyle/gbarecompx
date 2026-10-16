@@ -15,7 +15,7 @@ rather than copying scripts around.
 
 ```bash
 gbarecomp/packaging/package_macos.sh --target BoktaiRecomp --name Boktai \
-    -DGBAGAME_RECOMP_UI=ON
+   
 ```
 
 Produces `release-stage/<name>-macos-<arch>/` plus a `.tar.gz`: the executable,
@@ -46,7 +46,7 @@ MSYS2-only, and macOS has no static libSystem either.
 
 ```bash
 gbarecomp/packaging/package_linux.sh --target BoktaiRecomp --name Boktai \
-    -DGBAGAME_RECOMP_UI=ON
+   
 ```
 
 Same shape as the macOS script, with an `$ORIGIN` rpath instead of

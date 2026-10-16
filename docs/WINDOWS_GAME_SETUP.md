@@ -119,11 +119,10 @@ Use this path if you want to create the playable game `.exe` yourself.
 4. In the MSYS2 MINGW64 shell, install the build tools:
 
 ```sh
-pacman -S --needed mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-SDL2
+pacman -S --needed mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
 ```
-(`mingw-w64-x86_64-SDL2` is for the recomp-ui launcher, which keeps its own
-SDL platform glue; the framework backend needs no system package — raylib is
-fetched by CMake at configure time.)
+(the framework backend needs no extra system package — the raygui launcher
+and raylib itself are fetched/built by CMake at configure time.)
 
 5. Clone the game repo. Example:
 

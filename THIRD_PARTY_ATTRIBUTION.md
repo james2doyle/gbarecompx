@@ -104,7 +104,39 @@ libmgba itself is linked only into the opt-in oracle binary
   `src/vendor/raygui/LICENSE`
 - **SHA-256:** raygui.h `8b19249c713db7bc75e9c1e4ff19b9b10b0eaad16988d6a0dc65c6108a210625`
 - **Used as:** the raygui launcher backend
-  (`src/launcher_raygui.cpp`, planned Step 3.2); compile+link guarded by
-  `ffta_raygui_links_tests`.
+  (`src/runtime/launcher_raygui.cpp` — delivered); guarded by the
+  launcher link tests.
 - **Modifications:** none.
 
+
+## emibios
+
+- **Upstream:** https://github.com/coolbho3k/emibios
+- **Author:** coolbho3k (clean-room GBA BIOS reimplementation)
+- **License:** LGPL-3.0-or-later
+- **Used as:** the DEFAULT launch BIOS (2026-10 fork decision): the
+  runtime's default SHA-1 gate (`kEmibiosSha1`), the asset picker's
+  fallback expectation, and the netplay lockstep requirement. The binary
+  is NOT in this repo — each consumer game ships its own committed copy
+  (e.g. the FFTA recomp's `bios/emibios_gba_bios.bin` + recompile TOML).
+  See `bios/README.md`.
+- **Modifications:** none in this tree.
+
+## Capstone
+
+- **Upstream:** https://www.capstone-engine.org/
+- **License:** BSD-3-Clause (redistributed under the upstream license; not
+  vendored — a tooling dependency, installed per environment)
+- **Used as:** the disassembly engine behind `tools/disarm.py` and
+  `tools/misspack.py` (the evidence workflow: every address claim in a
+  consumer's game.toml carries a disassembly note these tools produce).
+
+## m4a_detect.py
+
+- **Lineage:** Bregalad & loveemu — `sappy_detector.c` ("GBA Mus Ripper";
+  forks: berg8793/gba-mus-ripper, CaptainSwag101/gba-mus-ripper)
+- **License:** credit-based (upstream states: "GBAMusRipper is free and
+  open source software. Anyone is free to redistribute it ... but just
+  give me (Bregalad) credit." No formal upstream license text exists.)
+- **Used as:** `tools/m4a_detect.py` — a faithful Python port of the
+  Sappy/m4a engine-detection logic; credit is given in the file header.

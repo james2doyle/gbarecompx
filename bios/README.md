@@ -1,53 +1,34 @@
 # BIOS
 
-Drop your own dump of the GBA BIOS here as `gba_bios.bin`. The binary
-**is not in git** (it's copyrighted Nintendo code) but the `.toml` /
-`.md` / `.sym` files in this folder ARE tracked, so the path layout
-matches between developer machines.
+The **default launch BIOS is the clean-room emibios build**
+(LGPL-3.0-or-later, https://github.com/coolbho3k/emibios) — a 2026-10
+fork decision. The consumer repo ships its own committed copy (the FFTA
+recomp keeps `bios/emibios_gba_bios.bin` plus its recompile TOML at the
+repo root), and the runtime's default SHA-1 gate (`kEmibiosSha1`)
+expects it; a game's `[bios].sha1` pin overrides the expectation, and
+`--bios <path>` overrides the path.
 
-## Why we need a real BIOS
+## The retail dump (optional, local-only)
 
-`gbarecomp` runs the **actual** GBA BIOS, interpreted instruction by
-instruction. We do **not** HLE SWIs. We do **not** stub the BIOS
-intro. We do **not** "fast-forward through boot." The whole point of
-a recompiler is faithfulness; the BIOS is part of what we recompile
-through.
+A dump of Nintendo's retail BIOS may be placed here as `gba_bios.bin`.
+It is **not in git** (copyrighted Nintendo code) and it is **no longer
+the runtime's default** — the `.toml` / `.md` files in this folder ARE
+tracked, so the path layout matches between developer machines. The
+retail dump remains the byte-exact reference for:
 
-This matches the PSXRecomp approach — see `../docs/ARCHITECTURE.md`
-"BIOS as the boot path" and `../PRINCIPLES.md` "BIOS is sacred."
+- the framework's mGBA oracle (`oracle/`) and co-simulation tooling,
+- byte-pin tests that assert retail-BIOS facts,
+- BIOS-accuracy work: `gba_bios.toml` / `gba_bios_excltest.toml`
+  (tracked) are the recompile recipes for it.
 
-## Required image
-
-| Field    | Value                                                                 |
+| Field    | Value (retail dump, if you supply one)                                |
 |----------|-----------------------------------------------------------------------|
 | File     | `bios/gba_bios.bin`                                                   |
 | Size     | 16384 bytes (16 KB)                                                   |
 | SHA-1    | `300c20df6731a33952ded8c436f7f186d25d3492`                            |
 | MD5      | `a860e8c0b6d573d191e4ec7db1b1e4f6`                                    |
-| Origin   | Nintendo GBA system ROM (region-agnostic)                             |
 
-The runtime refuses to start with a BIOS whose hash isn't recognized.
-This is the same gate the cartridge ROM goes through; both must
-verify.
-
-## Where to put it
-
-`C:/Projects/gbarecomp/gbarecomp/bios/gba_bios.bin`
-
-The `bios_smoke` tool, the runtime, and `gba_recompile` all look here
-by default. Override with `--bios <path>` if you keep yours elsewhere.
-
-## What lives here that IS tracked
-
-- `README.md` — this file.
-- `gba_bios.toml` — audit / recompile config for the BIOS, matching
-  the shape of a game's `game.toml`.
-- `gba_bios.sym` — symbol map (when populated). Sources are public
-  GBA BIOS disassemblies; see `../docs/GBA_REFERENCE_NOTES.md`
-  "GBA BIOS references."
-
-## What does NOT live here
-
-- Decompiled or "lifted to C" BIOS source. We interpret the original
-  bytes; we don't ship a re-implementation.
-- HLE stubs that pretend to be SWIs.
+The runtime accepts either image (the game's `[bios].sha1` pin decides
+what "correct" means for that game). Netplay requires all linked
+machines to run byte-identical BIOS bytes — in practice, the build
+default (emibios).

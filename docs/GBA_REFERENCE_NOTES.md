@@ -94,8 +94,10 @@ truth.**
 ## GBA BIOS references
 
 The BIOS is real, executed code in our runtime (see `PRINCIPLES.md`
-"BIOS is sacred"). It is **not** redistributed in this repo — the
-user provides their own dump at `bios/gba_bios.bin`. The references
+"BIOS is sacred"). The default launch BIOS is the clean-room emibios
+build, committed by the consumer repo — no dump is required. A retail
+dump may be supplied at `bios/gba_bios.bin` (never redistributed) for
+oracle/byte-pin reference work. The references
 below cover the BIOS structure, SWI entry points, and known
 function boundaries so we can annotate behavior without lifting the
 implementation.

@@ -79,8 +79,10 @@ build is NOT done until coverage is fully static. Never auto-write
 
 # BIOS RULE — RECOMPILED AND DISPATCHED (SELF-HEALS IF MISSED)
 
-The GBA BIOS at `bios/gba_bios.bin` is **recompiled and executed
-via the dispatch table**, not stubbed, not HLE'd. SWIs and IRQs run
+The GBA BIOS — by default the clean-room emibios build the consumer
+repo ships (`bios/emibios_gba_bios.bin`; a retail dump at
+`bios/gba_bios.bin` stays an accepted alternative) — is **recompiled and
+executed via the dispatch table**, not stubbed, not HLE'd. SWIs and IRQs run
 through the recompiled BIOS bytes via `runtime_dispatch`. There is no
 hand-written HLE path. A missed BIOS PC **self-heals** (bridged,
 recompiled on the fly, logged) — never silently HLE'd or stubbed; 100%

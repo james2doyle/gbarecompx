@@ -229,15 +229,16 @@ control confirms; request and outage scenarios exercise this path.
 
 Emerald and Mario Kart desktop builds enable `GBARECOMP_NETPLAY` by default;
 the generic engine and Android retain an opt-in default. They require the
-games' regenerated serial coverage and pinned shared recomp-ui netplay backend. Explicit
-`GBARECOMP_ROOT`, `RECOMP_UI_ROOT`, and `GBA_GAME_GENERATED_ROOT` CMake paths
+games' regenerated serial coverage and the shared netplay backend (the
+launcher seam in this repo). Explicit `GBARECOMP_ROOT` and
+`GBA_GAME_GENERATED_ROOT` CMake paths
 allow qualification without replacing existing generated corpora or submodule
 pins. `-DGBARECOMP_NETPLAY=OFF` still builds the single-player application.
 
 The shared launcher registers cable rooms of up to the game's
-`GbaNetplayLaunch::max_players` (default 2; recomp-ui
+`GbaNetplayLaunch::max_players` (default 2; the launcher seam's
 `netplay_max_players`) and maps input seats to dense cable positions by lobby
-seat rank (recomp-ui `recomp_launcher_netplay_dense_position`), including a
+seat rank (launcher seam `recomp_launcher_netplay_dense_position`), including a
 host occupying player two. Online rooms dial the lobby UDP relay; LAN/direct
 rooms stay two seats in the shared backend. Runtime entry verifies
 the original cartridge and retail BIOS, exchanges each owner's save and RTC,
