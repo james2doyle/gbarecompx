@@ -2,15 +2,16 @@
 #
 # Runs everything that needs no literal display:
 #   * stub     — the framework with raylib OFF (seam compile-check + pure tests)
-#   * raylib   — the framework with raylib 6 ON (fetched by pinned SHA) + full ctest
+#   * raylib   — the framework with raylib 6 ON (fetched by pinned SHA) + full
+#     ctest, then the full suite again under a virtual display (Xvfb +
+#     llvmpipe): the real backend opens a real window there, so the contract
+#     suite takes its full path instead of the Err::Window early-out. One job,
+#     two tiers — a standalone gl-xvfb job was folded in (same binary, so a
+#     separate job added minutes for no new compilation).
 #   * guard    — the seam-completeness checker and its self-tests (once ported)
 #   * headless — the framework with raylib on PLATFORM_MEMORY (rlsw software
 #     GL): full ctest plus the present/readback/lifecycle smoke, DISPLAY unset.
 #     No GL/X11 dev packages needed (the memory platform links neither).
-#   * gl-xvfb  — the same GL build under a virtual display: the real backend
-#     opens a real window under Xvfb + llvmpipe, so the contract suite takes
-#     its full path instead of the Err::Window early-out. Recipe verified in
-#     a clean ubuntu:24.04 container (Phase 6 follow-up).
 #
 # Keep every job green on every push: the public release requires it.
 name: ci
@@ -64,7 +65,7 @@ jobs:
         run: ctest --test-dir build-stub --output-on-failure
 
   raylib:
-    name: framework (raylib 6 ON)
+    name: framework (raylib 6 ON, + virtual display)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -81,14 +82,15 @@ jobs:
               ../../tools/patches/arm-recomp-core-local.patch
           fi
 
-      - name: System packages (GL + X11 headers for the raylib build)
+      - name: System packages (GL + X11 headers for the raylib build, Xvfb + llvmpipe for the virtual-display tier)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config git ca-certificates \
             libgl-dev libx11-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libxkbcommon-dev \
-            libfreetype-dev libharfbuzz-dev
+            libfreetype-dev libharfbuzz-dev \
+            xvfb libgl1-mesa-dri
 
       # raylib's FetchContent clone + build are minutes per run; cache them.
       # Keyed on the framework CMakeLists (it carries the pinned SHA), so a
@@ -111,6 +113,24 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build-raylib --output-on-failure
+
+      # Virtual-display tier (same binary): under `xvfb-run -a` the real
+      # backend opens a real window on llvmpipe, so backend_contract takes
+      # its full path instead of the display-less early-out. Recipe verified
+      # in a clean ubuntu:24.04 container.
+      - name: Test under Xvfb (virtual display)
+        run: xvfb-run -a ctest --test-dir build-raylib --output-on-failure
+
+      # Proof the virtual display did its job: the contract suite must NOT
+      # report the display-less early-out.
+      - name: Full-path proof (no early-out)
+        run: |
+          xvfb-run -a ./build-raylib/backend_contract_tests > /tmp/contract.log 2>&1
+          tail -n 1 /tmp/contract.log
+          if grep -q "generic checks only" /tmp/contract.log; then
+            echo "contract suite took the display-less early-out under Xvfb"
+            exit 1
+          fi
 
   headless:
     name: framework (rlsw headless, no display)
@@ -162,70 +182,6 @@ jobs:
       # smoke runs once more for its tier line.
       - name: Tier report
         run: ./build-raylib-headless/raylib_headless_tests | tail -n 1
-
-  gl-xvfb:
-    name: framework (GL under Xvfb virtual display)
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Submodules
-        run: git submodule update --init --recursive
-
-      - name: Submodule patches
-        run: |
-          if [ -f tools/patches/arm-recomp-core-local.patch ]; then
-            git -C external/arm-recomp-core apply \
-              ../../tools/patches/arm-recomp-core-local.patch
-          fi
-
-      # Recipe verified in a clean ubuntu:24.04 container (no host Xvfb
-      # needed to prove it): without xvfb-run the contract suite takes the
-      # Err::Window early-out; under `xvfb-run -a` it takes the full
-      # real-backend path (open/present/close on llvmpipe).
-      - name: System packages (GL + X11 + Xvfb + llvmpipe)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config git ca-certificates \
-            libgl-dev libx11-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev libxkbcommon-dev \
-            libfreetype-dev libharfbuzz-dev \
-            xvfb libgl1-mesa-dri
-
-      - name: Cache raylib FetchContent (clone + build)
-        uses: actions/cache@v4
-        with:
-          path: build-glxvfb/_deps
-          key: gbx-raylib-glxvfb-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
-
-      - name: Configure (GL raylib)
-        run: >
-          cmake -S . -B build-glxvfb -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DGBARECOMP_USE_RAYLIB=ON
-
-      - name: Build
-        run: cmake --build build-glxvfb --parallel
-
-      # Full suite under the virtual display. Non-GL tests ignore it;
-      # backend_contract's real-backend path opens a real window on llvmpipe
-      # instead of taking the display-less early-out.
-      - name: Test (full suite under Xvfb)
-        run: xvfb-run -a ctest --test-dir build-glxvfb --output-on-failure
-
-      # Proof the virtual display did its job: the contract suite must NOT
-      # report the display-less early-out.
-      - name: Full-path proof (no early-out)
-        run: |
-          xvfb-run -a ./build-glxvfb/backend_contract_tests > /tmp/contract.log 2>&1
-          tail -n 1 /tmp/contract.log
-          if grep -q "generic checks only" /tmp/contract.log; then
-            echo "contract suite took the display-less early-out under Xvfb"
-            exit 1
-          fi
 
   guard:
     name: seam completeness guard
