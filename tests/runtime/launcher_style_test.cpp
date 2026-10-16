@@ -13,7 +13,9 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
+#include <vector>
 
 #define CHECK(x)                                                             \
     do {                                                                     \
@@ -25,6 +27,16 @@
     } while (0)
 
 using namespace gbarecomp::launcher_style;
+
+namespace {
+
+// Fake measurer: 0.5 * size per character — deterministic, and wide enough
+// that the 29-character title overflows a 300px column and must wrap.
+float fake_measure(const char* s, float size) {
+    return size * 0.5f * static_cast<float>(std::strlen(s));
+}
+
+}  // namespace
 
 int main() {
     // The palette, constant-for-constant against the Android activity.
@@ -38,6 +50,42 @@ int main() {
     CHECK(kTitlePlaceholder == 0xCBD4EE);
     CHECK(kMuted == 0x848FAD);
     CHECK(kFootnote == 0x6E7894);
+    CHECK(kTitleWhite == 0xFFFFFF);
+
+    // The title row and the privacy footnote are the activity's content,
+    // transcribed (config.title → the game's title; the footnote keeps the
+    // two facts the activity states: files stay local, BIOS is built in).
+    CHECK(std::string(kGameTitle) == "Final Fantasy Tactics Advance");
+    CHECK(std::string(kPrivacyFootnote).find("never bundled") !=
+          std::string::npos);
+    CHECK(std::string(kPrivacyFootnote).find("clean-room BIOS") !=
+          std::string::npos);
+
+    // wrap_words: the placeholder and footnote must wrap at WORD boundaries
+    // (the activity's TextView wraps; raylib's DrawText does not).
+    {
+        const auto lines =
+            wrap_words(kGameTitle, 300.0f, 28.0f, fake_measure);
+        CHECK(!lines.empty());
+        float total_words = 0;
+        for (const auto& l : lines) {
+            CHECK(!l.empty());
+            CHECK(l.front() != ' ' && l.back() != ' ');  // no orphan spaces
+            CHECK(fake_measure(l.c_str(), 28.0f) <= 300.0f);  // each fits
+            for (char c : l)
+                if (c == ' ') total_words += 1;
+        }
+        // Word count preserved: "Final Fantasy Tactics Advance" = 3 words
+        // → 2 inner spaces across all lines.
+        CHECK(total_words == 2);
+    }
+    {
+        // A short line never wraps; empty text wraps to nothing.
+        const auto one = wrap_words("Play", 300.0f, 28.0f, fake_measure);
+        CHECK(one.size() == 1 && one[0] == "Play");
+        const auto none = wrap_words("", 300.0f, 28.0f, fake_measure);
+        CHECK(none.empty());
+    }
 
     // Not ready: the import prompt, in amber — the activity's exact wording
     // (refreshRomStatus' not-ready branch).

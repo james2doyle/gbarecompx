@@ -90,6 +90,7 @@ LAUNCH_PALETTE = {
     "kTitlePlaceholder": "0xCBD4EE",  # no-art placeholder title
     "kMuted": "0x848FAD",             # checkbox / info line
     "kFootnote": "0x6E7894",          # privacy footnote
+    "kTitleWhite": "0xFFFFFF",        # game title row
 }
 
 
@@ -109,8 +110,17 @@ def check_launch_style(style_h: str, launcher_cpp: str,
         failures.append(
             "launcher_raygui.cpp must draw the ROM status through "
             "rom_status_line() (the shared status decision, not inline colors)")
+    # Title row + placeholder + footnote come from the shared constants (the
+    # activity draws config.title; the placeholder IS the title when the art
+    # is absent — not a nickname).
+    for required in ("kGameTitle", "kPrivacyFootnote", "kTitlePlaceholder",
+                     "wrap_words("):
+        if required not in launcher_cpp:
+            failures.append(
+                f"launcher_raygui.cpp must draw through launcher_style::{required} "
+                "(the shared title/placeholder/footnote spec)")
     for retired in ("Select a ROM to begin", "0x9F, 0xFF, 0x9F",
-                    "0x88, 0x99, 0xAA"):
+                    "0x88, 0x99, 0xAA", '"FFTA"'):
         if retired in launcher_cpp:
             failures.append(
                 f"launcher_raygui.cpp carries retired launch-screen content: "
@@ -130,8 +140,10 @@ BAD_SETUP = 'biosButton.setEnabled(!busy);\n'
 GOOD_STYLE_H = "constexpr std::uint32_t kAccent = 0x4ED8FF;\n" + "".join(
     f"{n} = {v};\n" for n, v in LAUNCH_PALETTE.items())
 BAD_STYLE_H = GOOD_STYLE_H.replace("0x78EBAB", "0x9FFF9F")
-GOOD_LAUNCHER_CPP = "rom_status_line(ready, model.rom_path());\n"
+GOOD_LAUNCHER_CPP = ("rom_status_line(ready, model.rom_path());\n"
+                     "kGameTitle kPrivacyFootnote kTitlePlaceholder wrap_words(\n")
 BAD_LAUNCHER_CPP = 'DrawText("Select a ROM to begin", x, y, 16, RED);\n'
+BAD_LAUNCHER_CPP_FFTA = 'DrawText("FFTA", x, y, 40, WHITE);\n'
 
 
 def self_test() -> int:
@@ -175,6 +187,10 @@ def self_test() -> int:
     ok, _ = check_launch_style(GOOD_STYLE_H, BAD_LAUNCHER_CPP)
     if ok:
         print("FAIL self-test: retired status wording passed")
+        failures += 1
+    ok, _ = check_launch_style(GOOD_STYLE_H, BAD_LAUNCHER_CPP_FFTA)
+    if ok:
+        print("FAIL self-test: retired FFTA placeholder passed")
         failures += 1
 
     if failures:

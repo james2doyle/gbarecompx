@@ -40,6 +40,11 @@ Color rgb(std::uint32_t v) {
                  static_cast<unsigned char>(v & 0xFF), 0xFF};
 }
 
+// The measurer adapter for launcher_style::wrap_words.
+float measure_raylib(const char* text, float size) {
+    return MeasureText(text, static_cast<int>(size));
+}
+
 enum Focus { kFocusPlay = 0, kFocusSelect = 1, kFocusCount = 2 };
 
 struct Layout {
@@ -92,7 +97,7 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
 
     LaunchScreenModel model(make_rom_spec(), argv0, staged_bios);
 
-    InitWindow(kWindowW, kWindowH, "Final Fantasy Tactics Advance");
+    InitWindow(kWindowW, kWindowH, launcher_style::kGameTitle);
     SetTargetFPS(60);
 
     Texture2D boxart{};
@@ -242,13 +247,32 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
                                      static_cast<float>(boxart.height)},
                            layout.boxart, Vector2{0, 0}, 0.0f, WHITE);
         } else {
+            // No art: the placeholder IS the title (the activity's
+            // placeholder panel — title in the muted light blue, wrapped,
+            // centered on the panel).
             DrawRectangleRec(layout.boxart, rgb(launcher_style::kPanel));
-            int tw = MeasureText("FFTA", 40);
-            DrawText("FFTA", layout.boxart.x + (layout.boxart.width - (float)tw) / 2.0f,
-                     layout.boxart.y + layout.boxart.height / 2 - 20, 40, WHITE);
+            const auto title_lines = launcher_style::wrap_words(
+                launcher_style::kGameTitle, layout.boxart.width - 20.0f, 28.0f,
+                measure_raylib);
+            const float line_h = 34.0f;
+            const float block_h =
+                static_cast<float>(title_lines.size()) * line_h;
+            float ty = layout.boxart.y +
+                       (layout.boxart.height - block_h) / 2.0f;
+            for (const auto& l : title_lines) {
+                const int tw = MeasureText(l.c_str(), 28);
+                DrawText(l.c_str(),
+                         layout.boxart.x + (layout.boxart.width - (float)tw) / 2.0f,
+                         ty, 28, rgb(launcher_style::kTitlePlaceholder));
+                ty += line_h;
+            }
         }
 
         const bool ready = model.state() == LaunchScreenState::Ready;
+
+        // The title row (the activity: config.title, white, bold).
+        DrawText(launcher_style::kGameTitle, (int)(kWindowW / 2 + 20.0f), 58,
+                 22, rgb(launcher_style::kTitleWhite));
 
         // Play button: disabled until Ready.
         if (!ready) GuiSetState(STATE_DISABLED);
@@ -280,6 +304,23 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
         if (!notice.empty()) {
             DrawText(notice.c_str(), (int)right_x, 280, 12,
                      rgb(launcher_style::kAmber));
+        }
+
+        // The privacy footnote (the activity: bottom of the controls
+        // column, dimmest text, wrapped to the column).
+        {
+            const auto foot_lines = launcher_style::wrap_words(
+                launcher_style::kPrivacyFootnote,
+                static_cast<float>(kWindowW / 2) - 60.0f, 12.0f,
+                measure_raylib);
+            const float line_h = 15.0f;
+            float fy = static_cast<float>(kWindowH) - 10.0f -
+                       static_cast<float>(foot_lines.size()) * line_h;
+            for (const auto& l : foot_lines) {
+                DrawText(l.c_str(), (int)(kWindowW / 2 + 20.0f), (int)fy, 12,
+                         rgb(launcher_style::kFootnote));
+                fy += line_h;
+            }
         }
 
         EndDrawing();

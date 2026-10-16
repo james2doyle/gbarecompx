@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace gbarecomp {
 namespace launcher_style {
@@ -31,6 +32,49 @@ constexpr std::uint32_t kAmber = 0xFFD34E;            // import prompt / attenti
 constexpr std::uint32_t kTitlePlaceholder = 0xCBD4EE; // no-art placeholder title
 constexpr std::uint32_t kMuted = 0x848FAD;            // checkbox / info line
 constexpr std::uint32_t kFootnote = 0x6E7894;         // privacy footnote
+constexpr std::uint32_t kTitleWhite = 0xFFFFFF;       // game title row
+
+// The activity draws config.title (GbaGameConfig); the desktop launch
+// screen is this game's, so the title lives here beside the palette.
+// Per-game constants until LauncherConfig grows a title field.
+constexpr const char* kGameTitle = "Final Fantasy Tactics Advance";
+
+// The privacy footnote — the activity's two facts, desktop wording: the
+// player's files are never bundled, and this game boots on the built-in
+// clean-room BIOS substitute (no BIOS is ever picked).
+constexpr const char* kPrivacyFootnote =
+    "Your files stay on this machine and are never bundled. The built-in "
+    "clean-room BIOS substitute is used.";
+
+// Word wrap for the placeholder title and the footnote: the activity's
+// TextView wraps; raylib's DrawText does not. Greedy fill, word boundaries
+// only, never a line wider than max_width (a word longer than the column
+// gets a line of its own rather than being split).
+using TextMeasurer = float (*)(const char* text, float size);
+
+inline std::vector<std::string> wrap_words(const std::string& text,
+                                           float max_width, float size,
+                                           TextMeasurer measure) {
+    std::vector<std::string> lines;
+    std::string line;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        while (i < text.size() && text[i] == ' ') ++i;  // collapse spaces
+        std::size_t start = i;
+        while (i < text.size() && text[i] != ' ') ++i;  // one word
+        if (start == i) break;
+        const std::string word = text.substr(start, i - start);
+        if (!line.empty() &&
+            measure((line + ' ' + word).c_str(), size) > max_width) {
+            lines.push_back(line);
+            line = word;
+        } else {
+            line = line.empty() ? word : line + ' ' + word;
+        }
+    }
+    if (!line.empty()) lines.push_back(line);
+    return lines;
+}
 
 // The ROM status line: what the player reads most. Ready → the resolved
 // path itself, in the verified green (the activity shows the private path;
