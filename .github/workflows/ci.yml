@@ -50,13 +50,32 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config git ca-certificates
+            build-essential cmake ninja-build pkg-config git ca-certificates ccache
+
+      # Cache ccache so C++ compiles reuse prior objects across runs.
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: gbx-ccache-stub-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            gbx-ccache-stub-${{ runner.os }}-
+
+      # Cache the CMake build dir so builds are incremental across runs.
+      - name: Cache CMake build dir (stub)
+        uses: actions/cache@v4
+        with:
+          path: build-stub
+          key: gbx-build-stub-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            gbx-build-stub-${{ runner.os }}-
 
       - name: Configure
         run: >
           cmake -S . -B build-stub -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGBARECOMP_USE_RAYLIB=OFF
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build-stub --parallel
@@ -90,7 +109,26 @@ jobs:
             libgl-dev libx11-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libxkbcommon-dev \
             libfreetype-dev libharfbuzz-dev \
-            xvfb libgl1-mesa-dri
+            xvfb libgl1-mesa-dri ccache
+
+      # Cache ccache across runs; the raylib _deps cache (below) stays keyed on
+      # the framework CMakeLists so a pin bump re-clones cleanly.
+      - name: Cache ccache (raylib)
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: gbx-ccache-raylib-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            gbx-ccache-raylib-${{ runner.os }}-
+
+      # Cache the CMake build dir so builds are incremental across runs.
+      - name: Cache CMake build dir (raylib)
+        uses: actions/cache@v4
+        with:
+          path: build-raylib
+          key: gbx-build-raylib-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            gbx-build-raylib-${{ runner.os }}-
 
       # raylib's FetchContent clone + build are minutes per run; cache them.
       # Keyed on the framework CMakeLists (it carries the pinned SHA), so a
@@ -107,6 +145,7 @@ jobs:
           cmake -S . -B build-raylib -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGBARECOMP_USE_RAYLIB=ON
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build-raylib --parallel
@@ -157,7 +196,26 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config git ca-certificates
+            build-essential cmake ninja-build pkg-config git ca-certificates ccache
+
+      # Cache ccache across runs; the raylib _deps cache (below) stays keyed on
+      # the framework CMakeLists so a pin bump re-clones cleanly.
+      - name: Cache ccache (headless)
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: gbx-ccache-headless-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            gbx-ccache-headless-${{ runner.os }}-
+
+      # Cache the CMake build dir so builds are incremental across runs.
+      - name: Cache CMake build dir (headless)
+        uses: actions/cache@v4
+        with:
+          path: build-raylib-headless
+          key: gbx-build-headless-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            gbx-build-headless-${{ runner.os }}-
 
       - name: Cache raylib FetchContent (clone + build)
         uses: actions/cache@v4
@@ -171,6 +229,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DGBARECOMP_USE_RAYLIB=ON
           -DGBARECOMP_RAYLIB_HEADLESS=ON
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build-raylib-headless --parallel
