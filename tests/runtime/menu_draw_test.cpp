@@ -269,6 +269,16 @@ void draw_editing_rows_and_values() {
     }
     CHECK(row_highlight);
 
+    // The Off wording is asserted too (both halves of the toggle value:
+    // the raygui engine mirrors these exact strings — menu_engine_raygui_test).
+    m.rows[0].int_value = 0;  // OFF
+    RecordingOverlay ov_off;
+    const gbarecomp::MenuGeometry g_off =
+        gbarecomp::menu_compute_geometry(ov_off, m);
+    gbarecomp::menu_draw(ov_off, m, g_off, PointerState{});
+    CHECK(ov_off.has_text("Off"));
+    CHECK(!ov_off.has_text("On"));
+
     // A disabled row draws dimmed (its label color differs from an enabled
     // row's).
     m.rows[0].enabled = false;

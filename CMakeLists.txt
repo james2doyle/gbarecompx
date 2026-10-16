@@ -1131,6 +1131,26 @@ target_link_libraries(menu_render_contract_tests
     PRIVATE gbarecomp_raylib_backend)
 add_test(NAME menu_render_contract_tests COMMAND menu_render_contract_tests)
 
+# The raygui menu engine driven HEADLESS via RAYGUI_STANDALONE
+# (raygui_standalone_stub.cpp): raygui's implementation with recording
+# primitives. This target compiles the engine TU itself with the
+# STANDALONE config (target-scoped definitions — the real backend's
+# compile of the same file is untouched); the stub TU is the single
+# implementation TU here, mirroring raygui_impl.cpp's role in the real
+# build. GBARECOMP_USE_RAYLIB only satisfies the engine's compile guard —
+# under STANDALONE raygui.h never includes raylib, so no GL is needed.
+add_executable(menu_engine_raygui_tests
+    tests/runtime/menu_engine_raygui_test.cpp
+    tests/runtime/raygui_standalone_stub.cpp)
+target_sources(menu_engine_raygui_tests PRIVATE
+    src/runtime/menu_engine_raygui.cpp)
+target_compile_definitions(menu_engine_raygui_tests PRIVATE
+    GBARECOMP_USE_RAYLIB=1 RAYGUI_STANDALONE RAYGUI_NO_ICONS)
+target_include_directories(menu_engine_raygui_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/vendor")
+target_link_libraries(menu_engine_raygui_tests PRIVATE gbarecomp_menu_model)
+add_test(NAME menu_engine_raygui_tests COMMAND menu_engine_raygui_tests)
+
 # Phase 4d — the per-interface surface walk (ports the deleted flat dispatch
 # tests): every method of every interface is called through its interface type
 # against the fakes, and each call must land on the composed implementation.
