@@ -1,10 +1,10 @@
 [submodule "external/arm-recomp-core"]
 	path = external/arm-recomp-core
-	url = https://github.com/mstan/arm-recomp-core.git
-	# The pinned upstream commit needs the local patch in
-	# tools/patches/arm-recomp-core-local.patch (configure fails loudly
-	# without it). `dirty` keeps the patched worktree out of `git status`.
-	ignore = dirty
+	url = https://github.com/james2doyle/arm-recomp-core.git
+	# Pin carries this framework's required work as committed branches on
+	# the fork: fix/link-startup-cycles (merged to master) plus
+	# feat/in-body-forward-goto (cd010b5 — in-body forward gotos, how the
+	# split vblank loop stays in one host frame). No working-tree patch.
 [submodule "external/recomp-net"]
 	path = external/recomp-net
 	url = https://github.com/RetroPortingToolKit/recomp-net.git
