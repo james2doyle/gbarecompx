@@ -5,7 +5,10 @@
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <cerrno>
 #include <string>
+#include <vector>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace gbarecomp::testing {
@@ -15,13 +18,38 @@ namespace gbarecomp::testing {
 class TmpConfigDir {
 public:
     TmpConfigDir() {
-        char tmpl[] = "/tmp/opencode/menu_settings_test_XXXXXX";
-        char* d = ::mkdtemp(tmpl);
-        if (!d) {
-            std::fprintf(stderr, "TmpConfigDir: mkdtemp failed\n");
-            std::exit(1);
+        // Machine-local scratch roots differ (/tmp/opencode exists only where
+        // the FFTA harness pre-created it -- the CI runners do not), so try
+        // known-good roots and fall back to TMPDIR. mkdtemp needs the parent
+        // to exist; create it if missing rather than failing the whole test.
+        const char* roots[] = {std::getenv("TMPDIR"), "/tmp/opencode", "/tmp"};
+        for (const char* root : roots) {
+            if (!root || !*root) continue;
+            std::string base = root;
+            while (!base.empty() && base.back() == '/') base.pop_back();
+            std::string tmpl = base + "/menu_settings_test_XXXXXX";
+            std::vector<char> buf(tmpl.begin(), tmpl.end());
+            buf.push_back('\0');
+            char* d = ::mkdtemp(buf.data());
+            if (d) {
+                dir_ = d;
+                return;
+            }
+            // Parent missing? Create it (one level is enough for /tmp/X) and
+            // retry the same template once.
+            if (::mkdir(base.c_str(), 0755) == 0 || errno == EEXIST) {
+                std::vector<char> buf2(tmpl.begin(), tmpl.end());
+                buf2.push_back('\0');
+                d = ::mkdtemp(buf2.data());
+                if (d) {
+                    dir_ = d;
+                    return;
+                }
+            }
         }
-        dir_ = d;
+        std::fprintf(stderr, "TmpConfigDir: mkdtemp failed (TMPDIR=%s)\n",
+                     std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "(null)");
+        std::exit(1);
     }
     ~TmpConfigDir() {
         std::remove(config_path().c_str());
