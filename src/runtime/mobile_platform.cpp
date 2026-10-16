@@ -225,7 +225,12 @@ bool mobile_prepare_process(std::vector<std::string>& args,
     args.emplace_back("--no-launcher");
     // Validation hook: extra runtime arguments (e.g. "--tcp-observe 19892")
     // from an app-private file only adb run-as can create. Absent in normal
-    // installs; every argument taken is logged.
+    // installs; every argument taken is logged. ONE-SHOT: the file is
+    // removed after reading, so a debug override (e.g. --launcher forcing
+    // the pre-boot screen) applies to exactly the boot that asked for it —
+    // otherwise a forced flag persists across the PickPending relaunch and
+    // the launch screen reappears after a successful pick (observed on
+    // device, 2026-10-16). Debug scripts rewrite the file per boot.
     if (std::FILE* f = std::fopen("debug-args.txt", "r")) {
         char word[256];
         while (std::fscanf(f, "%255s", word) == 1) {
@@ -233,6 +238,8 @@ bool mobile_prepare_process(std::vector<std::string>& args,
             std::fprintf(stderr, "mobile: debug arg %s\n", word);
         }
         std::fclose(f);
+        std::remove("debug-args.txt");
+        std::fprintf(stderr, "mobile: debug args consumed (one-shot)\n");
     }
     return true;
 #else

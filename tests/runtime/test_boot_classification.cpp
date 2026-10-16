@@ -28,6 +28,34 @@ void check(bool skip, const std::vector<std::string>& args, const char* label) {
     }
 }
 
+// The vector overload — the Android classification surface (the native
+// entry's argv is raylib's synthetic {"raylib"}; the mobile layer's flags
+// live only in the mutated vector).
+void check_vec(bool skip, const std::vector<std::string>& args,
+               const char* label) {
+    bool got = gbarecomp::launcher_should_skip_screen(args);
+    if (got != skip) {
+        std::printf("boot FAIL (vec): %s -> got %d, wanted %d\n", label, got,
+                    skip);
+        ++failures;
+    } else {
+        std::printf("boot (vec): %s OK\n", label);
+    }
+}
+
+// launcher_wants_screen — an explicit --launcher overrides skip flags.
+void check_force(bool want, const std::vector<std::string>& args,
+                 const char* label) {
+    bool got = gbarecomp::launcher_wants_screen(args);
+    if (got != want) {
+        std::printf("boot FAIL (force): %s -> got %d, wanted %d\n", label, got,
+                    want);
+        ++failures;
+    } else {
+        std::printf("boot (force): %s OK\n", label);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -45,6 +73,23 @@ int main() {
 
     // Bare invocation shows the screen.
     check(false, {"FFTARecomp"},                                 "bare invocation shows");
+
+    // --no-launcher skips explicitly (the mobile platform appends it; the
+    // 2026-10-16 device finding — the screen appearing on every Android
+    // boot — was this flag not being honored).
+    check(true,  {"FFTARecomp", "--no-launcher"},                "--no-launcher skips");
+
+    // Vector overload: the same rule set over the mutated args.
+    check_vec(true,  {"main", "game.toml", "--no-launcher", "--touch-pad-scale",
+                      "0.85", "--load-state", "/sdcard/s"},
+              "android args (no-launcher + load-state) skip");
+    check_vec(false, {"main", "game.toml"},                      "android args (TOML only) show");
+    check_vec(false, {},                                         "empty vector shows");
+
+    // --launcher forces the screen despite skip flags (main.cpp: force wins).
+    check_force(true,  {"main", "--rom", "x", "--launcher"},     "--launcher forces");
+    check_force(false, {"main", "--rom", "x"},                   "no --launcher, no force");
+    check_force(true,  {"main", "--no-launcher", "--launcher"},  "--launcher beats --no-launcher");
 
     // Non-skip flags do not trigger skip.
     check(false, {"FFTARecomp", "--scale", "3"},                 "--scale shows");

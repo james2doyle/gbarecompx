@@ -11,7 +11,9 @@
 // host-owned surface, swappable implementations behind a single header.
 //
 // Skip rules (Constraint 7): --rom, --bios, --no-window, --frames,
-// --load-state, --tcp each skip the screen; bare invocation shows it.
+// --load-state, --tcp --no-launcher each skip the screen; bare invocation
+// shows it; --launcher forces the screen even for scripted-looking runs
+// (play.sh passes --rom, which reads as a skip).
 
 #pragma once
 
@@ -58,7 +60,18 @@ struct LauncherConfig {
 // Returns true when the pre-boot launcher should be skipped and run_game()
 // invoked directly (headless / explicit-path invocation). Mirrors the old
 // recomp-ui seam's classification, ported to this contract.
+//
+// Two overloads, one rule set. Call the VECTOR overload with the mutated
+// argument vector on platforms that synthesize argv: a NativeActivity's
+// main() receives raylib's synthetic {"raylib"} — every flag the mobile
+// layer appended (--no-launcher, the staged TOML, debug-args.txt entries
+// such as --load-state) lives only in the vector, and classifying the raw
+// argv made the launch screen un-skippable on Android (2026-10-16 device
+// finding). The argv overload remains for real-CLI invocations.
 bool launcher_should_skip_screen(int argc, char** argv);
+bool launcher_should_skip_screen(const std::vector<std::string>& args);
+// True when an explicit --launcher forces the screen despite skip flags.
+bool launcher_wants_screen(const std::vector<std::string>& args);
 
 // Factory: constructs the one backend compiled into this build (raygui when
 // raylib is enabled). Returns nullptr when no backend is available.

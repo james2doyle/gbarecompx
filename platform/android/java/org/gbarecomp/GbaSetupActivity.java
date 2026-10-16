@@ -186,132 +186,148 @@ public class GbaSetupActivity extends Activity {
         final boolean vertical = portrait();
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setBackgroundColor(Color.rgb(9, 11, 24));
+        page.setBackgroundColor(Color.rgb(7, 11, 20));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.rgb(9, 11, 24));
+        scroll.setBackgroundColor(Color.rgb(7, 11, 20));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(dp(vertical ? 20 : 36), dp(vertical ? 36 : 14),
-            dp(vertical ? 20 : 36), dp(10));
-        scroll.addView(root, new ScrollView.LayoutParams(
-            ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
-        page.addView(scroll, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        // The desktop launch screen's layout, recreated natively: the box
+        // art panel on one side, the vertical divider, the controls column
+        // (title, ROM status, PLAY, SELECT ROM, extras) on the other.
+        LinearLayout split = new LinearLayout(this);
+        split.setOrientation(vertical ? LinearLayout.VERTICAL
+                                      : LinearLayout.HORIZONTAL);
+        split.setGravity(Gravity.CENTER);
 
-        TextView eyebrow = text("ANDROID EDITION", 12, Color.rgb(78, 216, 255));
-        eyebrow.setTypeface(Typeface.DEFAULT_BOLD);
-        eyebrow.setLetterSpacing(0.16f);
-        root.addView(eyebrow);
+        // ── left: box art panel ─────────────────────────────────────────
+        android.widget.FrameLayout artPanel = new android.widget.FrameLayout(this);
+        artPanel.setBackground(roundRect(Color.rgb(26, 31, 46), 18,
+                                         Color.rgb(48, 58, 92)));
+        android.widget.ImageView art = loadBoxart();
+        if (art != null) {
+            art.setAdjustViewBounds(true);
+            art.setPadding(dp(10), dp(10), dp(10), dp(10));
+            artPanel.addView(art, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+        } else {
+            TextView placeholder = text(config.title, vertical ? 22 : 26,
+                                        Color.rgb(203, 212, 238));
+            placeholder.setTypeface(Typeface.DEFAULT_BOLD);
+            placeholder.setGravity(Gravity.CENTER);
+            artPanel.addView(placeholder,
+                new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+        }
+        split.addView(artPanel, vertical
+            ? margins(-1, dp(210), 0, dp(16), 0, dp(16))
+            : weightedMargins(1, dp(24), dp(14), dp(12), dp(14)));
+        artPanel.getLayoutParams().height = vertical
+            ? dp(210) : android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 
-        TextView title = text(config.title, 27, Color.WHITE);
+        if (!vertical) {
+            View divider = new View(this);
+            divider.setBackgroundColor(Color.rgb(48, 58, 92));
+            split.addView(divider, margins(dp(1), -1, 0, dp(10), 0, dp(10)));
+            divider.getLayoutParams().height =
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+        }
+
+        // ── right: controls column ──────────────────────────────────────
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+        controls.setPadding(dp(18), dp(10), dp(18), dp(6));
+
+        TextView title = text(config.title, 21, Color.WHITE);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setGravity(Gravity.CENTER);
-        root.addView(title, margins(-1, -2, 0, dp(2), 0, 0));
+        controls.addView(title, margins(-1, -2, 0, 0, 0, dp(6)));
 
-        TextView subtitle = text("Choose your own legally dumped files to begin.", 15,
-            Color.rgb(177, 187, 216));
-        subtitle.setGravity(Gravity.CENTER);
-        root.addView(subtitle, margins(-1, -2, 0, 0, 0, dp(10)));
-
-        LinearLayout assets = new LinearLayout(this);
-        assets.setOrientation(vertical ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
-        assets.setGravity(Gravity.CENTER);
-        root.addView(assets, margins(-1, -2, 0, 0, 0, dp(8)));
-
-        LinearLayout romCard = assetCard("1", config.romLabel,
-            "Choose your clean cartridge dump (.gba).");
         romStatus = statusText();
-        romButton = actionButton("CHOOSE ROM");
-        romButton.setOnClickListener(view -> pickFile(PICK_ROM));
-        romCard.addView(romStatus, margins(-1, -2, 0, dp(4), 0, dp(4)));
-        romCard.addView(romButton, margins(-1, dp(48), 0, 0, 0, 0));
-        assets.addView(romCard, vertical ? margins(-1, -2, 0, dp(6), 0, dp(6))
-                                         : weightedMargins(1, dp(8), 0, dp(8), 0));
+        controls.addView(romStatus, margins(-1, -2, 0, 0, 0, dp(10)));
 
-        LinearLayout biosCard = assetCard("2",
-            config.biosRequired ? "GBA BIOS" : "GBA BIOS (optional)",
-            config.biosRequired
-                ? "Choose your clean 16 KiB gba_bios.bin dump."
-                : "Recommended for accuracy. Without it the built-in BIOS " +
-                  "substitute is used.");
-        biosStatus = statusText();
-        biosButton = actionButton("CHOOSE BIOS");
-        biosButton.setOnClickListener(view -> pickFile(PICK_BIOS));
-        biosCard.addView(biosStatus, margins(-1, -2, 0, dp(4), 0, dp(4)));
-        biosCard.addView(biosButton, margins(-1, dp(48), 0, 0, 0, 0));
-        assets.addView(biosCard, vertical ? margins(-1, -2, 0, dp(6), 0, dp(6))
-                                          : weightedMargins(1, dp(8), 0, dp(8), 0));
+        playButton = actionButton("PLAY");
+        playButton.setTextSize(20);
+        playButton.setMinHeight(dp(62));
+        playButton.setOnClickListener(view -> launchGame());
+        controls.addView(playButton, margins(-1, dp(58), 0, 0, 0, dp(10)));
+
+        romButton = actionButton("SELECT ROM");
+        romButton.setOnClickListener(view -> pickFile(PICK_ROM));
+        controls.addView(romButton, margins(-1, dp(48), 0, 0, 0, dp(6)));
 
         if (hasSaveImport()) {
-            LinearLayout saveCard = assetCard("3", "Save data (optional)",
-                "Import your .sav to continue where you left off. " +
-                "Optional — without it you start fresh.");
+            LinearLayout saveRow = new LinearLayout(this);
+            saveRow.setOrientation(LinearLayout.HORIZONTAL);
+            saveRow.setGravity(Gravity.CENTER_VERTICAL);
             saveStatus = statusText();
-            saveButton = actionButton("CHOOSE SAVE");
+            saveStatus.setTextSize(11);
+            saveRow.addView(saveStatus, weightedMargins(1, 0, dp(2), 0, dp(2)));
+            saveButton = actionButton("IMPORT SAVE");
+            saveButton.setTextSize(11);
+            saveButton.setMinHeight(dp(40));
             saveButton.setOnClickListener(view -> pickFile(PICK_SAVE));
-            saveCard.addView(saveStatus, margins(-1, -2, 0, dp(4), 0, dp(4)));
-            saveCard.addView(saveButton, margins(-1, dp(48), 0, 0, 0, 0));
-            assets.addView(saveCard, vertical ? margins(-1, -2, 0, dp(6), 0, dp(6))
-                                              : weightedMargins(1, dp(8), 0, dp(8), 0));
+            saveRow.addView(saveButton, margins(dp(150), dp(40), 0, 0, 0, 0));
+            controls.addView(saveRow, margins(-1, -2, 0, dp(4), 0, dp(4)));
         } else {
             saveStatus = null;
             saveButton = null;
         }
 
-        infoStatus = text("", 13, Color.rgb(177, 187, 216));
-        infoStatus.setGravity(Gravity.CENTER);
-        root.addView(infoStatus, margins(-1, -2, 0, 0, 0, dp(6)));
-
-        TextView privacy = text(
-            "Your files stay in this app’s private storage and are never included " +
-            "in the APK." + (config.setupNote.isEmpty() ? "" : " " + config.setupNote),
-            11, Color.rgb(132, 143, 173));
-        privacy.setGravity(Gravity.CENTER);
-        root.addView(privacy, margins(-1, -2, 0, 0, 0, 0));
-
-        LinearLayout footer = new LinearLayout(this);
-        footer.setOrientation(vertical ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
-        footer.setGravity(Gravity.CENTER);
-        footer.setPadding(dp(vertical ? 20 : 36), dp(8), dp(vertical ? 20 : 36), dp(18));
-
         skipLauncherCheck = new CheckBox(this);
         skipLauncherCheck.setText("Skip this screen on launch when ready");
-        skipLauncherCheck.setTextColor(Color.rgb(203, 212, 238));
-        skipLauncherCheck.setTextSize(14);
-        skipLauncherCheck.setMinHeight(dp(52));
+        skipLauncherCheck.setTextColor(Color.rgb(132, 143, 173));
+        skipLauncherCheck.setTextSize(12);
+        skipLauncherCheck.setMinHeight(dp(36));
         skipLauncherCheck.setChecked(skipLauncherOnBoot());
         skipLauncherCheck.setOnCheckedChangeListener((button, checked) ->
             getSharedPreferences(SETUP_PREFERENCES, MODE_PRIVATE)
                 .edit().putBoolean(SKIP_LAUNCHER_ON_BOOT, checked).apply());
-        footer.addView(skipLauncherCheck, vertical
-            ? margins(-2, -2, 0, 0, 0, dp(8)) : weightedMargins(1, 0, 0, dp(18), 0));
+        controls.addView(skipLauncherCheck, margins(-1, -2, 0, dp(2), 0, dp(2)));
 
-        playButton = actionButton("PLAY");
-        playButton.setTextSize(18);
-        playButton.setTypeface(Typeface.DEFAULT_BOLD);
-        playButton.setOnClickListener(view -> launchGame());
-        footer.addView(playButton, margins(vertical ? -1 : dp(360), dp(58), 0, 0, 0, 0));
+        infoStatus = text("", 12, Color.rgb(132, 143, 173));
+        controls.addView(infoStatus, margins(-1, -2, 0, 0, 0, dp(2)));
 
-        page.addView(footer, new LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView privacy = text(
+            "Your files stay in this app’s private storage and are never included "
+            + "in the APK." + (config.setupNote.isEmpty() ? "" : " " + config.setupNote)
+            + (config.biosRequired
+               ? ""
+               : " The built-in clean-room BIOS substitute is used."),
+            10, Color.rgb(110, 120, 148));
+        controls.addView(privacy, margins(-1, -2, 0, 0, 0, 0));
+
+        split.addView(controls, vertical
+            ? margins(-1, -2, 0, dp(4), 0, dp(10))
+            : weightedMargins(1, dp(14), dp(14), dp(20), dp(14)));
+
+        scroll.addView(split, new ScrollView.LayoutParams(
+            ScrollView.LayoutParams.MATCH_PARENT,
+            ScrollView.LayoutParams.MATCH_PARENT));
+        page.addView(scroll, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
         return page;
     }
 
-    private LinearLayout assetCard(String number, String title, String body) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(20), dp(12), dp(20), dp(12));
-        card.setBackground(roundRect(Color.rgb(20, 25, 48), 18, Color.rgb(48, 58, 92)));
-        TextView step = text(number + "  " + title, 17, Color.WHITE);
-        step.setTypeface(Typeface.DEFAULT_BOLD);
-        card.addView(step);
-        TextView description = text(body, 13, Color.rgb(164, 175, 207));
-        card.addView(description, margins(-1, -2, 0, dp(4), 0, 0));
-        return card;
+    /**
+     * The launch screen's box art, resolved by NAME at runtime
+     * (getIdentifier — the engine's Java must stay game-namespace-agnostic;
+     * the bitmap is staged into drawable-nodpi by the game's build). Null
+     * when absent: the caller shows the placeholder panel.
+     */
+    private android.widget.ImageView loadBoxart() {
+        int id = getResources().getIdentifier(
+            "launcher_boxart", "drawable", getPackageName());
+        if (id == 0) return null;
+        android.graphics.Bitmap bitmap =
+            android.graphics.BitmapFactory.decodeResource(getResources(), id);
+        if (bitmap == null) return null;
+        android.widget.ImageView view = new android.widget.ImageView(this);
+        view.setImageBitmap(bitmap);
+        view.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        return view;
     }
 
     private TextView statusText() {
@@ -379,7 +395,7 @@ public class GbaSetupActivity extends Activity {
     private void refreshStatus() {
         biosReady = biosFile().isFile() && biosFile().length() == BIOS_SIZE;
         romReady = romFile().isFile() && romFile().length() == config.romSize;
-        setAssetStatus(romStatus, romButton, romReady, "ROM", true);
+        refreshRomStatus();
         setAssetStatus(biosStatus, biosButton, biosReady, "BIOS", config.biosRequired);
         if (hasSaveImport()) {
             saveReady = isSaveFileValid(saveFile())
@@ -406,8 +422,26 @@ public class GbaSetupActivity extends Activity {
         }
     }
 
+    /** The ROM row in the launch screen's style: the resolved private path
+     *  in mono green when staged and verified, the import hint in amber
+     *  when not — the desktop launcher's path banner analog. */
+    private void refreshRomStatus() {
+        if (romStatus == null) return;
+        romStatus.setTypeface(Typeface.MONOSPACE);
+        if (romReady) {
+            romStatus.setText(romFile().getAbsolutePath());
+            romStatus.setTextSize(11);
+            romStatus.setTextColor(Color.rgb(120, 235, 171));
+        } else {
+            romStatus.setText("Choose your clean cartridge dump (.gba).");
+            romStatus.setTextSize(13);
+            romStatus.setTextColor(Color.rgb(255, 211, 78));
+        }
+    }
+
     private void setAssetStatus(TextView status, Button button, boolean ready,
                                 String kind, boolean required) {
+        if (status == null || button == null) return;  // retired rows (BIOS)
         status.setText(ready ? "●  Verified and ready"
                              : (required ? "○  " + kind + " required" : "○  Not provided"));
         status.setTextColor(ready ? Color.rgb(120, 235, 171)
@@ -599,7 +633,7 @@ public class GbaSetupActivity extends Activity {
     }
 
     private void setBusy(boolean busy, String label) {
-        biosButton.setEnabled(!busy);
+        if (biosButton != null) biosButton.setEnabled(!busy);  // retired row
         romButton.setEnabled(!busy);
         if (saveButton != null) saveButton.setEnabled(!busy);
         playButton.setEnabled(!busy && ready());

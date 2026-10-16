@@ -53,6 +53,27 @@ void write_cache(const std::string& path, const std::string& asset_path) {
     if (f) f << asset_path << "\n";
 }
 
+// Cache-entry candidates: the literal cached path, plus — on Android — the
+// same path rewritten from the legacy /data/data/<pkg> form to the engine's
+// /data/user/0/<pkg> form. Both name the app-private root; only the latter
+// is guaranteed statable from the app's SELinux domain.
+std::vector<std::string> cache_candidates(const std::string& cached) {
+    std::vector<std::string> out;
+    if (cached.empty()) return out;
+    out.push_back(cached);
+#if defined(__ANDROID__)
+    static const char kLegacy[] = "/data/data/";
+    static const char kModern[] = "/data/user/0/";
+    if (cached.rfind(kLegacy, 0) == 0) {
+        const std::string rest = cached.substr(std::strlen(kLegacy));
+        const std::size_t slash = rest.find('/');
+        if (slash != std::string::npos)
+            out.push_back(std::string(kModern) + rest);
+    }
+#endif
+    return out;
+}
+
 bool sha1_eq_lower(const std::string& got_hex, const char* expected) {
     if (!expected || !*expected) return true;
     std::size_t exp_len = std::strlen(expected);
@@ -73,10 +94,17 @@ std::string hex32(std::uint32_t v) {
     return std::string(buf);
 }
 
-// tinyfiledialogs (vendored, zlib) provides native dialogs on every platform:
-// Win32 GetOpenFileNameA/MessageBoxA underneath, NSOpenPanel on macOS, and
-// zenity/kdialog/matedialog on Linux. The console-input fallback is disabled
-// at runtime via the tinyfd_query probe (never blocks on stdin).
+// tinyfiledialogs (vendored, zlib) provides native dialogs on desktop: Win32
+// GetOpenFileNameA/MessageBoxA underneath, NSOpenPanel on macOS, and
+// zenity/kdialog/matedialog on Linux.
+//
+// ANDROID: tinyfd has no backend there — and its no-backend path is not
+// harmless: detection prints a "missing software!" banner and blocks on a
+// "press enter to continue" stdin read, once per dialog attempt (observed on
+// device, 2026-10-16). The wrappers below therefore never reach tinyfd on
+// Android: a pick fails cleanly with a log line. Android's picker is the
+// platform's own setup activity (GbaSetupActivity) — the pure-Android
+// pre-boot surface, not this seam.
 #include "tinyfiledialogs.h"
 
 std::string pick_with_dialog_impl(const AssetSpec& spec) {
@@ -118,6 +146,15 @@ void show_dialog_impl(const char* title, const std::string& body, unsigned flags
 std::string pick_with_dialog(const AssetSpec& spec) {
     if (asset_picker_seam::pick_with_dialog)
         return asset_picker_seam::pick_with_dialog(spec);
+#if defined(__ANDROID__)
+    // No desktop dialog backends exist here, and tinyfd's fallback prints a
+    // banner and reads stdin (see the include-site note). The platform layer
+    // installs the SAF seam; without it, fail cleanly.
+    std::fprintf(stderr,
+                 "[asset_picker] no ROM picker installed (Android SAF seam "
+                 "missing); stage the asset in the payload or pass --rom.\n");
+    return {};
+#else
     // Avoid tinyfd's blocking console-input fallback on systems lacking a
     // graphical chooser: that fallback reads from stdin and freezes the GUI.
     char* has_gui = tinyfd_openFileDialog("tinyfd_query", nullptr, 0, nullptr,
@@ -130,12 +167,18 @@ std::string pick_with_dialog(const AssetSpec& spec) {
         return {};
     }
     return pick_with_dialog_impl(spec);
+#endif
 }
 
 void show_dialog(const char* title, const std::string& body, unsigned flags) {
     if (asset_picker_seam::show_dialog)
         return asset_picker_seam::show_dialog(title, body, flags);
+#if defined(__ANDROID__)
+    // Same Android rule: no tinyfd. Dialog-grade messaging becomes a log line.
+    std::fprintf(stderr, "[asset_picker] %s: %s\n", title, body.c_str());
+#else
     show_dialog_impl(title, body, flags);
+#endif
 }
 
 
@@ -215,13 +258,18 @@ AssetResult resolve_asset(const std::string& argv_path,
         }
     }
 
-    // 2. Cached path from a prior successful pick.
+    // 2. Cached path from a prior successful pick. On Android the cached
+    //    string may carry the legacy /data/data/<pkg> private-dir form while
+    //    the engine's own view is /data/user/0/<pkg> — that stat can fail
+    //    silently (dontaudit'd on some vendor ROMs) and strand a perfectly
+    //    good cache entry, so each candidate form is tried before the
+    //    picker is considered.
     if (!force_pick && spec.persist_cache) {
         const std::string cached = read_cache(cache);
-        if (!cached.empty()) {
+        for (const std::string& candidate : cache_candidates(cached)) {
             std::error_code ec;
-            if (fs::exists(cached, ec) && !ec) {
-                auto r = load_and_validate(cached, spec);
+            if (fs::exists(candidate, ec) && !ec) {
+                auto r = load_and_validate(candidate, spec);
                 if (r.ok) return r;
             }
         }

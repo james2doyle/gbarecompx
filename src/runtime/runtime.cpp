@@ -1285,6 +1285,16 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
         if (s == "--help" || s == "-h") {
             continue;
         }
+        if (s == "--no-launcher") {
+            // Pre-boot screen skip: the decision belongs to
+            // launcher_should_skip_screen() (the mobile platform appends the
+            // flag); the parser only needs to tolerate it. Before the
+            // launcher track retired the seam parser this flag lived here —
+            // its absence made every mobile boot die on "unknown argument"
+            // (2026-10-16 device finding: PLAY appeared dead because the
+            // game activity exited instantly).
+            continue;
+        }
         if (!s.empty() && s[0] != '-') {
             continue;
         }

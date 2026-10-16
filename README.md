@@ -38,10 +38,11 @@ inherits upstream's license terms (see [License](#license)).
   fast-forward and rewind assist, and a mod-package loader — all opt-in
   and safe to the frame hashes by construction.
 - **A real player experience.** A **raygui pre-boot launcher** fronts the
-  game: Play, select a ROM (drag-and-drop or the native file dialog),
-  first-boot picking, gamepad navigation, optional box art. In game, the
-  settings overlay carries the view modes, LCD effects, audio and assist
-  toggles — all persisted.
+  game on desktop: Play, select a ROM (drag-and-drop or the native file
+  dialog), first-boot picking, gamepad navigation, optional box art. In
+  game, the settings overlay carries the view modes, LCD effects, audio and
+  assist toggles — all persisted. (On Android the platform's own setup
+  activity is the pre-boot surface; the launch screen is desktop-only.)
 - **Runs where players are.** raylib 6 on desktop with packaged releases
   (portable zip, static Windows executable, public Android APK), and an
   Android scaffold with touch controls and a complete
