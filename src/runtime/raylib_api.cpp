@@ -21,6 +21,9 @@ struct RealRaylibApi final : RaylibApi {
     void SetWindowTitle(const char* title) override {
         ::SetWindowTitle(title);
     }
+    void SetWindowSize(int width, int height) override {
+        ::SetWindowSize(width, height);
+    }
     void SetWindowState(unsigned int flags) override {
         ::SetWindowState(flags);
     }

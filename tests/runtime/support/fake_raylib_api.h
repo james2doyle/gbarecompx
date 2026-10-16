@@ -39,8 +39,19 @@ public:
         ++set_title_calls;
         (void)title;
     }
-    void SetWindowState(unsigned int flags) override { (void)flags; }
-    void ClearWindowState(unsigned int flags) override { (void)flags; }
+    void SetWindowSize(int width, int height) override {
+        ++set_window_size_calls;
+        last_window_w = width;
+        last_window_h = height;
+    }
+    void SetWindowState(unsigned int flags) override {
+        ++set_window_state_calls;
+        last_set_state = flags;
+    }
+    void ClearWindowState(unsigned int flags) override {
+        ++clear_window_state_calls;
+        last_clear_state = flags;
+    }
     void SetTargetFPS(int fps) override { target_fps = fps; }
     bool WindowShouldClose() override { return should_close; }
     int GetScreenWidth() override { return screen_w; }
@@ -66,8 +77,9 @@ public:
         (void)pixels;
     }
     void SetTextureFilter(Texture2D texture, int filter) override {
+        ++set_texture_filter_calls;
+        last_texture_filter = filter;
         (void)texture;
-        (void)filter;
     }
     RenderTexture2D LoadRenderTexture(int width, int height) override {
         (void)width;
@@ -291,6 +303,11 @@ public:
     unsigned int config_flags = 0;
     int target_fps = 0;
     int init_window_calls = 0, set_title_calls = 0, update_texture_calls = 0;
+    int set_window_size_calls = 0;
+    int set_window_state_calls = 0, clear_window_state_calls = 0;
+    unsigned last_set_state = 0, last_clear_state = 0;
+    int set_texture_filter_calls = 0, last_texture_filter = 0;
+    int last_window_w = 0, last_window_h = 0;
     int last_w = 0, last_h = 0;
 };
 

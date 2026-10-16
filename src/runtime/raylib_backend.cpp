@@ -1421,8 +1421,22 @@ public:
     int scale() const override { return impl_->scale; }
 
     void adjust_scale(int delta) override {
-        // Clamp is the shared policy; the SDL backend does the same.
-        impl_->scale = std::clamp(impl_->scale + delta, 1, 8);
+        // Clamp is the shared policy; the SDL backend does the same. The
+        // resize below is the part the port dropped (SDL called
+        // SDL_SetWindowSize + recenter); without it the menu row is dead.
+#if defined(__ANDROID__)
+        (void)delta;  // fixed surface: the window is the display
+        return;
+#else
+        if (impl_->fullscreen != 0) return;  // meaningless while fullscreen
+        const int s = std::clamp(impl_->scale + delta, 1, 8);
+        if (s == impl_->scale) return;
+        impl_->scale = s;
+#if defined(GBARECOMP_USE_RAYLIB)
+        if (impl_->open && impl_->api->IsWindowReady())
+            impl_->api->SetWindowSize(impl_->base_w * s, impl_->base_h * s);
+#endif
+#endif
     }
 
     void set_linear_filter(bool enabled) override {

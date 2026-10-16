@@ -31,6 +31,7 @@ struct RaylibApi {
     virtual bool IsWindowReady() = 0;
     virtual void SetConfigFlags(unsigned int flags) = 0;
     virtual void SetWindowTitle(const char* title) = 0;
+    virtual void SetWindowSize(int width, int height) = 0;
     virtual void SetWindowState(unsigned int flags) = 0;
     virtual void ClearWindowState(unsigned int flags) = 0;
     virtual void SetTargetFPS(int fps) = 0;
