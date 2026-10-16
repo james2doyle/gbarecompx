@@ -263,28 +263,40 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
         DrawLine(kWindowW / 2, 0, kWindowW / 2, kWindowH,
                  rgb(launcher_style::kPanelStroke));
 
+        // The box-art panel (the activity's artPanel): a rounded card with
+        // a stroke; the art — or the placeholder title — sits inset 10px.
+        const launcher_style::ArtPanelLayout art_panel =
+            launcher_style::art_panel_layout(launcher_style::Rect{
+                layout.boxart.x, layout.boxart.y, layout.boxart.width,
+                layout.boxart.height});
+        DrawRectangleRounded(to_raylib(art_panel.panel),
+                             launcher_style::kArtPanelRoundness, 8,
+                             rgb(launcher_style::kPanel));
+        DrawRectangleRoundedLinesEx(to_raylib(art_panel.panel),
+                                    launcher_style::kArtPanelRoundness, 8,
+                                    1.0f, rgb(launcher_style::kPanelStroke));
         if (have_boxart) {
             DrawTexturePro(boxart,
                            Rectangle{0, 0, static_cast<float>(boxart.width),
                                      static_cast<float>(boxart.height)},
-                           layout.boxart, Vector2{0, 0}, 0.0f, WHITE);
+                           to_raylib(art_panel.art), Vector2{0, 0}, 0.0f,
+                           WHITE);
         } else {
             // No art: the placeholder IS the title (the activity's
             // placeholder panel — title in the muted light blue, wrapped,
             // centered on the panel).
-            DrawRectangleRec(layout.boxart, rgb(launcher_style::kPanel));
             const auto title_lines = launcher_style::wrap_words(
-                launcher_style::kGameTitle, layout.boxart.width - 20.0f, 28.0f,
+                launcher_style::kGameTitle, art_panel.art.w - 20.0f, 28.0f,
                 measure_raylib);
             const float line_h = 34.0f;
             const float block_h =
                 static_cast<float>(title_lines.size()) * line_h;
-            float ty = layout.boxart.y +
-                       (layout.boxart.height - block_h) / 2.0f;
+            float ty = art_panel.art.y +
+                       (art_panel.art.h - block_h) / 2.0f;
             for (const auto& l : title_lines) {
                 const int tw = MeasureText(l.c_str(), 28);
                 DrawText(l.c_str(),
-                         layout.boxart.x + (layout.boxart.width - (float)tw) / 2.0f,
+                         art_panel.art.x + (art_panel.art.w - (float)tw) / 2.0f,
                          ty, 28, rgb(launcher_style::kTitlePlaceholder));
                 ty += line_h;
             }

@@ -93,6 +93,27 @@ inline ButtonVisual action_button_visual(bool enabled, bool focused,
     return v;
 }
 
+// The box-art panel: the activity's artPanel — a rounded card (18dp
+// corners, 1dp stroke in the divider color) with the art inset 10dp from
+// every edge. The panel WRAPS the aspect-fitted art rect, so the panel
+// roundness below is expressed for card-sized boxes.
+struct ArtPanelLayout {
+    Rect panel;
+    Rect art;
+};
+
+constexpr float kArtPanelPad = 10.0f;
+constexpr float kArtPanelRoundness = 0.10f;  // ≈18px on a card-sized box
+
+inline ArtPanelLayout art_panel_layout(const Rect& art_fit) {
+    ArtPanelLayout p;
+    p.art = art_fit;
+    p.panel = Rect{art_fit.x - kArtPanelPad, art_fit.y - kArtPanelPad,
+                   art_fit.w + 2.0f * kArtPanelPad,
+                   art_fit.h + 2.0f * kArtPanelPad};
+    return p;
+}
+
 // The activity draws config.title (GbaGameConfig); the desktop launch
 // screen is this game's, so the title lives here beside the palette.
 // Per-game constants until LauncherConfig grows a title field.

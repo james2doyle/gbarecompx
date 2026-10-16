@@ -144,6 +144,23 @@ int main() {
         CHECK(!rect_contains(r, 110.0f, 70.1f));
     }
 
+    // Box-art panel: the activity's artPanel — a rounded card with a stroke,
+    // the art inset 10dp from every edge (the panel WRAPS the fitted art).
+    {
+        const Rect art{100.0f, 50.0f, 320.0f, 371.0f};
+        const ArtPanelLayout p = art_panel_layout(art);
+        CHECK(p.art.x == 100.0f && p.art.y == 50.0f);
+        CHECK(p.art.w == 320.0f && p.art.h == 371.0f);
+        CHECK(p.panel.x == 90.0f && p.panel.y == 40.0f);
+        CHECK(p.panel.w == 340.0f && p.panel.h == 391.0f);
+        // The art is fully inside the panel with exactly the pad on all
+        // four edges.
+        CHECK(p.panel.x + 10.0f == p.art.x);
+        CHECK(p.panel.y + 10.0f == p.art.y);
+        CHECK(p.panel.x + p.panel.w - 10.0f == p.art.x + p.art.w);
+        CHECK(p.panel.y + p.panel.h - 10.0f == p.art.y + p.art.h);
+    }
+
     // Not ready: the import prompt, in amber — the activity's exact wording
     // (refreshRomStatus' not-ready branch).
     {

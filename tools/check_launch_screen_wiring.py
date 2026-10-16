@@ -119,14 +119,15 @@ def check_launch_style(style_h: str, launcher_cpp: str,
     for required in ("kGameTitle", "kPrivacyFootnote", "kTitlePlaceholder",
                      "wrap_words(", "action_button_layout(",
                      "action_button_visual(", "rect_contains(",
-                     "DrawRectangleRounded", "kPlayLabel", "kSelectLabel"):
+                     "DrawRectangleRounded", "kPlayLabel", "kSelectLabel",
+                     "art_panel_layout("):
         if required not in launcher_cpp:
             failures.append(
                 f"launcher_raygui.cpp must draw through launcher_style::{required} "
-                "(the shared title/placeholder/footnote/button spec)")
+                "(the shared title/placeholder/footnote/button/panel spec)")
     for retired in ("Select a ROM to begin", "0x9F, 0xFF, 0x9F",
                     "0x88, 0x99, 0xAA", '"FFTA"', "GuiButton(", '"Play"',
-                    '"Select ROM"'):
+                    '"Select ROM"', "DrawRectangleRec("):
         if retired in launcher_cpp:
             failures.append(
                 f"launcher_raygui.cpp carries retired launch-screen content: "
@@ -153,6 +154,7 @@ GOOD_LAUNCHER_CPP = ("rom_status_line(ready, model.rom_path());\n"
 BAD_LAUNCHER_CPP = 'DrawText("Select a ROM to begin", x, y, 16, RED);\n'
 BAD_LAUNCHER_CPP_FFTA = 'DrawText("FFTA", x, y, 40, WHITE);\n'
 BAD_LAUNCHER_CPP_GUIGUI = 'if (GuiButton(layout.play, "Play")) {}\n'
+BAD_LAUNCHER_CPP_FLAT = 'DrawRectangleRec(layout.boxart, PANEL);\n'
 
 
 def self_test() -> int:
@@ -204,6 +206,10 @@ def self_test() -> int:
     ok, _ = check_launch_style(GOOD_STYLE_H, BAD_LAUNCHER_CPP_GUIGUI)
     if ok:
         print("FAIL self-test: retired GuiButton passed")
+        failures += 1
+    ok, _ = check_launch_style(GOOD_STYLE_H, BAD_LAUNCHER_CPP_FLAT)
+    if ok:
+        print("FAIL self-test: flat placeholder rect passed")
         failures += 1
 
     if failures:
