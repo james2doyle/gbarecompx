@@ -65,12 +65,19 @@ struct AssetResult {
 // used as the cache root.
 AssetResult resolve_asset(const std::string& argv_path,
                           const AssetSpec& spec,
-                          const std::string& argv0);
+                          const std::string& argv0,
+                          bool force_pick = false);
 
 // Validate one explicit path without consulting a cache or opening a picker.
 // Intended for pre-commit package validation. The returned bytes are only a
 // transient hashing buffer; callers must not persist or expose them.
 AssetResult validate_asset_path(const std::string& path,
                                 const AssetSpec& spec);
+
+// Platform-neutral dialog icon hints for the show_dialog seam. The real
+// implementation maps these to MessageBoxA icons (Win32) or tinyfd_messageBox
+// icon types (elsewhere); tests ignore them.
+inline constexpr unsigned kAssetDialogError   = 0;
+inline constexpr unsigned kAssetDialogWarning = 1;
 
 }  // namespace gbarecomp

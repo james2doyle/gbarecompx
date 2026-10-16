@@ -11,12 +11,9 @@
 
 #include "../gba/crc32.h"
 #include "../gba/sha1.h"
+#include "asset_picker_seam.h"
 #include "host_platform.h"
-
-#if defined(_WIN32)
-#include <windows.h>
-#include <commdlg.h>
-#endif
+#include "tinyfiledialogs.h"
 
 namespace fs = std::filesystem;
 
@@ -76,57 +73,71 @@ std::string hex32(std::uint32_t v) {
     return std::string(buf);
 }
 
-#if defined(_WIN32)
+// tinyfiledialogs (vendored, zlib) provides native dialogs on every platform:
+// Win32 GetOpenFileNameA/MessageBoxA underneath, NSOpenPanel on macOS, and
+// zenity/kdialog/matedialog on Linux. The console-input fallback is disabled
+// at runtime via the tinyfd_query probe (never blocks on stdin).
+#include "tinyfiledialogs.h"
 
-// Win32 OPENFILENAMEA wants a buffer it can mutate; copy spec.dialog_filter
-// (which is already double-null-terminated) into a stable vector.
-std::vector<char> copy_filter(const char* filter) {
-    std::vector<char> out;
-    if (!filter) {
-        const char* def = "All Files\0*.*\0";
-        out.insert(out.end(), def, def + 14);
-        out.push_back('\0');
-        return out;
-    }
-    const char* p = filter;
-    while (true) {
-        std::size_t len = std::strlen(p);
-        out.insert(out.end(), p, p + len);
-        out.push_back('\0');
-        p += len + 1;
-        if (*p == '\0') {
-            out.push_back('\0');
-            break;
+std::string pick_with_dialog_impl(const AssetSpec& spec) {
+    std::vector<std::string> pattern_storage;
+    std::vector<const char*> patterns;
+    std::string description = "All Files";
+    if (spec.dialog_filter && *spec.dialog_filter) {
+        // spec.dialog_filter is a double-null-terminated "desc1\0pat1\0desc2\0pat2\0"
+        // list. Split into (description, pattern...) for tinyfd, which takes a
+        // single description plus a pattern array.
+        const char* p = spec.dialog_filter;
+        while (*p) {
+            std::string desc = p;
+            p += desc.size() + 1;
+            std::string pat = p;
+            p += pat.size() + 1;
+            description = std::move(desc);
+            pattern_storage.push_back(std::move(pat));
         }
     }
-    return out;
+    for (const auto& pat : pattern_storage) patterns.push_back(pat.c_str());
+    patterns.push_back(nullptr);
+
+    const char* picked = tinyfd_openFileDialog(
+        spec.dialog_title ? spec.dialog_title : spec.display_name,
+        nullptr, static_cast<int>(patterns.size()) - 1, patterns.data(),
+        description.c_str(), 0);
+    return picked ? std::string(picked) : std::string();
 }
 
+void show_dialog_impl(const char* title, const std::string& body, unsigned flags) {
+    const char* icon = (flags == kAssetDialogWarning) ? "warning" : "error";
+    tinyfd_messageBox(title, body.c_str(), "ok", icon, 1);
+}
+
+// Seam-checked wrappers: tests override asset_picker_seam::pick_with_dialog /
+// show_dialog to inject behavior; production leaves them null and falls back
+// to the real platform implementations above.
 std::string pick_with_dialog(const AssetSpec& spec) {
-    auto filter = copy_filter(spec.dialog_filter);
-    char path_buf[MAX_PATH] = {};
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFilter = filter.data();
-    ofn.lpstrFile = path_buf;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = spec.dialog_title;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetOpenFileNameA(&ofn)) return {};
-    return std::string(path_buf);
+    if (asset_picker_seam::pick_with_dialog)
+        return asset_picker_seam::pick_with_dialog(spec);
+    // Avoid tinyfd's blocking console-input fallback on systems lacking a
+    // graphical chooser: that fallback reads from stdin and freezes the GUI.
+    char* has_gui = tinyfd_openFileDialog("tinyfd_query", nullptr, 0, nullptr,
+                                         nullptr, 0);
+    if (has_gui == nullptr) {
+        show_dialog_impl("Select ROM",
+                    "No graphical file chooser (zenity/kdialog) is available on "
+                    "this system. Pass the ROM with --rom instead.",
+                    kAssetDialogWarning);
+        return {};
+    }
+    return pick_with_dialog_impl(spec);
 }
 
-void show_dialog(const char* title, const std::string& body, UINT flags) {
-    MessageBoxA(nullptr, body.c_str(), title, flags);
+void show_dialog(const char* title, const std::string& body, unsigned flags) {
+    if (asset_picker_seam::show_dialog)
+        return asset_picker_seam::show_dialog(title, body, flags);
+    show_dialog_impl(title, body, flags);
 }
 
-#else
-
-std::string pick_with_dialog(const AssetSpec&) { return {}; }
-void show_dialog(const char*, const std::string&, unsigned) {}
-
-#endif
 
 AssetResult load_and_validate(const std::string& path,
                               const AssetSpec& spec) {
@@ -180,7 +191,8 @@ AssetResult load_and_validate(const std::string& path,
 
 AssetResult resolve_asset(const std::string& argv_path,
                           const AssetSpec& spec,
-                          const std::string& argv0) {
+                          const std::string& argv0,
+                          bool force_pick) {
     const std::string exe_dir = exe_dir_from(argv0);
     const std::string cache = cache_path(exe_dir, spec.cache_filename);
 
@@ -197,17 +209,14 @@ AssetResult resolve_asset(const std::string& argv_path,
                 if (spec.persist_cache) write_cache(cache, argv_path);
                 return r;
             }
-            // Wrong size or unreadable. Don't bother the user with a
-            // dialog if there isn't one available (non-Windows); they
-            // need the diagnostic. On Windows, fall through to dialog.
-#if !defined(_WIN32)
-            return r;
-#endif
+            // Wrong size or unreadable. Fall through to the cached path and
+            // the picker — the user may have typed the wrong path or be on a
+            // release build where the dev default doesn't exist.
         }
     }
 
     // 2. Cached path from a prior successful pick.
-    if (spec.persist_cache) {
+    if (!force_pick && spec.persist_cache) {
         const std::string cached = read_cache(cache);
         if (!cached.empty()) {
             std::error_code ec;
@@ -218,7 +227,6 @@ AssetResult resolve_asset(const std::string& argv_path,
         }
     }
 
-#if defined(_WIN32)
     while (true) {
         std::string picked = pick_with_dialog(spec);
         if (picked.empty()) {
@@ -231,22 +239,15 @@ AssetResult resolve_asset(const std::string& argv_path,
         if (!r.ok) {
             show_dialog(spec.display_name,
                         r.error + "\n\nPlease pick a different file.",
-                        MB_OK | MB_ICONERROR);
+                        kAssetDialogError);
             continue;
         }
         if (!r.warning.empty()) {
-            show_dialog(spec.display_name, r.warning,
-                        MB_OK | MB_ICONWARNING);
+            show_dialog(spec.display_name, r.warning, kAssetDialogWarning);
         }
         if (spec.persist_cache) write_cache(cache, picked);
         return r;
     }
-#else
-    AssetResult r;
-    r.error = std::string(spec.display_name) +
-              ": no path provided (use --bios / --rom on this platform).";
-    return r;
-#endif
 }
 
 AssetResult validate_asset_path(const std::string& path,

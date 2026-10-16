@@ -169,6 +169,15 @@ target_include_directories(gbarecomp_color_lut PUBLIC src/runtime)
 add_library(gbarecomp_touch_input STATIC src/runtime/touch_input.cpp)
 target_include_directories(gbarecomp_touch_input PUBLIC src/runtime)
 
+# tinyfiledialogs (v3.21.2, zlib, Guillaume Vareille) — native file dialogs
+# for the asset picker. Standalone static target; linked into
+# gbarecomp_runtime in Phase 2. Step 1.1 is additive: nothing references it
+# yet, so this target builds but is not part of any link line.
+add_library(gbarecomp_tinyfiledialogs STATIC
+    third_party/tinyfiledialogs/tinyfiledialogs.c)
+target_include_directories(gbarecomp_tinyfiledialogs PUBLIC
+    third_party/tinyfiledialogs)
+
 add_library(gbarecomp_audio_drc STATIC src/runtime/recomp_audio_drc.cpp)
 
 # Phase 3a — the pure menu model (plan §3.4): no backend, no toolkit.
@@ -441,6 +450,8 @@ add_library(gbarecomp_runtime STATIC
     # color_lut.cpp is NOT listed here: it lives in gbarecomp_color_lut (linked
     # below) so the raylib backend can use it without host_window.cpp.
     src/runtime/asset_picker.cpp
+    src/runtime/launcher.cpp
+    src/runtime/launcher_raygui.cpp
     # Production abort stubs for runtime_dispatch_miss +
     # runtime_unimplemented_op. Test binaries that link only
     # gbarecomp_armv4t (not gbarecomp_runtime) supply their own.
@@ -455,6 +466,10 @@ gbarecomp_target_link_host_stack(gbarecomp_runtime INTERFACE)
 # the model and the trigger policy, so the runtime links it. Pure — no
 # backend, no raylib.
 target_link_libraries(gbarecomp_runtime PUBLIC gbarecomp_host_menu)
+
+# tinyfiledialogs: native file dialogs for the asset picker (asset_picker.cpp).
+# PUBLIC so the include dir propagates to anything linking the runtime.
+target_link_libraries(gbarecomp_runtime PUBLIC gbarecomp_tinyfiledialogs)
 
 # The backend factory (in gbarecomp_runtime) selects RaylibBackend when raylib
 # was fetched. Linked here, after the target exists -- CMake resolves
@@ -508,7 +523,8 @@ else()
                    "Run `build/gba_recompile.exe --bios bios/gba_bios.bin` "
                    "to populate.")
 endif()
-target_include_directories(gbarecomp_runtime PUBLIC src/runtime)
+target_include_directories(gbarecomp_runtime PUBLIC src/runtime
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/vendor")
 if(GBARECOMP_RUNTIME_UI_ROOT AND
    EXISTS "${GBARECOMP_RUNTIME_UI_ROOT}/src/recomp_runtime_ui.h")
     target_compile_definitions(gbarecomp_runtime PUBLIC GBARECOMP_RUNTIME_UI=1)
@@ -526,7 +542,13 @@ if(GBARECOMP_RUNTIME_UI_ROOT AND
     # into the runtime so HostWindow blends CPU-side on cached memory. Pure
     # arithmetic, no SDL; has its own upstream test (recomp-frame-blend).
     target_sources(gbarecomp_runtime PRIVATE
-        "${GBARECOMP_RUNTIME_UI_ROOT}/src/common/recomp_frame_blend.c")
+        "${GBARECOMP_RUNTIME_UI_ROOT}/src/common/recomp_frame_blend.c"
+        # renderer-agnostic in-game overlay + settings surface:
+        # runtime.cpp calls recomp_runtime_ui_* under GBARECOMP_RUNTIME_UI;
+        # these sources live in recomp-ui for now (Phase 5.8 audits their final
+        # home once recomp-ui is removed).
+        "${GBARECOMP_RUNTIME_UI_ROOT}/src/common/recomp_runtime_ui.c"
+        "${GBARECOMP_RUNTIME_UI_ROOT}/src/common/recomp_runtime_settings.c")
 endif()
 # Bake the gbarecomp source root so the Stage-2 runtime compiler can find the
 # overlay shim headers (src/runtime + src/armv4t) when it invokes g++ or the
@@ -557,9 +579,9 @@ if(ANDROID AND GBARECOMP_ANDROID_PACKAGE)
         GBARECOMP_ANDROID_PACKAGE=${GBARECOMP_ANDROID_PACKAGE})
 endif()
 if(WIN32 OR MSYS)
-    # asset_picker uses GetOpenFileNameA (comdlg32) and MessageBoxA (user32).
+    # tinyfiledialogs uses GetOpenFileNameA (comdlg32) + Ole32 on Windows;
     # host_platform's FramePacer uses timeBeginPeriod/timeEndPeriod (winmm).
-    target_link_libraries(gbarecomp_runtime PUBLIC comdlg32 user32 winmm)
+    target_link_libraries(gbarecomp_runtime PUBLIC comdlg32 ole32 winmm)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -834,6 +856,65 @@ if(GBARECOMP_ENABLE_MODS)
     endif()
     add_test(NAME mod_runtime_tests COMMAND mod_runtime_tests)
 endif()
+
+# Asset picker dialog-seam test (Step 2.1). Standalone recipe: compiles
+# asset_picker.cpp + crc32/sha1 by source, no engine link. RED-first: does not
+# compile until asset_picker_seam.h lands (Step 2.2).
+add_executable(asset_picker_tests
+    tests/runtime/asset_picker_test.cpp
+    src/runtime/asset_picker.cpp
+    src/runtime/host_platform.cpp
+    src/gba/crc32.cpp
+    src/gba/sha1.cpp)
+target_include_directories(asset_picker_tests PRIVATE
+    src/runtime src/gba src/armv4t)
+target_link_libraries(asset_picker_tests PRIVATE gbarecomp_tinyfiledialogs)
+if(WIN32 OR MSYS)
+    target_link_libraries(asset_picker_tests PRIVATE comdlg32 ole32 winmm)
+endif()
+add_test(NAME asset_picker_tests COMMAND asset_picker_tests)
+
+# Launch-screen state model test (Step 3.1). Standalone recipe: compiles
+# asset_picker.cpp + host_platform.cpp + crc32/sha1 by source so the model
+# can call the real gbarecomp::resolve_asset. Headless (no raylib).
+add_executable(launcher_model_tests
+    tests/runtime/test_launch_screen_model.cpp
+    src/runtime/asset_picker.cpp
+    src/runtime/host_platform.cpp
+    src/gba/crc32.cpp
+    src/gba/sha1.cpp)
+target_include_directories(launcher_model_tests PRIVATE
+    src/runtime src/gba src/armv4t)
+target_link_libraries(launcher_model_tests PRIVATE gbarecomp_tinyfiledialogs)
+if(WIN32 OR MSYS)
+    target_link_libraries(launcher_model_tests PRIVATE comdlg32 ole32 winmm)
+endif()
+add_test(NAME launcher_model_tests COMMAND launcher_model_tests)
+
+# Boot skip-rule classification test (Step 4.1). Pure argv classification.
+add_executable(launcher_boot_tests
+    tests/runtime/test_boot_classification.cpp
+    src/runtime/launcher.cpp)
+target_include_directories(launcher_boot_tests PRIVATE src/runtime)
+add_test(NAME launcher_boot_tests COMMAND launcher_boot_tests)
+
+# LauncherBackend contract test (moved from FFTA tests/unit).
+add_executable(launcher_contract_tests
+    tests/runtime/test_launcher_contract.cpp
+    src/runtime/launcher.cpp)
+target_include_directories(launcher_contract_tests PRIVATE src/runtime)
+add_test(NAME launcher_contract_tests COMMAND launcher_contract_tests)
+
+# raygui link guard (moved from FFTA tests/unit): confirms raygui/raygui.h
+# compiles and its symbols resolve from gbarecomp_raylib_backend. Headless.
+add_executable(raygui_links_tests
+    tests/runtime/test_raygui_links.cpp)
+target_include_directories(raygui_links_tests PRIVATE
+    src/runtime src/vendor)
+target_link_libraries(raygui_links_tests PRIVATE
+    gbarecomp_runtime)
+target_compile_options(raygui_links_tests PRIVATE -UNDEBUG)
+add_test(NAME raygui_links COMMAND raygui_links_tests)
 
 add_executable(mod_audio_tests
     tests/mod_audio/test_main.cpp

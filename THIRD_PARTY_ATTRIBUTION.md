@@ -77,3 +77,34 @@ libmgba itself is linked only into the opt-in oracle binary
   via `src/runtime/raylib_api.h`), fetched by pinned SHA at configure time
   (`FetchContent`; also usable from a parent-provided target or the headless
   `PLATFORM_MEMORY` build). Not vendored; no modifications.
+
+## tinyfiledialogs
+
+- **Upstream:** https://tinyfiledialogs.sourceforge.net / git:
+  `git://git.code.sf.net/p/tinyfiledialogs/code` (mirror:
+  https://github.com/nodef/tinyfiledialogs.c)
+- **Version:** v3.21.2 (Oct 25, 2025)
+- **Author:** Guillaume Vareille (ysengrin.com)
+- **License:** zlib
+- **Vendored as:** `third_party/tinyfiledialogs/tinyfiledialogs.{c,h}`
+- **SHA-256:** tinyfiledialogs.c `99a5d176292b55e9c0c5322efa0e538a818e64450d640114ab97bba0e8f29f83`,
+  tinyfiledialogs.h `4d90f0843cd241a14d514b03a28bc4f1317297a671d4b541c8c4dedc93642f37`
+- **Used as:** native file dialogs for the asset picker
+  (`src/runtime/asset_picker.cpp`), Phase 2. Console-input fallback is disabled
+  at runtime via the `tinyfd_query` probe (never blocks on stdin).
+- **Modifications:** none.
+
+## raygui
+
+- **Upstream:** https://github.com/raysan5/raygui (5.1-dev on master;
+  v5.0 released 2026-07-20)
+- **Author:** Ramon Santamaria (@raysan5)
+- **License:** zlib
+- **Vendored as:** `src/vendor/raygui/raygui.h` (single header) +
+  `src/vendor/raygui/LICENSE`
+- **SHA-256:** raygui.h `8b19249c713db7bc75e9c1e4ff19b9b10b0eaad16988d6a0dc65c6108a210625`
+- **Used as:** the raygui launcher backend
+  (`src/launcher_raygui.cpp`, planned Step 3.2); compile+link guarded by
+  `ffta_raygui_links_tests`.
+- **Modifications:** none.
+
