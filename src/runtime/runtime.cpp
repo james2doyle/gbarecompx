@@ -276,13 +276,26 @@ struct Args {
 #define GBARECOMP_UI_KEY_FAST_FORWARD   "assist.fast_forward"
 #define GBARECOMP_UI_KEY_FAST_FORWARD_SPEED "assist.fast_forward_speed"
 #define GBARECOMP_UI_KEY_REWIND          "assist.rewind"
+#endif
 
-struct RuntimeUiContext {
+// The View row's menu → host-loop hand-off. Framework content: it must
+// exist WITHOUT the retired recomp-ui (whose only survivor here is the
+// .ui item wiring below). The mode lives in the host loop next to the
+// geometry it drives (sync_resize_driven_view); the menu only seeds from
+// it and forwards changes through the dirty flag.
+struct RuntimeViewContext {
+    const RunOptions* opts = nullptr;
+    gbarecomp::ViewMode view_mode = gbarecomp::ViewMode::Native;
+    bool view_mode_dirty = false;
+};
+
+#if defined(GBARECOMP_RUNTIME_UI)
+// Full context when the recomp-ui menu is built: the view hand-off plus
+// the item wiring (engine-owned extra items and the game's own).
+struct RuntimeUiContext : RuntimeViewContext {
     HostWindow* window = nullptr;
     RecompRuntimeUi* ui = nullptr;
     float* gyro_sensitivity = nullptr;
-    int view_mode = RECOMP_RUNTIME_UI_VIEW_NATIVE;
-    bool view_mode_dirty = false;
     // Menu-driven state slots, drained by the main loop alongside the
     // equivalent hotkeys so both paths share one implementation.
     int state_slot = 1;
@@ -294,16 +307,18 @@ struct RuntimeUiContext {
     bool assist_tools_enabled = true;
     bool fast_forward_latched = false;
     int fast_forward_multiplier = 4;
-    // Game-supplied handlers for keys the engine does not own.
-    const RunOptions* opts = nullptr;
 };
+#else
+using RuntimeUiContext = RuntimeViewContext;
+#endif
 
+#if defined(GBARECOMP_RUNTIME_UI)
 int runtime_ui_get(void* opaque, const RecompRuntimeUiItem* item, int* out) {
     auto* c = static_cast<RuntimeUiContext*>(opaque);
     if (!c || !c->window || !item || !out) return 0;
     if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_FULLSCREEN) == 0) *out = c->window->fullscreen();
     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE) == 0) *out = c->window->window_scale();
-    else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE) == 0) *out = c->view_mode;
+    else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE) == 0) *out = static_cast<int>(c->view_mode);
     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER) == 0) *out = c->window->linear_filter();
     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_LCD_GHOSTING) == 0) *out = c->window->frame_blend();
     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_FRAME_INTERP) == 0) *out = c->window->frame_interp();
@@ -335,7 +350,7 @@ int runtime_ui_set(void* opaque, const RecompRuntimeUiItem* item, int value) {
     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE) == 0)
         c->window->adjust_scale(value - c->window->window_scale());
     else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VIEW_MODE) == 0) {
-        c->view_mode = value;
+        c->view_mode = static_cast<gbarecomp::ViewMode>(value);
         c->view_mode_dirty = true;
     } else if (std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER) == 0)
         c->window->set_linear_filter(value != 0);
@@ -1810,22 +1825,21 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  resize_view_enabled ? "on" : "off",
                  args.resize_view ? 1 : 0, opts.resize_driven_view ? 1 : 0,
                  opts.max_resize_view_width, args.window ? 1 : 0);
-#if defined(GBARECOMP_RUNTIME_UI)
     RuntimeUiContext runtime_ui_context;
     runtime_ui_context.opts = &opts;
     runtime_ui_context.view_mode = resize_view_enabled
-        ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
-        : args.view_width > 240 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
-                                : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+        ? gbarecomp::ViewMode::Adaptive
+        : args.view_width > 240 ? gbarecomp::ViewMode::Fixed16x9
+                                : gbarecomp::ViewMode::Native;
     // Saved View mode fills in when the CLI said nothing about the view
     // (no --resize-view, no --view-width). CLI always wins. The row is
     // three-state (Native / Adaptive / Fixed), so a fixed width displays
     // as Fixed — honestly, with its actual width carried below.
     if (!resize_view_enabled && !args.resize_view && !args.view_width_given) {
         runtime_ui_context.view_mode =
-            menu_settings.view_mode == 1 ? RECOMP_RUNTIME_UI_VIEW_ADAPTIVE
-            : menu_settings.view_mode == 2 ? RECOMP_RUNTIME_UI_VIEW_FIXED_16_9
-                                           : RECOMP_RUNTIME_UI_VIEW_NATIVE;
+            menu_settings.view_mode == 1 ? gbarecomp::ViewMode::Adaptive
+            : menu_settings.view_mode == 2 ? gbarecomp::ViewMode::Fixed16x9
+                                           : gbarecomp::ViewMode::Native;
     }
     // The fixed width the Fixed mode resolves to: the CLI's explicit
     // --view-width, else the saved setting, else the legacy 16:9 default.
@@ -1833,6 +1847,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         args.view_width_given ? args.view_width
         : menu_settings.fixed_width > 0 ? menu_settings.fixed_width
         : (160 * 16 + 8) / 9;
+#if defined(GBARECOMP_RUNTIME_UI)
     // Engine extras followed by the game's own. recomp-ui keeps a pointer to
     // this array, so it must outlive the menu — hence function scope here
     // rather than inside the construction block below.
@@ -2993,24 +3008,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         return true;
     };
     auto sync_resize_driven_view = [&]() -> bool {
-#if defined(GBARECOMP_RUNTIME_UI)
         if (runtime_ui_context.view_mode_dirty && win.is_open()) {
             runtime_ui_context.view_mode_dirty = false;
-            // Legacy -> framework mode is the endpoint's mapping (kept next
-            // to it); the geometry policy itself is menu_view_step (tested).
-            gbarecomp::ViewMode mode = gbarecomp::ViewMode::Native;
-            switch (runtime_ui_context.view_mode) {
-                case RECOMP_RUNTIME_UI_VIEW_ADAPTIVE:
-                    mode = gbarecomp::ViewMode::Adaptive;
-                    break;
-                case RECOMP_RUNTIME_UI_VIEW_FIXED_16_9:
-                    mode = gbarecomp::ViewMode::Fixed16x9;
-                    break;
-                default:
-                    break;
-            }
+            // The geometry policy itself is menu_view_step (tested).
             const gbarecomp::MenuViewGeometry step = gbarecomp::menu_view_step(
-                mode, static_cast<int>(opts.max_view_width),
+                runtime_ui_context.view_mode,
+                static_cast<int>(opts.max_view_width),
                 menu_fixed_view_width);
             resize_view_enabled = step.resize_driven;
             win.set_resize_driven_view(resize_view_enabled);
@@ -3020,7 +3023,6 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                     gba::GbaPpu::kMaxRenderWidth));
             }
         }
-#endif
         if (!win.is_open()) return false;
         // The game's per-scene presentation request (battles and other
         // margin-less scenes may ask for the exact native view, top-anchored
@@ -3554,46 +3556,23 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             },
             &hook_ctx);
     }
-#if defined(GBARECOMP_RUNTIME_UI)
-    // Generic-menu View row (Native / Adaptive / 16:9): the mode lives in
+    // Generic-menu View row (Native / Adaptive / Fixed): the mode lives in
     // runtime_ui_context (applied per-frame by sync_resize_driven_view); the
     // menu only seeds from it and forwards changes through the dirty flag.
-    // The mapping is explicit — the menu order is not the legacy enum order.
-    std::fprintf(stderr,
-                     "[dbg] startup: view_mode=%d view_width=%d scale=%d "
-                     "fullscreen=%d\n",
-                     static_cast<int>(runtime_ui_context.view_mode),
-                     args.view_width, args.scale, args.fullscreen);
-        host_menu.set_view_mode_endpoint(
+    // Framework content — deliberately NOT behind GBARECOMP_RUNTIME_UI: the
+    // row vanished when recomp-ui retired and took the define with it.
+    host_menu.set_view_mode_endpoint(
         [](void* u) -> int {
-            const auto* ctx = static_cast<const RuntimeUiContext*>(u);
-            switch (ctx->view_mode) {
-            case RECOMP_RUNTIME_UI_VIEW_ADAPTIVE:
-                return static_cast<int>(gbarecomp::ViewMode::Adaptive);
-            case RECOMP_RUNTIME_UI_VIEW_FIXED_16_9:
-                return static_cast<int>(gbarecomp::ViewMode::Fixed16x9);
-            default:
-                return static_cast<int>(gbarecomp::ViewMode::Native);
-            }
+            return static_cast<int>(
+                static_cast<const RuntimeUiContext*>(u)->view_mode);
         },
         [](void* u, int m) {
             auto* ctx = static_cast<RuntimeUiContext*>(u);
-            switch (static_cast<gbarecomp::ViewMode>(m)) {
-            case gbarecomp::ViewMode::Adaptive:
-                ctx->view_mode = RECOMP_RUNTIME_UI_VIEW_ADAPTIVE;
-                break;
-            case gbarecomp::ViewMode::Fixed16x9:
-                ctx->view_mode = RECOMP_RUNTIME_UI_VIEW_FIXED_16_9;
-                break;
-            default:
-                ctx->view_mode = RECOMP_RUNTIME_UI_VIEW_NATIVE;
-                break;
-            }
+            ctx->view_mode = static_cast<gbarecomp::ViewMode>(m);
             ctx->view_mode_dirty = true;
         },
         &runtime_ui_context,
         opts.resize_driven_view && opts.max_resize_view_width > 240);
-#endif
 
     // Host-window save-state slots: the ROM path with a .stateN extension.
     // Shift+F1..F9 writes slots 1..9 and F1..F9 restores them; a runtime menu
