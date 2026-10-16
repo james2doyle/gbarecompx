@@ -34,6 +34,13 @@ framework owns a toolkit-free generic menu: pure model + mutators
 (`src/runtime/host_menu.h`). Desktop trigger is `Delete` (toggles;
 rebindable via `[KeyMap] Menu`); touch devices use the long-press ring.
 
+Every row is applied live and persisted: changes are written to `[Menu]`
+(plus the LCD keys in `[video]`) in `config.ini` next to the executable
+(`src/runtime/menu_settings.h`), so they survive restarts on desktop and
+Android alike. An explicitly given CLI flag beats the saved value, which
+beats the built-in default. Save-state slots are not menu rows yet (the
+F-key and TCP paths are the interfaces).
+
 ## Android
 
 Upstream's SDL application shell is retired. The scaffold is
