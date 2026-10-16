@@ -1023,6 +1023,25 @@ extern "C" void runtime_dispatch_with_exchange(uint32_t target_pc) {
     runtime_dispatch(target_pc);
 }
 
+// Guaranteed-tail hand-off slot + void(void) entry points (see runtime_arm.h
+// "Guaranteed tail transfers"). Native builds never call these; they exist so
+// the Emscripten musttail path links when it lands.
+extern "C" {
+GBARECOMP_TAIL_ARG_TLS uint32_t g_runtime_tail_arg = 0u;
+}
+
+extern "C" void runtime_dispatch_tail(void) {
+    runtime_dispatch(g_runtime_tail_arg);
+}
+
+extern "C" void runtime_dispatch_with_exchange_tail(void) {
+    runtime_dispatch_with_exchange(g_runtime_tail_arg);
+}
+
+extern "C" void runtime_swi_tail(void) {
+    runtime_swi(g_runtime_tail_arg);
+}
+
 extern "C" int runtime_has_static_entry(uint32_t pc, int thumb) {
     uint32_t a = pc & ~1u;
     const DispatchEntry* entry = (a < kBiosRegionEnd)

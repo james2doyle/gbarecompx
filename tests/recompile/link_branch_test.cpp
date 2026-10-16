@@ -93,8 +93,9 @@ int main() {
     check(rom.dead(arm_head, false), "ARM BL-first head is a far branch");
     check(!rom.dead(arm_push, false), "ARM push {lr} is a call");
 
-    // Emission: the far-branch BL writes LR and branches; the real call
-    // keeps its call-return frame.
+    // Emission: the far-branch BL writes LR and transfers as a guaranteed
+    // tail dispatch (no host call-return frame — the frameless far-branch
+    // lowering); the real call keeps its call-return frame.
     rom.thumb_bl(kBase + 0x0u, loop_head);
     rom.thumb_bl(kBase + 0x4u, push_lr);
     rom.h(kBase + 0x8u, 0x4770u);
@@ -113,7 +114,7 @@ int main() {
           "far-branch BL kept call fallthrough");
     check(contains(body, "g_cpu.R[14] = 0x08000005u;"),
           "far-branch BL must still write LR");
-    check(contains(body, "runtime_dispatch(0x08000100u);"),
+    check(contains(body, "GBARECOMP_TAIL_DISPATCH(0x08000100u);"),
           "far-branch BL must transfer to its target");
     check(contains(body, "runtime_call_push_return(0x08000008u)"),
           "real call lost its call-return frame");
