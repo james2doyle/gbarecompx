@@ -653,7 +653,7 @@ static void raylib_sleep_until_ns(std::uint64_t wake_ns) {
         std::chrono::nanoseconds(wake_ns - now));
 }
 
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(PLATFORM_MEMORY)
 // Standard-mapped gamepad selection, straight from GLFW past raylib.
 //
 // WHY NOT IsGamepadAvailable(0): raylib caps MAX_GAMEPADS at 4 (verified in
@@ -672,7 +672,8 @@ static void raylib_sleep_until_ns(std::uint64_t wake_ns) {
 // layout is buttons[15] + axes[6] in both. The raylib-compile gate builds
 // this file, so a signature drift breaks the build instead of misreading.
 // Never call glfwInit/Terminate here -- raylib owns the library -- and never
-// use this on Android (no GLFW there; undefined symbols).
+// use this on Android (no GLFW there; undefined symbols) or PLATFORM_MEMORY
+// (no GLFW there either; the memory platform has no input system at all).
 struct RayGlfwGamepadState {
     unsigned char buttons[15];
     float axes[6];
@@ -705,7 +706,7 @@ inline int find_standard_pad() {
     }
     return -1;
 }
-#endif  // !defined(__ANDROID__)
+#endif  // !defined(__ANDROID__) && !defined(PLATFORM_MEMORY)
 
 // Re-probe the display period (adaptive-refresh panels can change rate at any
 // time). Called every 600 interp ticks; re-anchors boundaries on change.
@@ -1689,6 +1690,13 @@ public:
                 static_cast<std::uint16_t>(~gamepad_to_keyinput(pad) & kGbaKeyAll);
         }
 #else
+#if defined(PLATFORM_MEMORY)
+        // Memory platform: no input system at all (plan §4.2) — and no GLFW
+        // to select through. Report no pad; the snapshot stays all-up.
+        s.pad_connected = false;
+        impl_->pad_glfw_index = -1;
+        impl_->pad_raylib_slot = -1;
+#else
         // Desktop: select through GLFW's standard-mapping layer, NOT raylib slot
         // 0 (see find_standard_pad: phantoms eat raylib's 4 slots while a real
         // pad sits beyond them). GUIDE has no canonical/PadButton slot and no
@@ -1758,6 +1766,7 @@ public:
                     ~gamepad_to_keyinput(pad) & kGbaKeyAll);
             }
         }
+#endif  // PLATFORM_MEMORY gamepad guard
 #endif
 
         // Mouse gyro stand-in (WarioWare-style twist): horizontal delta while the
@@ -2064,6 +2073,8 @@ public:
         if (!impl_->open || !impl_->api->IsWindowReady()) return false;
 #if defined(__ANDROID__)
         return impl_->api->IsGamepadAvailable(0);
+#elif defined(PLATFORM_MEMORY)
+        return false;  // no input system, no GLFW (see above)
 #else
         // Standard-mapped pad selection lives behind find_standard_pad()
         // (see above): raylib slot 0 is routinely a phantom.

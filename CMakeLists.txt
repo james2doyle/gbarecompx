@@ -96,6 +96,11 @@ endif()
 option(GBARECOMP_USE_RAYLIB
     "Fetch/link raylib 6 as the windowing/input backend (OFF = stub compile-check)"
     OFF)
+option(GBARECOMP_RAYLIB_HEADLESS
+    "Build the fetched raylib for the headless memory platform (rlsw +
+    PLATFORM_MEMORY, Phase 5 tier 3). Requires a fresh build dir; ignored
+    when the parent provides the raylib target."
+    OFF)
 
 set(GBARECOMP_RAYLIB_OK FALSE)
 if(GBARECOMP_USE_RAYLIB)
@@ -105,6 +110,10 @@ if(GBARECOMP_USE_RAYLIB)
         # no FetchContent, no network, deterministic.
         message(STATUS "gbarecompx: raylib target provided by the parent "
                        "project (no fetch)")
+        if(GBARECOMP_RAYLIB_HEADLESS)
+            message(WARNING "gbarecompx: GBARECOMP_RAYLIB_HEADLESS ignored "
+                            "(parent-provided raylib target)")
+        endif()
     else()
         include(FetchContent)
         # raylib 6.0, pinned by commit rather than tag: tags can be moved, SHAs
@@ -122,6 +131,15 @@ if(GBARECOMP_USE_RAYLIB)
                        "(${GBARECOMP_RAYLIB_SHA})")
         set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
         set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        if(GBARECOMP_RAYLIB_HEADLESS)
+            # Phase 5 tier 3: raylib's cmake/LibraryConfigurations maps
+            # PLATFORM=Memory -> PLATFORM_MEMORY + software graphics (rlsw).
+            # Set before MakeAvailable so the subbuild picks it up; the
+            # definitions export PUBLIC on the raylib target, so this TU sees
+            # PLATFORM_MEMORY / GRAPHICS_API_OPENGL_SOFTWARE too.
+            set(PLATFORM Memory CACHE STRING "raylib platform (headless tier)" FORCE)
+            message(STATUS "gbarecompx: raylib headless tier (PLATFORM=Memory)")
+        endif()
         FetchContent_MakeAvailable(raylib)
     endif()
     if(TARGET raylib)
@@ -1005,6 +1023,13 @@ target_link_libraries(window_backend_dispatch_tests PRIVATE
     gbarecomp_raylib_backend)
 add_test(NAME window_backend_dispatch_tests
          COMMAND window_backend_dispatch_tests)
+
+# Phase 5.2 — headless tier smoke (red-first: needs the PLATFORM_MEMORY
+# plumbing + gamepad guard; GL/stub configs assert the contract and skip).
+add_executable(raylib_headless_tests tests/runtime/raylib_headless_test.cpp)
+target_include_directories(raylib_headless_tests PRIVATE src/runtime)
+target_link_libraries(raylib_headless_tests PRIVATE gbarecomp_raylib_backend)
+add_test(NAME raylib_headless_tests COMMAND raylib_headless_tests)
 
 # Phase 5.1 — RaylibApi failure injection (red-first: the fake arrives next;
 # this target must fail to compile until support/fake_raylib_api.h lands).
