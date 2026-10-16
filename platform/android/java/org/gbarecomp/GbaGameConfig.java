@@ -37,7 +37,7 @@ public final class GbaGameConfig {
         romFile = string(m, "gbarecomp.rom_file", "game.gba");
         biosRequired = Boolean.parseBoolean(string(m, "gbarecomp.bios_required", "false"));
         biosSha1 = string(m, "gbarecomp.bios_sha1",
-            "300c20df6731a33952ded8c436f7f186d25d3492").toLowerCase(Locale.US);
+            "0c0d404d16c6b55b3071aba714f82077da132f14").toLowerCase(Locale.US);
         saveFile = string(m, "gbarecomp.save_file", "");
         long parsedSaveSize = 0;
         try {

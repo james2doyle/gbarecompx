@@ -143,7 +143,11 @@ struct Args {
     std::string config = GBARECOMP_DEFAULT_GAME_CONFIG;
     std::string game_short_name;
     std::string bios;
-    std::string bios_sha1 = gba::GbaBios::kExpectedSha1;
+    // Default launch BIOS: the clean-room emibios build (LGPL-3.0-or-later,
+    // https://github.com/coolbho3k/emibios) — 2026-10 fork decision; the
+    // retail dump hash (kExpectedSha1) stays an accepted alternative for
+    // games that pin it via [bios].sha1.
+    std::string bios_sha1 = gba::GbaBios::kEmibiosSha1;
     // SHA-1 is the gate (40 hex chars, way stronger than a 32-bit
     // CRC). CRC32 is left at 0 = "no check" — the asset picker will
     // still compute + display it, but only SHA-1 mismatch raises the
@@ -1522,7 +1526,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         spec.cache_filename = "bios.cfg";
         spec.expected_size  = gba::GbaBios::kSize;
         spec.expected_sha1  = args.bios_sha1.empty()
-                                ? gba::GbaBios::kExpectedSha1
+                                ? gba::GbaBios::kEmibiosSha1
                                 : args.bios_sha1.c_str();
         spec.expected_crc32 = args.bios_crc32;
         auto r = resolve_asset(args.bios, spec, argv[0]);
@@ -1620,8 +1624,8 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         try {
             if (!opts.netplay->run || !opts.builtin_rom_sha1 ||
                 rom_sha1!=lower_ascii(opts.builtin_rom_sha1) ||
-                bios.sha1_hex()!=gba::GbaBios::kExpectedSha1)
-                throw std::runtime_error("netplay requires this build's original ROM and retail BIOS");
+                bios.sha1_hex()!=gba::GbaBios::kEmibiosSha1)
+                throw std::runtime_error("netplay requires this build's original ROM and the emibios BIOS (the build default; every linked machine must run identical BIOS bytes)");
             GbaNetplayBoot boot;
             boot.bios=&bios; boot.rom=&rom; boot.expected_rom_sha1=opts.builtin_rom_sha1;
             boot.rom_path=args.rom; boot.bios_path=args.bios;

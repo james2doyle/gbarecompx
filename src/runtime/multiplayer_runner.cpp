@@ -46,7 +46,7 @@ int run(const GbaNetplayLaunch& launch,const GbaNetplayBoot& boot) {
         if (!original.empty() && checkpoint_absolute==std::filesystem::weakly_canonical(original))
             throw std::invalid_argument("paired checkpoint must not replace a cartridge save, ROM or BIOS");
     std::filesystem::create_directories(checkpoint_absolute.parent_path());
-    if (!boot.bios || !boot.rom || boot.bios->sha1_hex()!=gba::GbaBios::kExpectedSha1 ||
+    if (!boot.bios || !boot.rom || boot.bios->sha1_hex()!=gba::GbaBios::kEmibiosSha1 ||
         gba::sha1(boot.rom->data(),boot.rom->size()).hex()!=boot.expected_rom_sha1)
         throw std::invalid_argument("netplay asset verification failed");
     if (!valid_save_size(boot.save.type,boot.save.size))
