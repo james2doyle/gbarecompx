@@ -37,6 +37,7 @@ using gbarecomp::MenuModel;
 using gbarecomp::MenuResult;
 using gbarecomp::MenuRow;
 using gbarecomp::MenuRowKind;
+using gbarecomp::MenuToggleAction;
 using gbarecomp::PointerState;
 using gbarecomp::WindowBackend;
 using gbarecomp::testing::FakeBackend;
@@ -784,6 +785,25 @@ void view_row_follows_endpoint() {
     }
 }
 
+// ── 23. The Delete-key toggle decision: edge + open state -> action ──────
+// The runtime's pump policy (open on edge while closed, close on edge while
+// open, nothing otherwise) as a pure step the host loop applies.
+void menu_toggle_step_decides_open_and_close() {
+    using gbarecomp::menu_toggle_step;
+    CHECK(menu_toggle_step(false, false) == MenuToggleAction::None);
+    CHECK(menu_toggle_step(false, true) == MenuToggleAction::None);
+    CHECK(menu_toggle_step(true, false) == MenuToggleAction::Open);
+    CHECK(menu_toggle_step(true, true) == MenuToggleAction::Close);
+    // Full cycle: a hold (edge, then levels) flips exactly once per press.
+    bool open = false;
+    CHECK(menu_toggle_step(true, open) == MenuToggleAction::Open);
+    open = true;
+    CHECK(menu_toggle_step(false, open) == MenuToggleAction::None);
+    CHECK(menu_toggle_step(true, open) == MenuToggleAction::Close);
+    open = false;
+    CHECK(menu_toggle_step(true, open) == MenuToggleAction::Open);
+}
+
 int main() {
     build_seeds_from_backend();
     open_seeds_and_suppresses();
@@ -807,6 +827,7 @@ int main() {
     rebuild_hook_reappends_rows();
     toggle_close_and_hook_cleared();
     view_row_follows_endpoint();
+    menu_toggle_step_decides_open_and_close();
 
     std::printf("host_menu tests: PASS\n");
     return 0;

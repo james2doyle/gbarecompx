@@ -37,6 +37,18 @@ namespace gbarecomp {
 // the menu only seeds from get() and forwards changes to set().
 enum class ViewMode : int { Native = 0, Adaptive = 1, Fixed16x9 = 2 };
 
+// The desktop menu-hotkey (Delete by default) policy, extracted so the host
+// loop and the tests share it: an edge while closed opens, an edge while
+// open closes, anything else does nothing. Edge-triggered upstream, so a
+// hold flips exactly once; a hotkey is never game input, so neither press
+// leaks into the game.
+enum class MenuToggleAction { None, Open, Close };
+
+inline MenuToggleAction menu_toggle_step(bool toggle_edge, bool menu_open) {
+    if (!toggle_edge) return MenuToggleAction::None;
+    return menu_open ? MenuToggleAction::Close : MenuToggleAction::Open;
+}
+
 class HostMenu {
 public:
     HostMenu() = default;

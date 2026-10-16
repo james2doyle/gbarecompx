@@ -3695,16 +3695,20 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             // touch-device trigger. Edge-triggered in translate_input, so a
             // hold toggles exactly once; a hotkey is never game input, so
             // the opening press cannot leak into the game.
-            if (ev.toggle_menu) {
-                // Toggle: edge-triggered in translate_input, so a hold flips
-                // exactly once; a hotkey is never game input, so neither the
-                // opening nor the closing press can leak into the game.
-                if (!host_menu.suppress_game_input()) {
+            // Toggle: edge-triggered in translate_input, so a hold flips
+            // exactly once; a hotkey is never game input, so neither the
+            // opening nor the closing press can leak into the game.
+            switch (menu_toggle_step(ev.toggle_menu,
+                                     host_menu.suppress_game_input())) {
+                case MenuToggleAction::Open:
                     host_menu.open(*menu_backend);
                     TouchHub::instance().cancel_all(touch_clock_ms());
-                } else {
+                    break;
+                case MenuToggleAction::Close:
                     host_menu.close();
-                }
+                    break;
+                case MenuToggleAction::None:
+                    break;
             }
             // Engine touch gestures (plan §3d): the host policy opens the
             // generic menu on any engine action and lets Back close it. The
