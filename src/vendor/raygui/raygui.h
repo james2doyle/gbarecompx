@@ -5353,7 +5353,15 @@ void GuiSetIconScale(int scale)
 {
     if (scale >= 1) guiIconScale = scale;
 }
+#endif      // !RAYGUI_NO_ICONS
 
+// LOCAL PATCH (gbarecompx, 2026-10-16): GuiGetTextWidth moved out of the
+// !RAYGUI_NO_ICONS block above (the #endif was after its definition in this
+// snapshot). Its 20+ callers (GuiDrawText, GuiLabel, GuiButton, ...) are
+// NOT icon-guarded, so a RAYGUI_NO_ICONS build (raygui_impl.cpp) failed to
+// link. The body references no icon state — GetLineWidth is declared above
+// and defined below, unguarded — so the function is valid with icons off
+// ("icon size, if required").
 // Get text width considering gui style and icon size (if required).
 // For multi-line text (containing '\n'), returns the width of the widest line.
 int GuiGetTextWidth(const char *text)
@@ -5379,8 +5387,6 @@ int GuiGetTextWidth(const char *text)
 
     return maxWidth;
 }
-
-#endif      // !RAYGUI_NO_ICONS
 
 //----------------------------------------------------------------------------------
 // Module Internal Functions Definition
@@ -6019,6 +6025,14 @@ static int GuiScrollBar(Rectangle bounds, int value, int minValue, int maxValue)
 }
 
 // Update font image atlas to append raygui icons
+// LOCAL PATCH (gbarecompx, 2026-10-16): this snapshot defines the function
+// unguarded, but everything it references (RAYGUI_ICON_FONT_ATLAS_PADDING,
+// RAYGUI_ICON_MAX_FONT_BACKED, RAYGUI_ICON_DATA_ELEMENTS, guiIconsPtr) lives
+// in the !RAYGUI_NO_ICONS block — with icons compiled out (RAYGUI_NO_ICONS,
+// see raygui_impl.cpp) the definition references undeclared identifiers.
+// Official raygui wraps icon baking in the icons guard; mirror that here.
+// Its only call site is already opt-in (RAYGUI_FONT_ICONS_BAKING).
+#if !defined(RAYGUI_NO_ICONS)
 static int GuiFontIconBaking(Image *imFont, Font font, Rectangle *whiteRec)
 {
     int iconOffsetY = 0;
@@ -6101,6 +6115,7 @@ static int GuiFontIconBaking(Image *imFont, Font font, Rectangle *whiteRec)
 
     return iconOffsetY;
 }
+#endif // !RAYGUI_NO_ICONS
 
 // Split controls text into multiple strings
 // NOTE: Re-used by GuiToggleSlider(), GuiComboBox(), GuiDropdownBox(), GuiListView(), GuiMessageBox(), GuiInputBox()

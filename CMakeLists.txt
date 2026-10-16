@@ -194,9 +194,23 @@ add_library(gbarecomp_host_menu STATIC src/runtime/host_menu.cpp)
 target_include_directories(gbarecomp_host_menu PUBLIC src/runtime)
 target_link_libraries(gbarecomp_host_menu PUBLIC gbarecomp_menu_model)
 
+# The legacy menu engine: menu_draw.h over the HostOverlay surface, behind
+# the MenuEngine contract. Its own target so the headless contract test can
+# link it without raylib (the raylib backend also links it directly).
+add_library(gbarecomp_menu_engine_legacy STATIC
+    src/runtime/menu_engine_legacy.cpp)
+target_include_directories(gbarecomp_menu_engine_legacy PUBLIC src/runtime)
+target_link_libraries(gbarecomp_menu_engine_legacy PUBLIC gbarecomp_menu_model)
+
 add_library(gbarecomp_raylib_backend STATIC src/runtime/raylib_backend.cpp
-    src/runtime/raylib_api.cpp src/runtime/host_clock.cpp)
+    src/runtime/raylib_api.cpp src/runtime/host_clock.cpp
+    # The menu engine contract + engines. make_menu_engine() lives in the
+    # legacy TU and compiles its raygui branch under the backend's PUBLIC
+    # GBARECOMP_USE_RAYLIB.
+    src/runtime/menu_engine_legacy.cpp
+    src/runtime/menu_engine_raygui.cpp)
 target_include_directories(gbarecomp_raylib_backend PUBLIC src/runtime)
+target_link_libraries(gbarecomp_raylib_backend PUBLIC gbarecomp_menu_engine_legacy)
 target_link_libraries(gbarecomp_raylib_backend PUBLIC gbarecomp_audio_drc
     gbarecomp_color_lut gbarecomp_touch_input gbarecomp_menu_model)
 # Presentation blend primitive (issue #9 strategy #1): the same pure-C
@@ -222,6 +236,13 @@ endif()
 if(GBARECOMP_RAYLIB_OK)
     target_compile_definitions(gbarecomp_raylib_backend
         PUBLIC GBARECOMP_USE_RAYLIB=1)
+    # The vendored raygui (raygui_impl.cpp + menu_engine_raygui.cpp).
+    target_include_directories(gbarecomp_raylib_backend PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/vendor")
+    # The single raygui implementation TU. raylib is present here, so the
+    # raygui.h include resolves and the #error guard inside cannot fire.
+    target_sources(gbarecomp_raylib_backend PRIVATE
+        src/runtime/raygui_impl.cpp)
     target_link_libraries(gbarecomp_raylib_backend PUBLIC raylib)
     # raylib bundles stb_image_write (stbi_write_* symbols) and recomp-ui's
     # launcher_debug.c also defines STB_IMAGE_WRITE_IMPLEMENTATION, so the two
@@ -1141,6 +1162,16 @@ add_executable(menu_draw_tests tests/runtime/menu_draw_test.cpp)
 target_include_directories(menu_draw_tests PRIVATE src/runtime)
 target_link_libraries(menu_draw_tests PRIVATE gbarecomp_menu_model)
 add_test(NAME menu_draw_tests COMMAND menu_draw_tests)
+
+# The MenuEngine contract (menu_engine.h): a pure renderer — no mutation,
+# identical repeat draws, closed+toast behavior — over a recording overlay.
+# The legacy engine runs headless; the raygui engine is compile-checked via
+# gbarecomp_raylib_backend (its draw needs a raylib frame context).
+add_executable(menu_engine_tests tests/runtime/menu_engine_test.cpp)
+target_include_directories(menu_engine_tests PRIVATE src/runtime)
+target_link_libraries(menu_engine_tests PRIVATE gbarecomp_menu_model
+    gbarecomp_menu_engine_legacy)
+add_test(NAME menu_engine_tests COMMAND menu_engine_tests)
 
 # Phase 3c — the host-loop wiring on the Phase 2-tail fakes: build from the
 # backend's settings, navigation + presentation, MenuResult application to

@@ -49,6 +49,7 @@
 #include "lcd_shader.h"
 #include "long_press_ring.h"
 #include "menu_draw.h"
+#include "menu_engine.h"
 #include "presentation_layout.h"
 #if defined(GBARECOMP_HAVE_FRAME_BLEND)
 #include "recomp_frame_blend.h"
@@ -169,14 +170,16 @@ struct RaylibBackend::Impl {
     std::unique_ptr<Fx> fx;
     std::unique_ptr<Overlay> overlay;
     std::unique_ptr<Menu> menu;
-    // Menu frame stash: MenuImpl::present() computes the geometry + pointer
-    // hit-test and stores the frame here; draw_pending_menu() draws it inside
+    // Menu frame stash: MenuImpl::present() records the frame's model here;
+    // draw_pending_menu() renders it through the pluggable MenuEngine inside
     // every present of the frame (the interp ticks present more than once per
     // pump). The stash survives until the next menu().present() clears and
     // re-sets it; close() clears it with the rest of the derived state.
     MenuModel* menu_model = nullptr;
-    MenuGeometry menu_geometry;
-    PointerState menu_pointer;
+    // The presentation engine (menu_engine.h) — the raygui widget engine in
+    // raylib builds; menu_draw.h via the legacy engine otherwise. Owned
+    // here so draw_pending_menu() reaches it directly.
+    std::unique_ptr<MenuEngine> menu_engine;
     // Derived from the last presented MenuModel (plan §3.4): drives the
     // input snapshot's suppress_game_input. A plain flag — no model pointer
     // survives a frame.
@@ -2434,18 +2437,22 @@ private:
 };
 
 // ── V2 concern: Menu ────────────────────────────────────────────────────
-// The V2 `Menu` interface over the shared menu_draw.h presentation. The
+// The V2 `Menu` interface over the pluggable MenuEngine (menu_engine.h). The
 // raylib frame context lives inside VideoImpl::present, so present() runs
-// the geometry + pointer hit-test here (the result is immediate) and stashes
-// the frame for draw_pending_menu(), which VideoImpl::present calls after
-// the pad chrome (topmost layer, never inside a shader/scale pass).
+// the suppression bookkeeping here (the result is immediate) and stashes the
+// frame's model for draw_pending_menu(), which VideoImpl::present calls
+// after the pad chrome (topmost layer, never inside a shader/scale pass).
+// Rendering itself is the engine's job — menu_draw.h via the legacy engine,
+// or raygui widgets via the raygui engine (make_menu_engine()).
 class RaylibBackend::MenuImpl final : public Menu {
 public:
-    explicit MenuImpl(Impl* impl) : impl_(impl) {}
+    explicit MenuImpl(Impl* impl) : impl_(impl) {
+        engine_ = make_menu_engine();
+    }
 
     bool available() const override {
 #if defined(GBARECOMP_USE_RAYLIB)
-        return true;
+        return engine_->available();
 #else
         return false;  // stub build: state only, no presentation
 #endif
@@ -2453,43 +2460,39 @@ public:
 
     MenuResult present(MenuModel& model, const PointerState& pointer) override {
         MenuResult r;
+        (void)pointer;  // no mouse in the menu (menu_engine.h): the pointer
+                        // stays out of the contract; the host's tap-to-act
+                        // pointer path is gone with the widget renderer.
         impl_->menu_model = nullptr;  // a fresh frame's stash
         impl_->menu_open = model.open;  // §3.4: derives suppress_game_input
 #if defined(GBARECOMP_USE_RAYLIB)
-        if (!impl_->open || !impl_->api->IsWindowReady()) return r;
-        RaylibOverlay ov(impl_->api, impl_->api->GetScreenWidth(),
-                         impl_->api->GetScreenHeight(), impl_->last_layout,
-                         impl_->base_w, impl_->base_h, impl_->px_per_mm,
-                         impl_->safe_left, impl_->safe_top,
-                         impl_->safe_right, impl_->safe_bottom,
-                         touch_clock_ms());
-        impl_->menu_geometry = menu_compute_geometry(ov, model);
-        if (model.open && pointer.pressed) {
-            MenuPointer mp;
-            mp.row = menu_hit_test(impl_->menu_geometry, model, pointer.x,
-                                   pointer.y);
-            mp.pressed = true;
-            r = menu_pointer(model, mp);
+        if (impl_->open && impl_->api->IsWindowReady() &&
+            engine_->available()) {
+            // Stash for draw_pending_menu() (the frame context lives in
+            // VideoImpl::present). The model is host-owned and outlives the
+            // frame; the engine renders it read-only.
+            impl_->menu_model = &model;
         }
-        impl_->menu_model = &model;
-        impl_->menu_pointer = pointer;
 #else
         (void)model;
-        (void)pointer;
 #endif
         return r;
     }
 
 private:
     Impl* impl_;
+    std::unique_ptr<MenuEngine> engine_;
 };
 
-// Draw the menu frame stashed by MenuImpl::present. The stash lives until the
-// NEXT menu().present() (which clears and re-sets it): a guest frame can
-// present MORE than once — the frame-interpolation ticks subdivide the wait
-// with extra display-paced presents — and every one of them must carry the
-// menu, or it flickers at the tick rate. The pointer is host-owned and
-// refreshed every pump; close() clears it.
+// Draw the menu frame stashed by MenuImpl::present through the pluggable
+// MenuEngine. The stash lives until the NEXT menu().present() (which clears
+// and re-sets it): a guest frame can present MORE than once — the
+// frame-interpolation ticks subdivide the wait with extra display-paced
+// presents — and every one of them must carry the menu, or it flickers at
+// the tick rate. The engine contract makes repeats free: draw() is a pure
+// renderer (locked widgets, no state), so the nth present of a pump renders
+// identically to the first. The pointer is host-owned and refreshed every
+// pump; close() clears it.
 void RaylibBackend::draw_pending_menu(RaylibBackend::Impl* impl) {
 #if defined(GBARECOMP_USE_RAYLIB)
     MenuModel* model = impl->menu_model;
@@ -2500,7 +2503,7 @@ void RaylibBackend::draw_pending_menu(RaylibBackend::Impl* impl) {
                      impl->base_w, impl->base_h, impl->px_per_mm,
                      impl->safe_left, impl->safe_top, impl->safe_right,
                      impl->safe_bottom, touch_clock_ms());
-    menu_draw(ov, *model, impl->menu_geometry, impl->menu_pointer);
+    if (impl->menu_engine) impl->menu_engine->draw(ov, *model);
 #else
     (void)impl;
 #endif

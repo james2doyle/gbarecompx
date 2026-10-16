@@ -19,6 +19,9 @@
 //     games with a fixed battery size pin it, e.g. 65536 for 512-Kbit flash).
 //   When saveFile is empty the setup screen shows no save card; when set it
 //   shows an optional "Save data" import (never blocks PLAY).
+//   launchBoxartRes (File): the game's launch-screen box art, staged as
+//     drawable-nodpi/launcher_boxart.png for the setup screen (resolved by
+//     name via getIdentifier; the engine's Java stays namespace-agnostic).
 //
 // Private personal builds may embed verified assets (never distribute them):
 //   -PprivateRom=<path> [-PprivateBios=<path>]
@@ -202,6 +205,8 @@ android {
             java.srcDirs = [new File(platformRoot, "java")]
             res.srcDirs = [new File(platformRoot, "res"), file("src/main/res")]
             assets.srcDirs = [stagedPayload]
+            if (g.launchBoxartRes != null)
+                res.srcDirs += layout.buildDirectory.dir("generated/gbarecompBoxartRes")
         }
         debug {
             manifest.srcFile new File(platformRoot, "debug/AndroidManifest.xml")
@@ -211,6 +216,20 @@ android {
     packaging {
         jniLibs { useLegacyPackaging = true }
     }
+}
+
+// Launch-screen box art (optional gbaGame key launchBoxartRes, a File):
+// staged as drawable-nodpi/launcher_boxart.png for the setup screen's
+// launch-screen recreation. A drawable, not an APK asset — the release
+// guard's assets contract is payload-only — and resolved by name via
+// getIdentifier so the engine's Java stays namespace-agnostic.
+if (g.launchBoxartRes != null) {
+    def boxartFile = file(g.launchBoxartRes)
+    tasks.register("stageGbarecompBoxartRes", Copy) {
+        from(boxartFile) { rename { "launcher_boxart.png" } }
+        into(layout.buildDirectory.dir("generated/gbarecompBoxartRes/drawable-nodpi"))
+    }
+    preBuild.dependsOn("stageGbarecompBoxartRes")
 }
 
 // Sync (not Copy) guarantees a distributable build never inherits private

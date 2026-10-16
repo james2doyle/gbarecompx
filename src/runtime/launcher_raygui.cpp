@@ -5,14 +5,15 @@
 // nav) and drives a LaunchScreenModel for state. main() sees only the
 // contract types — no raygui/raylib headers leak past this TU.
 //
-// RAYGUI_IMPLEMENTATION lives here (exactly one TU); raygui.h is single-header.
-// Compiled into gbarecomp_runtime only when raylib is enabled.
+// RAYGUI_IMPLEMENTATION lives in raygui_impl.cpp (the raygui menu engine
+// shares that single implementation TU); this TU includes raygui.h
+// declarations-only. Compiled into gbarecomp_runtime only when raylib is
+// enabled.
 
 #include "launcher.h"
 
 #if defined(GBARECOMP_USE_RAYLIB)
 
-#define RAYGUI_IMPLEMENTATION
 #include "raygui/raygui.h"
 #include <raylib.h>
 
