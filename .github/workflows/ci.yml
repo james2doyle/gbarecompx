@@ -1,17 +1,18 @@
 # ci.yml — gbarecompx display-free CI.
 #
 # Runs everything that needs no literal display:
-#   * stub   — the framework with raylib OFF (seam compile-check + pure tests)
-#   * raylib — the framework with raylib 6 ON (fetched by pinned SHA) + full ctest
-#   * guard  — the seam-completeness checker and its self-tests (once ported)
+#   * stub     — the framework with raylib OFF (seam compile-check + pure tests)
+#   * raylib   — the framework with raylib 6 ON (fetched by pinned SHA) + full ctest
+#   * guard    — the seam-completeness checker and its self-tests (once ported)
+#   * headless — the framework with raylib on PLATFORM_MEMORY (rlsw software
+#     GL): full ctest plus the present/readback/lifecycle smoke, DISPLAY unset.
+#     No GL/X11 dev packages needed (the memory platform links neither).
 #
-# The rlsw headless tier is a required V2 deliverable (plan §2/§5.4): its
-# `headless` job is added here in Phase 5, once Spike S1 fixes the build
-# mechanism — the exact CMake flags are S1's output, do not guess them here.
-# Display-dependent tests are NOT part of these jobs: when the GL
-# present/readback integration test lands in this repo it runs under the
-# headless tier (no display at all) or in a separate Xvfb job (virtual
-# display; still no literal display).
+# gl-xvfb (GL present test under a virtual display) is intentionally absent:
+# no Xvfb recipe has been verified yet, and an unverified gate is worse than
+# no gate. It lands once someone proves the xvfb-run + llvmpipe recipe.
+#
+# Display-dependent tests are NOT part of these jobs.
 #
 # Keep every job green on every push: the public release requires it.
 name: ci
@@ -112,6 +113,57 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build-raylib --output-on-failure
+
+  headless:
+    name: framework (rlsw headless, no display)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Submodules
+        run: git submodule update --init --recursive
+
+      - name: Submodule patches
+        run: |
+          if [ -f tools/patches/arm-recomp-core-local.patch ]; then
+            git -C external/arm-recomp-core apply \
+              ../../tools/patches/arm-recomp-core-local.patch
+          fi
+
+      # NOTE: no GL/X11 dev packages here. The memory platform links neither
+      # (undefined GLFW references were the Phase 5.2 red); plain build tools
+      # are the whole list.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git ca-certificates
+
+      - name: Cache raylib FetchContent (clone + build)
+        uses: actions/cache@v4
+        with:
+          path: build-raylib-headless/_deps
+          key: gbx-raylib-headless-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure (PLATFORM_MEMORY + software GL)
+        run: >
+          cmake -S . -B build-raylib-headless -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGBARECOMP_USE_RAYLIB=ON
+          -DGBARECOMP_RAYLIB_HEADLESS=ON
+
+      - name: Build
+        run: cmake --build build-raylib-headless --parallel
+
+      - name: Test (full suite, no display)
+        run: ctest --test-dir build-raylib-headless --output-on-failure
+
+      # The gate states which tier ran: ctest hides stdout on pass, so the
+      # smoke runs once more for its tier line.
+      - name: Tier report
+        run: ./build-raylib-headless/raylib_headless_tests | tail -n 1
 
   guard:
     name: seam completeness guard

@@ -159,7 +159,7 @@ int main() {
 #endif
 #else
     headless_smoke();
-    std::printf("raylib_headless tests: PASS (rlsw headless)\n");
+    std::printf("raylib_headless tests: PASS (tier=rlsw headless)\n");
 #endif
     return 0;
 }
