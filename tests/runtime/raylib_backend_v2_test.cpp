@@ -398,12 +398,20 @@ void facade_lifecycle_contract() {
     CHECK(!caps.menu);  // state-only stub: no presentation
 #endif
     CHECK(!caps.rumble && !caps.haptics);
-    CHECK(caps.reopen);         // desktop
+    CHECK(caps.reopen);         // desktop (Memory is not Android either)
     CHECK(!caps.vsync_report);  // no monitor probe yet
     CHECK(!caps.audio);         // no device yet
-    CHECK(!caps.headless);      // GLFW platform (PLATFORM_MEMORY not defined)
+#if defined(PLATFORM_MEMORY)
+    CHECK(caps.headless);  // memory platform: no OS window, no input system
+#else
+    CHECK(!caps.headless);  // GLFW platform (PLATFORM_MEMORY not defined)
+#endif
 #if defined(GBARECOMP_USE_RAYLIB)
+#if defined(PLATFORM_MEMORY)
+    CHECK(!caps.window && !caps.input && !caps.touch);  // no input system
+#else
     CHECK(caps.window && caps.input && caps.touch);
+#endif
 #if defined(GRAPHICS_API_OPENGL_SOFTWARE)
     CHECK(!caps.shaders);  // rlsw compiles the shader entry points out
 #else
@@ -413,12 +421,20 @@ void facade_lifecycle_contract() {
     CHECK(!caps.window && !caps.input && !caps.touch && !caps.shaders);
 #endif
 
-    // Headless requires the memory platform; refused here (both configs).
+    // Headless requires the memory platform: refused on GLFW/stub, allowed
+    // on Memory (where the smoke below opens it for real).
     OpenParams headless;
     headless.mode = OpenParams::Mode::Headless;
+#if defined(PLATFORM_MEMORY)
+    CHECK(v2.open(headless).ok());
+    CHECK(v2.is_open());
+    v2.close();
+    CHECK(!v2.is_open());
+#else
     const Result hr = v2.open(headless);
     CHECK(!hr.ok() && hr.code == Err::Unsupported && hr.detail != nullptr);
     CHECK(!v2.is_open());
+#endif
 
     // close() is idempotent on a closed backend; lifecycle calls are safe.
     v2.close();
