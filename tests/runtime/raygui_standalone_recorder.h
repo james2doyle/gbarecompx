@@ -32,6 +32,17 @@ struct TextRun {
 
 std::vector<DrawnRect>& drawn_rects();
 std::vector<TextRun>& text_runs();
+// Times the engine's raylib layer bound the shapes texture — raygui does
+// that inside GuiLoadStyleDefault, but ONLY when the font actually
+// changes (its identity check short-circuits when guiFont is already the
+// current default).
+int& shapes_texture_binds();
+// Simulate the launcher-context bug: raygui's font points at a texture id
+// from a dead GL context (any id the live GetFontDefault doesn't carry).
+// font_texture_id() reads the binding back; a healed draw restores the
+// live font's id.
+void corrupt_font_texture(unsigned int stale_id);
+unsigned int font_texture_id();
 void reset_recording();
 // Fold the per-codepoint log into text runs — call after each engine draw,
 // before asserting on text_runs().

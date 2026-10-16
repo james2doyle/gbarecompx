@@ -51,6 +51,8 @@ static void UnloadTexture(Texture texture);
 
 #include "raygui_standalone_recorder.h"
 
+#include <cstdlib>
+
 namespace gbarecomp {
 namespace testing {
 
@@ -58,6 +60,21 @@ std::vector<DrawnRect>& drawn_rects() {
     static std::vector<DrawnRect> v;
     return v;
 }
+
+int& shapes_texture_binds() {
+    static int n = 0;
+    return n;
+}
+
+void corrupt_font_texture(unsigned int stale_id) {
+    // guiFont is raygui's file-static, visible in this TU (the
+    // implementation TU). Only the binding is poisoned — glyph/rec
+    // pointers stay valid so measuring during the corrupted draw walks
+    // real memory, exactly like the real stale-context state.
+    guiFont.texture.id = stale_id;
+}
+
+unsigned int font_texture_id() { return guiFont.texture.id; }
 
 // The per-codepoint log, in draw order.
 struct DrawnCodepoint {
@@ -81,6 +98,7 @@ void reset_recording() {
     drawn_rects().clear();
     drawn_codepoints().clear();
     text_runs().clear();
+    shapes_texture_binds() = 0;
 }
 
 void assemble_text_runs() {
@@ -204,23 +222,33 @@ const GuiFontInit gui_font_init;
 
 // ── Font/file internals ──────────────────────────────────────────────────
 // A dummy fixed-advance font: text measuring walks glyphs, and a zero
-// font would hand back null glyph pointers. 95 standard codepoints.
+// font would hand back null glyph pointers. 96 glyphs — the 95 ASCII
+// printables plus raygui's white-square glyph at index 95, which
+// GuiLoadStyleDefault reads (recs[95]) when it rebinds the font. The
+// arrays are HEAP-allocated because GuiLoadStyleDefault RAYGUI_FREEs
+// recs/glyphs when it swaps a font in — free() on a static array would
+// corrupt the heap the first time a test exercises the swap path.
 
-static GlyphInfo dummy_glyphs[95];
-static Rectangle dummy_recs[95];
+static GlyphInfo* dummy_glyphs = nullptr;
+static Rectangle* dummy_recs = nullptr;
 
 static Font GetFontDefault(void) {
     static Font font = {0};
     if (font.glyphs == nullptr) {
         font.baseSize = 10;
-        font.glyphCount = 95;
+        font.glyphCount = 96;
         font.glyphPadding = 0;
-        font.recs = dummy_recs;
-        font.glyphs = dummy_glyphs;
-        for (int i = 0; i < 95; ++i) {
-            dummy_glyphs[i].value = 32 + i;
-            dummy_glyphs[i].advanceX = 6;
-            dummy_recs[i] = Rectangle{0, 0, 6, 10};
+        font.recs = static_cast<Rectangle*>(
+            std::calloc(96, sizeof(Rectangle)));
+        font.glyphs = static_cast<GlyphInfo*>(
+            std::calloc(96, sizeof(GlyphInfo)));
+        dummy_recs = font.recs;
+        dummy_glyphs = font.glyphs;
+        for (int i = 0; i < 96; ++i) {
+            font.glyphs[i].value = 32 + i;
+            font.glyphs[i].advanceX = (i < 95) ? 6 : 0;
+            font.recs[i] = Rectangle{0, 0, (i < 95) ? 6.0f : 1.0f,
+                                     (i < 95) ? 10.0f : 1.0f};
         }
     }
     return font;
@@ -242,6 +270,7 @@ static Texture2D LoadTextureFromImage(Image image) {
 static void SetShapesTexture(Texture2D tex, Rectangle rec) {
     (void)tex;
     (void)rec;
+    ++gbarecomp::testing::shapes_texture_binds();
 }
 static char* LoadFileText(const char* fileName) {
     (void)fileName;

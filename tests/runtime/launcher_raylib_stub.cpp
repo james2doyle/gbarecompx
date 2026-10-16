@@ -23,6 +23,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 // Install the dummy font at static-init time: guiFont (raygui.h's
@@ -408,21 +409,30 @@ Color ColorAlpha(Color color, float alpha) {
 
 // ── Text/font internals ──────────────────────────────────────────────────
 
-static GlyphInfo stub_glyphs[95];
-static Rectangle stub_recs[95];
+static GlyphInfo* stub_glyphs = nullptr;
+static Rectangle* stub_recs = nullptr;
 
 Font GetFontDefault(void) {
     static Font font = {0, 0, 0, Texture2D{0, 0, 0, 0, 0}, nullptr, nullptr};
     if (font.glyphs == nullptr) {
+        // Heap-allocated (raygui's GuiLoadStyleDefault RAYGUI_FREEs recs/
+        // glyphs when it swaps a font in) and 96 glyphs — the 95 ASCII
+        // printables plus the white-square glyph at index 95 that the
+        // swap path reads.
         font.baseSize = 10;
-        font.glyphCount = 95;
+        font.glyphCount = 96;
         font.glyphPadding = 0;
-        font.recs = stub_recs;
-        font.glyphs = stub_glyphs;
-        for (int i = 0; i < 95; ++i) {
+        font.recs = static_cast<Rectangle*>(
+            std::calloc(96, sizeof(Rectangle)));
+        font.glyphs = static_cast<GlyphInfo*>(
+            std::calloc(96, sizeof(GlyphInfo)));
+        stub_recs = font.recs;
+        stub_glyphs = font.glyphs;
+        for (int i = 0; i < 96; ++i) {
             stub_glyphs[i].value = 32 + i;
-            stub_glyphs[i].advanceX = 6;
-            stub_recs[i] = Rectangle{0, 0, 6, 10};
+            stub_glyphs[i].advanceX = (i < 95) ? 6 : 0;
+            stub_recs[i] = Rectangle{0, 0, (i < 95) ? 6.0f : 1.0f,
+                                     (i < 95) ? 10.0f : 1.0f};
         }
     }
     return font;

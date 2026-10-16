@@ -203,7 +203,29 @@ int main() {
         CHECK(ov.texts.empty() && ov.rects.empty());
     }
 
+    // A draw heals a STALE font binding. raygui loads its style lazily,
+    // once per process — the launcher fires that init inside the launcher's
+    // GL context, CloseWindow destroys that font texture, and after boot
+    // the overlay sampled the dead texture: shapes rendered, text didn't.
+    // The engine therefore re-runs GuiLoadStyleDefault on every draw, so a
+    // binding pointing anywhere but the live default font is re-bound
+    // before anything reads it (and when it's already current, the reload
+    // is a no-op — no redundant texture work). The harness reproduces the
+    // real state by poisoning the binding with a foreign texture id.
+    {
+        MenuModel m = two_toggle_model(/*first_on=*/true);
+        gbarecomp::testing::reset_recording();
+        gbarecomp::testing::corrupt_font_texture(4242);
+        engine.draw(ov, m);
+        CHECK(gbarecomp::testing::font_texture_id() == 0);  // healed
+        CHECK(gbarecomp::testing::shapes_texture_binds() == 1);
+        engine.draw(ov, m);
+        CHECK(gbarecomp::testing::font_texture_id() == 0);  // stays healed
+        CHECK(gbarecomp::testing::shapes_texture_binds() == 1);  // idempotent
+    }
+
     std::printf("menu_engine_raygui_test: PASS (toggle wording On/Off, "
-                "labels, title, chrome, repeat-draw, closed-silence)\n");
+                "labels, title, chrome, repeat-draw, closed-silence, "
+                "per-draw font state)\n");
     return 0;
 }

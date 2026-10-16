@@ -129,6 +129,18 @@ void RayguiMenuEngine::draw(HostOverlay& surface, const MenuModel& m) {
     const float text_size = std::round(kTextSize * s);
     const float pad = std::round(kPad * s);
 
+    // Re-establish raygui's font/style state in THIS draw's GL context
+    // BEFORE anything reads or writes it. raygui loads its style lazily,
+    // once per process — but the launcher (same process, earlier window)
+    // fires that init inside the launcher's context; CloseWindow then
+    // destroys that font texture, and after boot this overlay sampled the
+    // dead texture: shapes rendered, text didn't. raylib reloads the
+    // default font on every InitWindow (rcore.c LoadFontDefault), so
+    // re-running the load here re-binds the live one; the engine's own
+    // styles land right after, and the save/restore below still sees a
+    // clean default state.
+    GuiLoadStyleDefault();
+
     // Global style: dark palette + scaled text + opacity. Restored on the
     // way out so the launcher (same raygui instance, same process) keeps its
     // look.
