@@ -341,18 +341,18 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
             // placeholder panel — title in the muted light blue, wrapped,
             // centered on the panel).
             const auto title_lines = launcher_style::wrap_words(
-                launcher_style::kGameTitle, art_panel.art.w - 20.0f, 28.0f,
+                launcher_style::kGameTitle, art_panel.art.w - 20.0f, 30.0f,
                 measure_raylib);
-            const float line_h = 34.0f;
+            const float line_h = 36.0f;
             const float block_h =
                 static_cast<float>(title_lines.size()) * line_h;
             float ty = art_panel.art.y +
                        (art_panel.art.h - block_h) / 2.0f;
             for (const auto& l : title_lines) {
-                const int tw = MeasureText(l.c_str(), 28);
+                const int tw = MeasureText(l.c_str(), 30);
                 DrawText(l.c_str(),
                          art_panel.art.x + (art_panel.art.w - (float)tw) / 2.0f,
-                         ty, 28, rgb(launcher_style::kTitlePlaceholder));
+                         ty, 30, rgb(launcher_style::kTitlePlaceholder));
                 ty += line_h;
             }
         }
@@ -360,8 +360,10 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
         const bool ready = model.state() == LaunchScreenState::Ready;
 
         // The title row (the activity: config.title, white, bold).
+        // Sizes are integer multiples of the raylib font's native 10px —
+        // off-multiple sizes (22, 28) shear the bitmap glyphs ragged.
         DrawText(launcher_style::kGameTitle, (int)(kWindowW / 2 + 20.0f), 58,
-                 22, rgb(launcher_style::kTitleWhite));
+                 20, rgb(launcher_style::kTitleWhite));
 
         // The ROM status line — the shared decision (launcher_style.h): the
         // resolved path in verified green, or the import prompt in amber.
@@ -378,7 +380,7 @@ LauncherResult RayguiBackend::run(const LauncherConfig& cfg) {
             launcher_style::rect_contains(layout.play, mouse.x, mouse.y);
         const bool select_hovered =
             launcher_style::rect_contains(layout.select, mouse.x, mouse.y);
-        draw_action_button(layout.play, launcher_style::kPlayLabel, 22.0f,
+        draw_action_button(layout.play, launcher_style::kPlayLabel, 20.0f,
                            ready, focus == kFocusPlay, play_hovered);
         draw_action_button(layout.select, launcher_style::kSelectLabel, 16.0f,
                            true, focus == kFocusSelect, select_hovered);
