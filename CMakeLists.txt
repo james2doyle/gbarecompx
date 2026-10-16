@@ -1006,6 +1006,13 @@ target_link_libraries(window_backend_dispatch_tests PRIVATE
 add_test(NAME window_backend_dispatch_tests
          COMMAND window_backend_dispatch_tests)
 
+# Phase 5.1 — RaylibApi failure injection (red-first: the fake arrives next;
+# this target must fail to compile until support/fake_raylib_api.h lands).
+add_executable(raylib_api_fake_tests tests/runtime/raylib_api_fake_test.cpp)
+target_include_directories(raylib_api_fake_tests PRIVATE src/runtime tests/runtime)
+target_link_libraries(raylib_api_fake_tests PRIVATE gbarecomp_raylib_backend)
+add_test(NAME raylib_api_fake_tests COMMAND raylib_api_fake_tests)
+
 # Phase 3a — the pure menu model suite (ports recomp-ui's runtime_ui_test
 # semantics to the V2 shape).
 add_executable(menu_model_tests tests/runtime/menu_model_test.cpp)
