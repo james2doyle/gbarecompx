@@ -1124,14 +1124,24 @@ add_test(NAME backend_contract_tests COMMAND backend_contract_tests)
 # open the real backend, stash an open MenuModel, present a guest frame,
 # assert the readback pixels moved — catches a silent no-draw (the
 # 2026-10-16 wiring bug class) that contract/engine unit tests cannot see.
-# Display-gated: open() failing with Err::Window prints + passes, so
-# headless boxes skip the render assertion (CI's xvfb job runs it).
+# PLUS the composited-screen tier: the X framebuffer is read directly
+# (X11 comes with the raylib desktop build) and the open menu must show
+# PANEL and TEXT pixels — the "open + suppressed + painted nothing" and
+# "shapes without text" device regressions both fail here. Display-gated:
+# open() failing with Err::Window prints + passes, and without X11 the
+# capture tier degrades to a noted skip (CI's xvfb job runs the full tier).
+find_package(X11 QUIET)
 add_executable(menu_render_contract_tests
     tests/runtime/menu_render_contract_test.cpp)
 target_include_directories(menu_render_contract_tests
     PRIVATE src/runtime tests/runtime)
 target_link_libraries(menu_render_contract_tests
     PRIVATE gbarecomp_raylib_backend)
+if(X11_FOUND)
+    target_compile_definitions(menu_render_contract_tests
+        PRIVATE GBARECOMP_MENU_CAPTURE_X11)
+    target_link_libraries(menu_render_contract_tests PRIVATE X11::X11)
+endif()
 add_test(NAME menu_render_contract_tests COMMAND menu_render_contract_tests)
 
 # The raygui menu engine driven HEADLESS via RAYGUI_STANDALONE
