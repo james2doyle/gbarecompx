@@ -33,7 +33,37 @@ CMake through `platform/android/cpp/CMakeLists.txt`, which pins
 (the source dir is shared per ABI; different ABIs stay isolated), and
 pulls the vendored native_app_glue for the lifecycle.
 
-Packaging rules that hold for any consumer:
+### `package_android.sh` — the scaffold-level build wrapper
+
+The one current script in this directory (it supersedes
+`platform/android/tools/build-apk.ps1`):
+
+```sh
+gbarecompx/packaging/package_android.sh [--project DIR] [--abis LIST]
+    [--jobs N] [--private-rom FILE] [--private-bios FILE]
+    [--property K=V]... [--release] [--clean-repackage]
+    [--freshness-input FILE]... [--post-build CMD] [--install]
+```
+
+It checks JAVA_HOME/ANDROID_HOME presence, verifies the corpus exists
+**and is fresh against the regen stamp** (fail-loud on a stale corpus,
+optionally against `--freshness-input` files the consumer declares),
+passes the scaffold's own Gradle properties through (`-PgbaAbis`,
+`-PgbaNativeJobs`, `-PprivateRom` — resolved to absolute paths, removing
+the relative-to-`android/app` footgun — `-PprivateBios`, keystore
+properties via `--property`), computes `versionName` from the checkout's
+`git describe` (overridable), optionally cleans `app/build` before the
+build, and reports each produced APK with size and sha256.
+`--post-build CMD` (run from the consumer repo root with `APK_PATHS` set)
+is the hook for a content guard or device gate; `--install` does
+`adb install -r` of the APK matching the attached device's ABI.
+
+What it deliberately does not do — payload policy, device gates, the
+release allowlist stage, the private-material sweep, signing-key
+management — belongs to the consumer's own wrapper (`build_apk.py` /
+`make_release.py` in the FFTA repo).
+
+### Packaging rules that hold for any consumer
 
 - **Two build personalities.** A *private* build embeds the ROM
   (test-only: never committed, never distributed — the FFTA pipeline names

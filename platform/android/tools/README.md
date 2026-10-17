@@ -1,5 +1,11 @@
 # Android platform tools
 
+> **build-apk.ps1 is superseded** by `packaging/package_android.sh`
+> (bash, all platforms) — the same Gradle-property forwarding with the
+> corpus-freshness preflight, versionName from the checkout, and the
+> content-guard hook. `avd-bootstrap.ps1` and `android-validate.ps1`
+> remain the Windows-side emulator/validation helpers.
+
 PowerShell tooling for building and validating gbarecomp Android games
 (the shared template in `platform/android/`, applied by each game's own
 `android/` Gradle project). Requires the Android SDK (`ANDROID_HOME` /
