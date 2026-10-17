@@ -344,6 +344,18 @@ bool HostWindow::sharp_filter() const {
     return impl_->fx().settings().sharp;
 }
 
+void HostWindow::set_edge_smoothing(bool enabled) {
+    if (!open_ || !impl_) return;
+    FxSettings s = impl_->fx().settings();
+    s.edge_smoothing = enabled;
+    impl_->fx().apply(s);
+}
+
+bool HostWindow::edge_smoothing() const {
+    if (!open_ || !impl_) return false;
+    return impl_->fx().settings().edge_smoothing;
+}
+
 
 
 void HostWindow::set_lcd_deband(float deband) {
@@ -604,6 +616,8 @@ void HostWindow::set_lcd_grid_alpha(float /*alpha*/) {}
 float HostWindow::lcd_grid_alpha() const { return 0.4f; }
 void HostWindow::set_sharp_filter(bool /*enabled*/) {}
 bool HostWindow::sharp_filter() const { return false; }
+void HostWindow::set_edge_smoothing(bool /*enabled*/) {}
+bool HostWindow::edge_smoothing() const { return false; }
 void HostWindow::set_frame_interp(bool /*enabled*/) {}
 bool HostWindow::frame_interp() const { return false; }
 void HostWindow::set_resize_driven_view(bool /*enabled*/) {}

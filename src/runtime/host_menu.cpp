@@ -145,6 +145,18 @@ void HostMenu::build(WindowBackend& backend) {
         // The LCD shader group is meaningful only where the backend can run
         // it; the Fx contract stores values regardless.
         {
+            // MMPX edge smoothing: style-preserving 2x reconstruction
+            // (mmpx.h — JCGT McGuire & Gagiu). A shader pass like the LCD
+            // group, so gated the same way; placed first as the image-
+            // quality filter the overlays then decorate.
+            MenuRow row;
+            row.kind = MenuRowKind::Toggle;
+            row.label = "Edge smoothing";
+            row.int_value = fx_settings.edge_smoothing ? 1 : 0;
+            row.section = graphics;
+            add(row, Bind::EdgeSmoothing);
+        }
+        {
             MenuRow row;
             row.kind = MenuRowKind::Toggle;
             row.label = "LCD";
@@ -369,6 +381,14 @@ bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
             backend.fx().apply(s);
             menu_set_value_int(model_, row,
                                backend.fx().settings().frame_interp ? 1 : 0);
+            break;
+        }
+        case Bind::EdgeSmoothing: {
+            FxSettings s = backend.fx().settings();
+            s.edge_smoothing = menu_value_int(model_, row) != 0;
+            backend.fx().apply(s);
+            menu_set_value_int(model_, row,
+                               backend.fx().settings().edge_smoothing ? 1 : 0);
             break;
         }
         case Bind::Lcd: {

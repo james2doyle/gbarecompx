@@ -59,6 +59,8 @@ struct MenuSettings {
     // Border pixel grid (LADXHD PixelGrid port) + its opacity, same group.
     bool lcd_border = false;
     float lcd_grid_alpha = 0.4f;
+    // MMPX edge smoothing (mmpx.h): same [video] family, shader-gated.
+    bool edge_smoothing = false;
     // Sharp scaling: the historical [video] sharp_filter key (the runtime
     // config parser reads the same key), surfaced as a menu row.
     bool sharp_filter = false;
@@ -153,7 +155,8 @@ inline bool apply_menu_settings_line(MenuSettings& m, const char* key,
     if (ci_key(key, "lcd_boost")) return parse_clamped_float(val, 1.0f, 3.0f, &m.lcd_boost);
     if (ci_key(key, "lcd_dither")) return parse_clamped_float(val, 0.0f, 2.0f, &m.lcd_dither);
     if (ci_key(key, "lcd_deband")) return parse_clamped_float(val, 0.0f, 16.0f, &m.lcd_deband);
-    if (ci_key(key, "lcd_border") || ci_key(key, "sharp_filter")) {
+    if (ci_key(key, "lcd_border") || ci_key(key, "sharp_filter") ||
+        ci_key(key, "edge_smoothing")) {
         // [video]-section toggles CLAIM the key on garbage (the section is
         // shared with the launcher; a typo must not fall through to another
         // reader) and leave the value untouched — the apply_lcd_shader_line
@@ -162,6 +165,8 @@ inline bool apply_menu_settings_line(MenuSettings& m, const char* key,
         if (!parse_toggle(val, &b)) return true;
         if (ci_key(key, "lcd_border"))
             m.lcd_border = b;
+        else if (ci_key(key, "edge_smoothing"))
+            m.edge_smoothing = b;
         else
             m.sharp_filter = b;
         return true;
@@ -188,7 +193,7 @@ inline bool is_lcd_key_line(const std::string& line) {
     return lower == "lcd_shader" || lower == "lcd_boost" ||
            lower == "lcd_dither" || lower == "lcd_deband" ||
            lower == "lcd_border" || lower == "lcd_grid_alpha" ||
-           lower == "sharp_filter";
+           lower == "edge_smoothing" || lower == "sharp_filter";
 }
 
 }  // namespace menu_settings_detail
@@ -288,6 +293,7 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
     f << "lcd_deband = " << m.lcd_deband << "\n";
     f << "lcd_border = " << (m.lcd_border ? 1 : 0) << "\n";
     f << "lcd_grid_alpha = " << m.lcd_grid_alpha << "\n";
+    f << "edge_smoothing = " << (m.edge_smoothing ? 1 : 0) << "\n";
     f << "sharp_filter = " << (m.sharp_filter ? 1 : 0) << "\n";
 }
 

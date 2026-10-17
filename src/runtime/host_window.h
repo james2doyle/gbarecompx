@@ -138,6 +138,8 @@ public:
     bool lcd_border() const;
     void set_lcd_grid_alpha(float alpha);
     float lcd_grid_alpha() const;
+    void set_edge_smoothing(bool enabled);
+    bool edge_smoothing() const;
     void set_sharp_filter(bool enabled);
     bool sharp_filter() const;
     // One display-clock tick for the pacer wait: sleep until the next

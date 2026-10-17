@@ -1056,6 +1056,17 @@ add_executable(lcd_shader_tests tests/runtime/lcd_shader_test.cpp)
 target_include_directories(lcd_shader_tests PRIVATE src/runtime)
 add_test(NAME lcd_shader_tests COMMAND lcd_shader_tests)
 
+# MMPX edge smoothing (red-first): the CPU mirror is differential-tested
+# against the VENDORED MIT reference (the authors' C99, test-only — never
+# linked into the game) plus hand-derived pattern pins and GLSL structure
+# pins in both dialects.
+add_executable(mmpx_tests tests/runtime/mmpx_test.cpp
+    tests/runtime/support/mmpx_reference_c99.c)
+set_source_files_properties(tests/runtime/support/mmpx_reference_c99.c
+    PROPERTIES COMPILE_OPTIONS "-Wno-everything")
+target_include_directories(mmpx_tests PRIVATE src/runtime)
+add_test(NAME mmpx_tests COMMAND mmpx_tests)
+
 # Touch pad geometry shared by the SDL and raylib backends. Pure.
 add_executable(touch_pad_layout_tests tests/runtime/touch_pad_layout_test.cpp)
 target_include_directories(touch_pad_layout_tests PRIVATE src/runtime)

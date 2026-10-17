@@ -133,6 +133,7 @@ void build_seeds_from_backend() {
     fx.lcd_deband = 4.0f;
     fx.lcd_border = true;
     fx.lcd_grid_alpha = 0.55f;
+    fx.edge_smoothing = true;
     fx.sharp = true;
     backend.fake_fx.stored = fx;
 
@@ -145,7 +146,7 @@ void build_seeds_from_backend() {
     CHECK(section_by_title(m, "Graphics") == 1);
     CHECK(section_by_title(m, "Audio") == 2);
     CHECK(section_by_title(m, "System") == 3);
-    CHECK(m.row_count == 19);  // 16 settings rows + the three State rows
+    CHECK(m.row_count == 20);  // 17 settings rows + the three State rows
     const int scale = row_by_label(m, "Window scale");
     CHECK(scale >= 0 && gbarecomp::menu_value_int(m, scale) == 5);
     const int linear = row_by_label(m, "Linear filter");
@@ -173,6 +174,8 @@ void build_seeds_from_backend() {
     const int galpha = row_by_label(m, "Grid opacity");
     CHECK(galpha >= 0 &&
           std::fabs(gbarecomp::menu_value_float(m, galpha) - 0.55f) < 1e-4f);
+    const int edge = row_by_label(m, "Edge smoothing");
+    CHECK(edge >= 0 && gbarecomp::menu_value_int(m, edge) == 1);
     const int audio = row_by_label(m, "Audio");
     CHECK(audio >= 0 && gbarecomp::menu_value_int(m, audio) == 1);
     const int volume = row_by_label(m, "Volume");
@@ -309,6 +312,7 @@ void float_row_applies() {
     press(host, backend, kDown);      // section 1 (Graphics)
     press(host, backend, kA);         // enter; row 0 = ghosting
     press(host, backend, kDown);      // interp
+    press(host, backend, kDown);      // Edge smoothing
     press(host, backend, kDown);      // LCD
     press(host, backend, kDown);      // Pixel grid
     press(host, backend, kDown);      // Grid opacity
@@ -505,12 +509,16 @@ void build_without_shaders_skips_lcd_group() {
     backend.caps_override.shaders = false;
     HostMenu host;
     host.build(backend);
-    CHECK(host.model().row_count == 13);  // 19 - the 6 LCD-group rows
+    // Edge smoothing joins the shader-gated group: 20 total minus the 7
+    // gated rows (LCD, Pixel grid, Grid opacity, LCD boost, LCD dither,
+    // LCD deband, Edge smoothing) = 13.
+    CHECK(host.model().row_count == 13);
     CHECK(row_by_label(host.model(), "LCD boost") == -1);
     CHECK(row_by_label(host.model(), "Pixel grid") == -1);
     CHECK(row_by_label(host.model(), "Grid opacity") == -1);
-    // Sharp scaling is NOT in the LCD group: it is plain render-path work
-    // (RT + sampler), so it is offered even without shader support.
+    CHECK(row_by_label(host.model(), "Edge smoothing") == -1);
+    // Sharp scaling is NOT shader-gated: plain render-path work (RT +
+    // sampler), so it is offered even without shader support.
     CHECK(row_by_label(host.model(), "Sharp scaling") >= 0);
     CHECK(row_by_label(host.model(), "LCD ghosting (frame blending)") >= 0);
 }

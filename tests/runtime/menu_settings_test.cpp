@@ -144,6 +144,10 @@ void sharp_and_pixel_grid_keys_parse() {
     CHECK(m.lcd_grid_alpha == 1.0f);  // clamped high
     CHECK(gbarecomp::apply_menu_settings_line(m, "lcd_grid_alpha", "-1"));
     CHECK(m.lcd_grid_alpha == 0.0f);  // clamped low
+    CHECK(gbarecomp::apply_menu_settings_line(m, "edge_smoothing", "1"));
+    CHECK(m.edge_smoothing);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "edge_smoothing", "junk"));
+    CHECK(m.edge_smoothing);  // garbage keeps the value (claims the key)
     CHECK(!gbarecomp::apply_menu_settings_line(m, "nope", "1"));
 }
 
@@ -153,15 +157,18 @@ void sharp_and_grid_round_trip() {
     m.sharp_filter = true;
     m.lcd_border = true;
     m.lcd_grid_alpha = 0.65f;
+    m.edge_smoothing = true;
     gbarecomp::save_menu_settings(dir.path().c_str(), m);
     MenuSettings back;
     gbarecomp::load_menu_settings(dir.path().c_str(), back);
     CHECK(back.sharp_filter);
     CHECK(back.lcd_border);
     CHECK(back.lcd_grid_alpha == 0.65f);
+    CHECK(back.edge_smoothing);
     CHECK(dir.count_occurrences("sharp_filter") == 1);
     CHECK(dir.count_occurrences("lcd_border") == 1);
     CHECK(dir.count_occurrences("lcd_grid_alpha") == 1);
+    CHECK(dir.count_occurrences("edge_smoothing") == 1);
 }
 
 }  // namespace
@@ -192,6 +199,7 @@ int main() {
     display_keys_parse_and_clamp();
     audio_and_graphics_keys_parse();
     sharp_and_pixel_grid_keys_parse();
+    sharp_and_grid_round_trip();
     sharp_and_grid_round_trip();
     save_rewrite_round_trips_without_dupes();
     video_merge_preserves_foreign_lines_and_is_idempotent();

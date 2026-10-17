@@ -356,6 +356,52 @@ void sharp_prescale_finishes_bilinear() {
     b.close();
 }
 
+// 15. MMPX edge smoothing: at a fractional layout the 2x RT is allocated
+// and the uSrc uniform carries the LOGICAL size (the shader's tap space);
+// below 2x the pass is inert (no allocation).
+void mmpx_pass_allocates_and_uploads_src() {
+    FakeRaylibApi fake;
+    fake.screen_w = 1920;
+    fake.screen_h = 1080;  // scale 6.75 -> engages
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    FxSettings s = b.fx().settings();
+    s.edge_smoothing = true;
+    s.lcd_dither = 0.0f;
+    s.lcd_deband = 0.0f;
+    b.fx().apply(s);
+    CHECK(b.fx().settings().edge_smoothing);
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    CHECK(fake.load_render_texture_calls >= 1,
+          "the MMPX pass allocated its 2x render target");
+    float src_size[2] = {0, 0};
+    CHECK(fake.uniform_value("uSrc", src_size, 2),
+          "the MMPX pass uploaded uSrc");
+    CHECK(src_size[0] == 240.0f && src_size[1] == 160.0f,
+          "uSrc is the LOGICAL size (tap space), not the 2x target");
+    b.close();
+}
+
+// 16. MMPX below 2x display scale: inert (no target allocated).
+void mmpx_inert_below_2x() {
+    FakeRaylibApi fake;
+    fake.screen_w = 360;
+    fake.screen_h = 240;  // 1.5x
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    FxSettings s = b.fx().settings();
+    s.edge_smoothing = true;
+    s.lcd_dither = 0.0f;
+    s.lcd_deband = 0.0f;
+    b.fx().apply(s);
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    CHECK(fake.load_render_texture_calls == 0,
+          "MMPX stays inert below a 2x display");
+    b.close();
+}
+
 int main() {
     init_window_failure_is_a_window_error();
     audio_unavailable_refuses_claim();
@@ -371,6 +417,8 @@ int main() {
     all_passes_off_writes_no_grid();
     border_grid_uploads_mask_mode_and_alpha();
     sharp_prescale_finishes_bilinear();
+    mmpx_pass_allocates_and_uploads_src();
+    mmpx_inert_below_2x();
 
     std::printf("raylib_api_fake tests: PASS\n");
     return 0;

@@ -122,6 +122,11 @@ private:
     static void unload_dither_shader(Impl* impl);
     static void load_deband_shader(Impl* impl);
     static void unload_deband_shader(Impl* impl);
+    // MMPX edge smoothing (mmpx.h): program + 2x target lifecycle.
+    static void load_mmpx_shader(Impl* impl);
+    static void unload_mmpx_shader(Impl* impl);
+    static bool ensure_mmpx_target(Impl* impl);
+    static void release_mmpx_target(Impl* impl);
     static void release_post_targets(Impl* impl);
     static bool ensure_post_target(Impl* impl, int which, int w, int h);
 #if defined(__ANDROID__)

@@ -331,6 +331,30 @@ inline bool apply_lcd_grid_alpha_line(const char* key, const char* val,
     return true;
 }
 
+// One [video] line for the MMPX edge-smoothing toggle (mmpx.h). Same
+// claim-the-key contract (garbage still claims the key).
+inline bool apply_edge_smoothing_line(const char* key, const char* val,
+                                      bool* out) {
+    if (!key || !val || !out) return false;
+    auto ci_equal = [](const char* a, const char* b) {
+        while (*a && *b) {
+            char ca = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a;
+            char cb = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+            if (ca != cb) return false;
+            ++a; ++b;
+        }
+        return *a == *b;
+    };
+    if (!ci_equal(key, "edge_smoothing")) return false;
+    if (ci_equal(val, "1") || ci_equal(val, "true") || ci_equal(val, "on") ||
+        ci_equal(val, "yes"))
+        *out = true;
+    else if (ci_equal(val, "0") || ci_equal(val, "false") ||
+             ci_equal(val, "off") || ci_equal(val, "no"))
+        *out = false;
+    return true;
+}
+
 // ---- enablement -----------------------------------------------------------
 // Same env convention as GBARECOMP_TOUCH_CONTROLS: set and not "0" means on.
 // A set env var (including "0") overrides the config file; unset defers to it.

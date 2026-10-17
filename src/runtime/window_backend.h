@@ -147,6 +147,9 @@ struct FxSettings {
     // prescale with a bilinear finish at fractional scales. Not a shader
     // effect — offered wherever the prescale RT exists, shaders or not.
     bool  sharp = false;
+    // MMPX edge smoothing (mmpx.h): style-preserving 2x reconstruction as
+    // the first present-chain pass. Shader-gated like the LCD group.
+    bool  edge_smoothing = false;
 };
 
 struct TouchConfig {

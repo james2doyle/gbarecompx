@@ -47,6 +47,7 @@
 #include "input_translate.h"
 #include "interp_pacing.h"
 #include "lcd_shader.h"
+#include "mmpx.h"
 #include "long_press_ring.h"
 #include "menu_draw.h"
 #include "menu_engine.h"
@@ -282,6 +283,9 @@ struct RaylibBackend::Impl {
     // lcd_grid_alpha tune it; the menu row maps to the same fields.
     bool lcd_border = false;
     float lcd_grid_alpha = kLcdDefaultGridAlpha;
+    // MMPX edge smoothing (mmpx.h): 2x reconstruction RT ahead of the rest
+    // of the chain. [video] edge_smoothing / the menu row toggle it.
+    bool edge_smoothing = false;
     // Pre-mask gain compensating the mask's ~0.43x throughput (see
     // lcd_shader.h). Read at present(); [video] lcd_boost tunes it.
     float lcd_boost = kLcdDefaultBoost;
@@ -304,6 +308,9 @@ struct RaylibBackend::Impl {
     int lcd_mask_mode_loc = -1;
     int lcd_grid_alpha_loc = -1;
     Shader dither_handle{};
+    Shader mmpx_handle{};
+    int mmpx_src_loc = -1;
+    RenderTexture mmpx_target{};
     int dither_loc = -1;
     // Same grid uniforms as the LCD program: the dither cell is indexed by
     // game pixel too, so it needs the same origin/scale.
@@ -329,6 +336,7 @@ struct RaylibBackend::Impl {
     bool lcd_shader_ready = false;
     bool dither_ready = false;
     bool deband_ready = false;
+    bool mmpx_ready = false;
 
     // ---- presentation frame blending (issue #9 strategy #1) ----
     // Same primitive as the SDL backend (recomp_frame_blend.c, blended CPU-side
@@ -353,6 +361,10 @@ struct RaylibBackend::Impl {
     // factor or surface changes.
     bool sharp_ready = false;
     int sharp_w = 0, sharp_h = 0;
+    // MMPX target state mirrors sharp: plain state outside the guard so
+    // stub builds link; the GPU handles inside.
+    bool mmpx_target_ready = false;
+    int mmpx_target_w = 0, mmpx_target_h = 0;
 #if defined(GBARECOMP_USE_RAYLIB)
     RenderTexture2D sharp_target{};
 #endif
@@ -448,8 +460,14 @@ void RaylibBackend::release_sharp_target(RaylibBackend::Impl* impl) {
 bool RaylibBackend::ensure_sharp_target(RaylibBackend::Impl* impl, int factor) {
 #if defined(GBARECOMP_USE_RAYLIB)
     if (factor < 2) return false;
-    const int w = impl->base_w * factor;
-    const int h = impl->base_h * factor;
+    // The prescale source is the STAGE (the MMPX target when edge smoothing
+    // is active, else the game texture) — sized accordingly.
+    const int stage_w = impl->mmpx_target_ready ? impl->mmpx_target_w
+                                                : impl->base_w;
+    const int stage_h = impl->mmpx_target_ready ? impl->mmpx_target_h
+                                                : impl->base_h;
+    const int w = stage_w * factor;
+    const int h = stage_h * factor;
     if (impl->sharp_ready && impl->sharp_w == w && impl->sharp_h == h)
         return true;
     release_sharp_target(impl);
@@ -588,6 +606,82 @@ void RaylibBackend::unload_dither_shader(RaylibBackend::Impl* impl) {
 #else
     (void)impl;
 #endif
+}
+
+// MMPX edge-smoothing program (mmpx.h). Compiled eagerly at open (like the
+// LCD program) when the toggle is already on; idempotent; same dialect
+// selector as the other programs.
+void RaylibBackend::load_mmpx_shader(RaylibBackend::Impl* impl) {
+#if defined(GBARECOMP_USE_RAYLIB)
+    if (impl->mmpx_ready) return;
+    if (!impl->open || !impl->api->IsWindowReady()) return;
+    impl->mmpx_handle =
+        impl->api->LoadShaderFromMemory(nullptr, gbarecomp::mmpx::fragment_source());
+    if (!impl->api->IsShaderValid(impl->mmpx_handle)) {
+        std::fprintf(stderr, "raylib_backend: MMPX shader failed to compile\n");
+        impl->mmpx_handle = Shader{};
+        return;
+    }
+    impl->mmpx_src_loc =
+        impl->api->GetShaderLocation(impl->mmpx_handle, "uSrc");
+    impl->mmpx_ready = true;
+    std::fprintf(stderr, "raylib_backend: MMPX shader enabled\n");
+#else
+    (void)impl;
+#endif
+}
+
+void RaylibBackend::unload_mmpx_shader(RaylibBackend::Impl* impl) {
+#if defined(GBARECOMP_USE_RAYLIB)
+    if (!impl->mmpx_ready) return;
+    impl->api->UnloadShader(impl->mmpx_handle);
+    impl->mmpx_handle = Shader{};
+    impl->mmpx_src_loc = -1;
+    impl->mmpx_ready = false;
+#else
+    (void)impl;
+#endif
+}
+
+// The 2x MMPX render target. Point-filtered: its texels are the
+// reconstruction's output and every downstream consumer (sharp prescale,
+// final blit) must sample it nearest; the linear-filter promise rides the
+// FINAL blit (the filter is set here to match linear_filter at creation,
+// and set_linear_filter re-filters this target too). Y-flip handled at the
+// read side, same as the sharp target.
+bool RaylibBackend::ensure_mmpx_target(RaylibBackend::Impl* impl) {
+#if defined(GBARECOMP_USE_RAYLIB)
+    const int w = impl->base_w * 2;
+    const int h = impl->base_h * 2;
+    if (impl->mmpx_target_ready && impl->mmpx_target_w == w &&
+        impl->mmpx_target_h == h)
+        return true;
+    release_mmpx_target(impl);
+    impl->mmpx_target = impl->api->LoadRenderTexture(w, h);
+    if (impl->mmpx_target.id == 0) return false;
+    impl->mmpx_target_ready = true;
+    impl->mmpx_target_w = w;
+    impl->mmpx_target_h = h;
+    impl->api->SetTextureFilter(impl->mmpx_target.texture,
+                                impl->linear_filter
+                                    ? TEXTURE_FILTER_BILINEAR
+                                    : TEXTURE_FILTER_POINT);
+    return true;
+#else
+    (void)impl;
+    return false;
+#endif
+}
+
+void RaylibBackend::release_mmpx_target(RaylibBackend::Impl* impl) {
+    if (impl->mmpx_target_ready) {
+#if defined(GBARECOMP_USE_RAYLIB)
+        impl->api->UnloadRenderTexture(impl->mmpx_target);
+        impl->mmpx_target = RenderTexture2D{};
+#endif
+        impl->mmpx_target_ready = false;
+        impl->mmpx_target_w = impl->mmpx_target_h = 0;
+    }
 }
 
 // Standalone deband program. Same lazy/idempotent/Android story as dither.
@@ -1114,20 +1208,60 @@ public:
             // Sharp prescale: integer pre-upscale into a render target, then blit
             // to the screen. Exact scales and factor<2 keep the crisp direct path
             // (compute_sharp_prescale_factor returns 0 there).
-            // Resolve the stage to blit: the sharp target when engaged, else the
-            // game texture. Any prescale failure falls back to direct — a missing
-            // prescale must never drop a frame.
+            // Resolve the stage to blit: the MMPX target when edge smoothing
+            // engages, else the game texture; then the sharp target when its
+            // prescale engages (factor computed against the STAGE dims). Any
+            // failure falls back to the previous stage — a missing pass must
+            // never drop a frame.
             const Texture2D* stage_tex = &impl_->texture;
             Rectangle stage_rect = src;
+            int stage_w = impl_->base_w, stage_h = impl_->base_h;
+            {
+                // MMPX engages at display scale >= 2 (both axes — the
+                // aspect-preserving layout keeps them equal): below that the
+                // reconstruction's output would be minified, pure cost.
+                const bool mmpx = impl_->edge_smoothing && impl_->mmpx_ready &&
+                                  layout.width >= 2 * impl_->base_w &&
+                                  layout.height >= 2 * impl_->base_h;
+                if (mmpx) {
+                    load_mmpx_shader(impl_);
+                    if (ensure_mmpx_target(impl_)) {
+                        impl_->api->BeginTextureMode(impl_->mmpx_target);
+                        impl_->api->ClearBackground(BLANK);
+                        impl_->api->BeginShaderMode(impl_->mmpx_handle);
+                        const float src_size[2] = {
+                            static_cast<float>(impl_->base_w),
+                            static_cast<float>(impl_->base_h)};
+                        if (impl_->mmpx_src_loc >= 0)
+                            impl_->api->SetShaderValue(
+                                impl_->mmpx_handle, impl_->mmpx_src_loc,
+                                src_size, SHADER_UNIFORM_VEC2);
+                        impl_->api->DrawTexturePro(
+                            impl_->texture, src,
+                            {0.0f, 0.0f,
+                             static_cast<float>(impl_->mmpx_target_w),
+                             static_cast<float>(impl_->mmpx_target_h)},
+                            {0.0f, 0.0f}, 0.0f, WHITE);
+                        impl_->api->EndShaderMode();
+                        impl_->api->EndTextureMode();
+                        stage_tex = &impl_->mmpx_target.texture;
+                        stage_rect = Rectangle{
+                            0.0f, 0.0f,
+                            static_cast<float>(impl_->mmpx_target_w),
+                            -static_cast<float>(impl_->mmpx_target_h)};
+                        stage_w = impl_->mmpx_target_w;
+                        stage_h = impl_->mmpx_target_h;
+                    }
+                }
+            }
             const int sharp_factor =
                 impl_->sharp_filter
-                    ? compute_sharp_prescale_factor(layout, impl_->base_w,
-                                                   impl_->base_h)
+                    ? compute_sharp_prescale_factor(layout, stage_w, stage_h)
                     : 0;
             if (sharp_factor >= 2 && ensure_sharp_target(impl_, sharp_factor)) {
                 impl_->api->BeginTextureMode(impl_->sharp_target);
                 impl_->api->ClearBackground(BLANK);
-                impl_->api->DrawTexturePro(impl_->texture, src,
+                impl_->api->DrawTexturePro(*stage_tex, stage_rect,
                                {0.0f, 0.0f,
                                 static_cast<float>(impl_->sharp_w),
                                 static_cast<float>(impl_->sharp_h)},
@@ -1577,6 +1711,15 @@ public:
         if (impl_->open && impl_->api->IsWindowReady() && impl_->texture_ready)
             impl_->api->SetTextureFilter(impl_->texture, enabled ? TEXTURE_FILTER_BILINEAR
                                                      : TEXTURE_FILTER_POINT);
+        // With the MMPX stage active the FINAL blit reads the MMPX target,
+        // so the linear promise must follow the stage (keep the two filters
+        // consistent; a present with the stage inactive re-filters the game
+        // texture above).
+        if (impl_->open && impl_->api->IsWindowReady() &&
+            impl_->mmpx_target_ready)
+            impl_->api->SetTextureFilter(
+                impl_->mmpx_target.texture,
+                enabled ? TEXTURE_FILTER_BILINEAR : TEXTURE_FILTER_POINT);
 #endif
     }
 
@@ -2300,6 +2443,7 @@ public:
         s.lcd_deband = impl_->lcd_deband;
         s.lcd_border = impl_->lcd_border;
         s.lcd_grid_alpha = impl_->lcd_grid_alpha;
+        s.edge_smoothing = impl_->edge_smoothing;
         s.sharp = impl_->sharp_filter;
         return s;
     }
@@ -2320,6 +2464,8 @@ public:
         if (s.lcd_border != impl_->lcd_border) set_lcd_border(s.lcd_border);
         if (s.lcd_grid_alpha != impl_->lcd_grid_alpha)
             set_lcd_grid_alpha(s.lcd_grid_alpha);
+        if (s.edge_smoothing != impl_->edge_smoothing)
+            set_edge_smoothing(s.edge_smoothing);
         if (s.sharp != impl_->sharp_filter) set_sharp_scaling(s.sharp);
     }
 
@@ -2344,6 +2490,7 @@ public:
         float deband = impl_->lcd_deband;
         bool border = impl_->lcd_border;
         float grid_alpha = impl_->lcd_grid_alpha;
+        bool edge = impl_->edge_smoothing;
         ini_scan_section((base + "config.ini").c_str(), "video",
                          [&](const char* key, const char* val) {
             apply_lcd_shader_line(key, val, &lcd);
@@ -2352,6 +2499,7 @@ public:
             apply_lcd_deband_line(key, val, &deband);
             apply_lcd_border_line(key, val, &border);
             apply_lcd_grid_alpha_line(key, val, &grid_alpha);
+            apply_edge_smoothing_line(key, val, &edge);
         });
         // Direct field writes (no clamps): the apply_*_line helpers validated
         // the ini values, exactly as the pre-4a static did.
@@ -2360,6 +2508,11 @@ public:
         impl_->lcd_deband = deband;
         impl_->lcd_border = border;
         impl_->lcd_grid_alpha = grid_alpha;
+        if (edge != impl_->edge_smoothing) {
+            FxSettings s = settings();
+            s.edge_smoothing = edge;
+            apply(s);
+        }
         if (lcd != impl_->lcd_shader) {
             FxSettings s = settings();
             s.lcd = lcd;
@@ -2455,6 +2608,15 @@ private:
         // Disabling drops the prescale target so the next present takes the
         // direct path again.
         if (!enabled) release_sharp_target(impl_);
+    }
+
+    void set_edge_smoothing(bool enabled) {
+        impl_->edge_smoothing = enabled;
+        // Compile-now when the context is live (set_lcd_shader's policy);
+        // the compile-at-open path covers enable-before-open. Disabling
+        // drops the 2x target so the next present takes the direct stage.
+        if (enabled) load_mmpx_shader(impl_);
+        else release_mmpx_target(impl_);
     }
 
     Impl* impl_;
@@ -2891,6 +3053,9 @@ Result RaylibBackend::open(const OpenParams& params) {
     // compile now (needs IsWindowReady + GPU). A config-enabled one compiles
     // lazily at set_lcd_shader() when load_input_config() runs.
     if (impl_->lcd_shader) load_lcd_shader(impl_.get());
+    // Same for MMPX (compiled eagerly when already toggled; lazily by the
+    // present path otherwise).
+    if (impl_->edge_smoothing) load_mmpx_shader(impl_.get());
 
     // Display interpolation pacing: we request vsync at open, so assume it
     // until the periodic re-probe says otherwise (same leap the SDL backend
@@ -3037,6 +3202,8 @@ void RaylibBackend::close() {
     unload_lcd_shader(impl_.get());
     unload_dither_shader(impl_.get());
     unload_deband_shader(impl_.get());
+    unload_mmpx_shader(impl_.get());
+    release_mmpx_target(impl_.get());
     if (impl_->audio_ready) {
         impl_->api->StopAudioStream(impl_->stream);
         impl_->api->UnloadAudioStream(impl_->stream);

@@ -3235,6 +3235,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             // flag and is applied at its own site below).
             win.set_lcd_border(menu_settings.lcd_border);
             win.set_lcd_grid_alpha(menu_settings.lcd_grid_alpha);
+            win.set_edge_smoothing(menu_settings.edge_smoothing);
             if (!args.sharp_filter_given) win.set_sharp_filter(menu_settings.sharp_filter);
             win.set_touch_pad_scale(args.touch_pad_scale);
             win.configure_touch(opts.input_frame != nullptr,
@@ -3579,6 +3580,8 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                     ms.lcd_grid_alpha = menu_value_float(model, row);
                 if (const int row = row_by_label("Sharp scaling"); row >= 0)
                     ms.sharp_filter = menu_value_int(model, row) != 0;
+                if (const int row = row_by_label("Edge smoothing"); row >= 0)
+                    ms.edge_smoothing = menu_value_int(model, row) != 0;
                 if (const int row = row_by_label("View"); row >= 0) {
                     ms.view_mode = menu_value_int(model, row);
                     if (ms.view_mode == 2 && *ctx->fixed_width > 0)

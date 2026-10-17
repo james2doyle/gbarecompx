@@ -195,6 +195,7 @@ private:
         FpsReadout,
         Ghosting,
         FrameInterp,
+        EdgeSmoothing,
         Lcd,
         LcdBorder,
         LcdGridAlpha,
