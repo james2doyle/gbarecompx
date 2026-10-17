@@ -1157,6 +1157,14 @@ target_link_libraries(audio_mute_contract_tests
     PRIVATE gbarecomp_raylib_backend)
 add_test(NAME audio_mute_contract_tests COMMAND audio_mute_contract_tests)
 
+# The atomic state-file write (snapshot_write_test.cpp): temp + fsync +
+# rename needs only the target's DIRECTORY, so a foreign-owned target (an
+# adb-pushed state file, shell-owned r-- — the device incident) no longer
+# blocks the app's save. Pure file I/O; runs everywhere (the runtime-stack
+# factory is the headless link shape for debug-lib consumers).
+add_gbarecomp_runtime_stack_test(snapshot_write_tests
+    tests/runtime/snapshot_write_test.cpp)
+
 # The raygui menu engine driven HEADLESS via RAYGUI_STANDALONE
 # (raygui_standalone_stub.cpp): raygui's implementation with recording
 # primitives. This target compiles the engine TU itself with the

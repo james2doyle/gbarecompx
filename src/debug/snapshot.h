@@ -134,6 +134,17 @@ struct SnapshotContext {
 // clean dispatch boundary. Returns false (with *err set) on I/O error.
 bool save_state(const char* path, const SnapshotContext& ctx, std::string* err);
 
+// Atomic state-file write (the mod_state sidecar pattern): writes the
+// sibling "<path>.tmp", fsyncs it, then renames over the target. The
+// rename needs only the target's DIRECTORY, so a foreign-owned target
+// (an adb-pushed state file is owned by shell, group r--) no longer
+// blocks the app's save — the device hit exactly that 2026-10-16 (slot 1
+// held a shell-owned file; "cannot open for write" fired on a save the
+// app owned the directory for). A crash mid-write also can no longer
+// leave a half-written slot. Returns false (with *err set) on failure.
+bool snapshot_write_file(const char* path, const void* data,
+                         std::size_t size, std::string* err);
+
 // In-memory variants used by bounded rewind histories. They use exactly the
 // same versioned, ROM-gated container as on-disk states, so there is only one
 // serializer to keep correct.

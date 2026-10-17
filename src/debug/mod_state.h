@@ -13,6 +13,11 @@
 
 namespace gbarecomp::debug {
 
+// Durability helper shared with the snapshot writer: fsync the file's
+// (already-closed) contents to disk. Returns false when the flush fails —
+// callers treat that as a write error, not a warning.
+bool flush_file(const std::filesystem::path& path);
+
 // A provider is native code linked by the game, not data supplied by a mod
 // package.  `preflight` must not mutate either guest or provider state.
 struct ModStateProvider {

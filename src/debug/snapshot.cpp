@@ -17,8 +17,10 @@
 #include "snapshot.h"
 #include "mod_state.h"
 
+#include <filesystem>
 #include <fstream>
 #include <cstdlib>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 
@@ -150,22 +152,48 @@ bool save_state_bytes(std::vector<uint8_t>* out, const SnapshotContext& ctx,
     return true;
 }
 
-bool save_state(const char* path, const SnapshotContext& ctx, std::string* err) {
-    std::vector<uint8_t> blob;
-    if (!save_state_bytes(&blob, ctx, err)) return false;
-
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        if (err) *err = std::string("snapshot: cannot open for write: ") + path;
+bool snapshot_write_file(const char* path, const void* data,
+                         std::size_t size, std::string* err) {
+    const std::filesystem::path target(path);
+    const std::filesystem::path temporary = target.string() + ".tmp";
+    {
+        std::ofstream f(temporary, std::ios::binary | std::ios::trunc);
+        if (!f) {
+            if (err) *err = std::string("snapshot: cannot open for write: ") +
+                             temporary.string();
+            return false;
+        }
+        f.write(static_cast<const char*>(data),
+                static_cast<std::streamsize>(size));
+        if (!f) {
+            if (err) *err = std::string("snapshot: write failed: ") +
+                             temporary.string();
+            return false;
+        }
+    }
+    // Durability before the rename: the suspend state must survive a
+    // process kill, so the bytes are on disk before the slot exists.
+    if (!flush_file(temporary)) {
+        std::error_code ec;
+        std::filesystem::remove(temporary, ec);
+        if (err) *err = std::string("snapshot: flush failed: ") +
+                         temporary.string();
         return false;
     }
-    f.write(reinterpret_cast<const char*>(blob.data()),
-            static_cast<std::streamsize>(blob.size()));
-    if (!f) {
-        if (err) *err = std::string("snapshot: write failed: ") + path;
+    std::error_code ec;
+    std::filesystem::rename(temporary, target, ec);
+    if (ec) {
+        std::filesystem::remove(temporary, ec);
+        if (err) *err = std::string("snapshot: replace failed: ") + path;
         return false;
     }
     return true;
+}
+
+bool save_state(const char* path, const SnapshotContext& ctx, std::string* err) {
+    std::vector<uint8_t> blob;
+    if (!save_state_bytes(&blob, ctx, err)) return false;
+    return snapshot_write_file(path, blob.data(), blob.size(), err);
 }
 
 bool load_state_bytes(const uint8_t* data, std::size_t size,

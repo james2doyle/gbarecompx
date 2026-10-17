@@ -80,23 +80,6 @@ uint32_t load_u32(const uint8_t* bytes) {
            (static_cast<uint32_t>(bytes[3]) << 24);
 }
 
-bool flush_file(const std::filesystem::path& path) {
-#if defined(_WIN32)
-    HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
-                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return false;
-    const bool ok = FlushFileBuffers(handle) != 0;
-    CloseHandle(handle);
-    return ok;
-#else
-    const int fd = open(path.c_str(), O_RDONLY);
-    if (fd < 0) return false;
-    const bool ok = fsync(fd) == 0;
-    close(fd);
-    return ok;
-#endif
-}
-
 bool is_drive_relative_path(const std::filesystem::path& path) {
     // std::filesystem on MSYS/Windows accepts "F:slot" as a path relative to
     // the current directory on drive F.  Never let that spelling create a
@@ -141,6 +124,23 @@ ReadStatus read_sidecar_file(const std::filesystem::path& path,
 }
 
 }  // namespace
+
+bool flush_file(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ,
+                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    const bool ok = FlushFileBuffers(handle) != 0;
+    CloseHandle(handle);
+    return ok;
+#else
+    const int fd = open(path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    const bool ok = fsync(fd) == 0;
+    close(fd);
+    return ok;
+#endif
+}
 
 bool ModStateRegistry::register_provider(const ModStateProvider& provider, std::string* error) {
     if (frozen_) { set_error(error, "mod state: registration is closed after first snapshot"); return false; }
