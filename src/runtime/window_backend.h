@@ -191,6 +191,11 @@ public:
     virtual void push(const std::int16_t* samples, std::size_t count) = 0;
     virtual void set_volume(int pct) = 0;
     virtual int  volume() const = 0;
+    // Mute contract: a disabled device drops every push() BEFORE any device
+    // gating — no buffering, no callback work — so muting is device-
+    // independent (a headless box honors it too, and the audio mute
+    // contract test observes it without a device). Re-enabling resumes
+    // delivery; whatever was buffered before the mute drains its short tail.
     virtual void set_enabled(bool enabled) = 0;
     virtual bool enabled() const = 0;
 };

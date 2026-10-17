@@ -76,6 +76,21 @@ extern "C" void gbarecomp_idle_skip_stats(unsigned long long* iters,
                                           unsigned long long* cycles,
                                           unsigned long long* ops);
 
+// Audio drop telemetry (extern "C", same shape as gbarecomp_idle_skip_stats;
+// the only consumer is the audio mute contract test). muted counts push()
+// calls dropped because the device is DISABLED; nodev counts pushes dropped
+// because no bridge/device is ready yet. The mute counter is what makes the
+// mute policy observable: enabled() alone cannot distinguish "flag set" from
+// "flag honored" (the 2026-10-16 regression was exactly that — set but never
+// read).
+static unsigned long long g_audio_drops_muted = 0;
+static unsigned long long g_audio_drops_nodev = 0;
+extern "C" void gbarecomp_audio_drop_stats(unsigned long long* muted,
+                                           unsigned long long* nodev) {
+    if (muted) *muted = g_audio_drops_muted;
+    if (nodev) *nodev = g_audio_drops_nodev;
+}
+
 namespace gbarecomp {
 
 // The keymap header's integer constants MUST equal raylib.h's KeyboardKey
@@ -1597,8 +1612,22 @@ public:
 
     void push(const std::int16_t* samples, std::size_t count) override {
 #if defined(GBARECOMP_USE_RAYLIB)
-        if (!samples || count == 0 || !impl_->bridge_ready || !impl_->audio_ready)
+        if (!samples || count == 0) return;
+        // Mute is device-independent and is honored BEFORE any device
+        // gating: the Phase 4b carve left audio_enabled set-but-never-
+        // read, so the menu toggle and the boot-time [Menu] audio_enabled
+        // application were both silent no-ops (2026-10-16 user report).
+        // Dropping here — not in the stream callback — keeps the decision
+        // out of the device path and observable without an audio device;
+        // whatever is already buffered drains its short tail.
+        if (!impl_->audio_enabled) {
+            ++g_audio_drops_muted;
             return;
+        }
+        if (!impl_->bridge_ready || !impl_->audio_ready) {
+            ++g_audio_drops_nodev;
+            return;
+        }
         // Volume first, into scratch, exactly as the SDL backend does: 100 is
         // passthrough so the common path is byte-identical to unpatched behavior.
         if (impl_->volume != 100) {

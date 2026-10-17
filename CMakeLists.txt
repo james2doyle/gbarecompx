@@ -1144,6 +1144,19 @@ if(X11_FOUND)
 endif()
 add_test(NAME menu_render_contract_tests COMMAND menu_render_contract_tests)
 
+# The Audio seam honors set_enabled(false) (audio_mute_contract_test.cpp):
+# a disabled device drops every push() BEFORE any device gating, so the
+# mute policy is observable without a window or audio device — the
+# set-but-never-read regression (menu toggle + boot persistence were both
+# no-ops) fails here. Stub builds skip via the menu().available() probe.
+add_executable(audio_mute_contract_tests
+    tests/runtime/audio_mute_contract_test.cpp)
+target_include_directories(audio_mute_contract_tests
+    PRIVATE src/runtime tests/runtime)
+target_link_libraries(audio_mute_contract_tests
+    PRIVATE gbarecomp_raylib_backend)
+add_test(NAME audio_mute_contract_tests COMMAND audio_mute_contract_tests)
+
 # The raygui menu engine driven HEADLESS via RAYGUI_STANDALONE
 # (raygui_standalone_stub.cpp): raygui's implementation with recording
 # primitives. This target compiles the engine TU itself with the
