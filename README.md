@@ -1,5 +1,7 @@
 # GBARecompX
 
+[![ci](https://github.com/james2doyle/gbarecompx/actions/workflows/ci.yml/badge.svg)](https://github.com/james2doyle/gbarecompx/actions/workflows/ci.yml)
+
 Static recompilation of Game Boy Advance games to native code: the game's
 actual ARM instructions — and its BIOS — are compiled once, ahead of time,
 and executed directly on your machine. No interpreter in the hot path, no
@@ -113,14 +115,54 @@ regression gates. The FFTA recompilation is the reference consumer.
 ## Building and testing
 
 Configure with CMake (raylib is fetched at configure time), build the
-recompiler and the runtime, and run the CTest suite. Display-free tiers
-cover every configuration — a stub build (compile-check), the full raylib
-build, a software-GL headless build — plus the real windowed suite under
-Xvfb in CI. The protocol tools (oracle diff and lockstep probes, the heal
-loop, ring and trace queries) ship in `tools/` with their own tests; a
-`guard` CI job polices structural invariants. The `docs/` directory
-carries the deep material: architecture, the timing model, the oracle
-protocol, multiplayer, mod packages, the accuracy burndown.
+recompiler and the runtime, and run the CTest suite. The `docs/`
+directory carries the deep material: architecture, the timing model, the
+oracle protocol, multiplayer, mod packages, the accuracy burndown.
+
+### Four CI jobs, every push, all green or the release waits
+
+- **stub** — raylib OFF: the seam compiles with no windowing system on
+  the include path, and the pure-logic suites run (gamepad→GBA mapping,
+  the Android keycode capture, the menu model, assist bindings…).
+- **raylib** — raylib 6 fetched by pinned SHA: the full suite, then the
+  whole thing AGAIN under Xvfb + Mesa llvmpipe, so the backend's contract
+  suites take their full path — a real window, real GL — on a runner
+  with no GPU.
+- **guard** — source-shape guards with their own self-tests: structural
+  invariants a compiler cannot see (the class of regression where a menu
+  row silently vanishes behind a dead define).
+- **headless** — PLATFORM_MEMORY + rlsw software GL: present, readback
+  and lifecycle smoke with no X11 and no GL headers linked at all.
+
+**86 tests in the display-free tier, 88 with raylib** — and the suite is
+layered so each layer catches what the others structurally cannot:
+
+1. **Pure functions.** The gamepad→GBA mapping, stick deadzones, the
+   Android keycode/axis tables, the MMPX rule cascade — the last
+   differentially tested byte-for-byte against the upstream C99
+   reference over random images and structured patterns.
+2. **A fake raylib API.** Every backend decision pinned at the call
+   level — uniform uploads, program lifecycle, present-chain ordering,
+   config-enabled lazy compiles — deterministic and driver-independent.
+   No GL is involved, so these cannot flake.
+3. **The real framebuffer.** The present test opens a real GL context
+   and reads actual pixels: the sharp prescale changes ~70% of layout
+   pixels at a fractional layout and is pixel-identical at an exact
+   integer one (the designed inertness); the LCD mask equals the CPU
+   mirror, only ever multiplies downward, and never touches the
+   letterbox.
+
+The real-GL layer carries its own environment guardrails, learned the
+hard way: a **readback-liveness gate** (different frames must read
+differently — Mesa llvmpipe once made stale reads look like a dead
+toggle), a **settle pass** after every window resize, and diff counts
+printed on every run. Tests that depend on the renderer verify the
+renderer first.
+
+Tests are config-adaptive where the truth is: the backend factory must
+return the product backend with raylib ON and `nullptr` without it — one
+suite pinning both halves of the selection contract in both CI
+personalities.
 
 ## License
 
