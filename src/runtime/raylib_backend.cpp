@@ -1882,15 +1882,21 @@ static int32_t (*g_android_pad_saved)(struct android_app*, AInputEvent*) =
     nullptr;
 static bool g_android_pad_installed = false;
 
-// Bounded census: the FIRST sighting of each distinct keycode / motion
-// source, with the event source — on-device evidence for which transport a
-// pad uses (the #5387 question: what source do its key events carry). Same
-// spirit as the copy-guard lines: bounded, unconditional, diagnostic.
-static void pad_census_key(int keycode, int source) {
-    static std::map<int, bool> logged;
-    if (logged.emplace(keycode, true).second)
-        TraceLog(LOG_INFO, "pad-census: key keycode=%d source=0x%X", keycode,
-                 static_cast<unsigned>(source));
+// Bounded census: the FIRST THREE sightings of each distinct keycode (with
+// the event source and flags) and the first of each motion source — on-device
+// evidence for which transport a pad uses and, critically, for the fallback
+// synthesis (flags=0x400 = FLAG_FALLBACK: the Generic.kcm fallback for an
+// unhandled key — the mechanism behind the menu-on-B report). Three per
+// keycode because the interesting pattern is real-press → fallback → repeat.
+// Same spirit as the copy-guard lines: bounded, unconditional, diagnostic.
+static void pad_census_key(int keycode, int source, int flags) {
+    static std::map<int, int> seen;
+    const int n = seen[keycode]++;
+    if (n < 3)
+        TraceLog(LOG_INFO,
+                 "pad-census: key keycode=%d source=0x%X flags=0x%X #%d",
+                 keycode, static_cast<unsigned>(source),
+                 static_cast<unsigned>(flags), n);
 }
 
 static void pad_census_motion(int source) {
@@ -1908,11 +1914,24 @@ static int32_t android_pad_observe(struct android_app* app,
     const int32_t source = AInputEvent_getSource(event);
     if (type == AINPUT_EVENT_TYPE_KEY) {
         const int32_t keycode = AKeyEvent_getKeyCode(event);
-        if (gbarecomp::android_keycode_to_pad(keycode) >= 0) {
-            pad_census_key(keycode, source);
+        const int32_t flags = AKeyEvent_getFlags(event);
+        pad_census_key(keycode, source, flags);
+        const bool mapped = gbarecomp::android_keycode_to_pad(keycode) >= 0;
+        if (gbarecomp::android_key_consumed(keycode, flags)) {
+            // Consumed = HANDLED: the dispatcher never synthesizes the
+            // KeyCharacterMap fallback for it (the menu-on-B mechanism).
+            if (mapped)
+                g_android_pad.key(
+                    keycode,
+                    AKeyEvent_getAction(event) != AKEY_EVENT_ACTION_UP);
+            return 1;
+        }
+        // D-pad keys (and anything else): record state, then FORWARD —
+        // raylib's keyboard table maps DPAD_* to arrows so the settings menu
+        // stays pad-navigable, and a real BACK keeps its menu gesture.
+        if (mapped)
             g_android_pad.key(
                 keycode, AKeyEvent_getAction(event) != AKEY_EVENT_ACTION_UP);
-        }
     } else if (type == AINPUT_EVENT_TYPE_MOTION &&
                ((source & AINPUT_SOURCE_JOYSTICK) != 0 ||
                 (source & AINPUT_SOURCE_GAMEPAD) != 0)) {
@@ -2053,6 +2072,7 @@ public:
                 {kPadDpadLeft, kGbaKeyLeft},
                 {kPadLeftTrigger, 0},
                 {kPadRightTrigger, 0},
+                {kPadGuide, 0},
             };
             GamepadSnapshot pad;
             for (const auto& m : kPadMap) {
@@ -2060,6 +2080,16 @@ public:
                     s.hold_pad_button(m.pad_button);
                     pad.buttons |= m.gba_bit;
                 }
+            }
+            // The guide button (the pad's menu button; BUTTON_MODE on
+            // Android) opens the settings overlay by holding the CONFIGURED
+            // HK_MENU key: the menu's own binding decides what "menu" means,
+            // and the hotkey path's edge gives press-open/press-close. The
+            // menu itself navigates from GBA KEYINPUT levels (menu_keyinput),
+            // so the pad's d-pad + A/B drive it once open.
+            if (g_android_pad.button_down(kPadGuide)) {
+                const HostKey menu_key = b.hotkeys[HK_MENU].key;
+                if (menu_key != kHostKeyNone) s.hold(menu_key);
             }
             // The hook's axes already live in the shared int units
             // (-32768..32767; android_axis_scaled), triggers included.
@@ -2134,6 +2164,17 @@ public:
                         s.hold_pad_button(m.pad_button);
                         pad.buttons |= m.gba_bit;
                     }
+                }
+                // The guide button (the pad's menu button — kGlfwBtnGuide,
+                // skipped above because it has no GBA meaning) opens the
+                // settings overlay by holding the CONFIGURED HK_MENU key:
+                // the menu's own binding decides what "menu" means, and the
+                // hotkey path's edge gives press-open/press-close. The menu
+                // navigates from GBA KEYINPUT levels, so the pad's d-pad +
+                // A/B drive it once open.
+                if (st.buttons[kGlfwBtnGuide]) {
+                    const HostKey menu_key = b.hotkeys[HK_MENU].key;
+                    if (menu_key != kHostKeyNone) s.hold(menu_key);
                 }
                 // GLFW gamepad axes are float -1..1 like raylib's; scale to the
                 // shared int units identically.
@@ -2366,6 +2407,9 @@ public:
             // Platform Back (Android Back key; desktop Backspace when emulating).
             if (impl_->api->IsKeyPressed(KEY_BACK) ||
                 (impl->touch_emulation && impl_->api->IsKeyPressed(KEY_BACKSPACE))) {
+                // Per-press diagnostic (one line per gesture; the menu-open
+                // path is short enough that this pinpoints the sender kind).
+                TraceLog(LOG_INFO, "pad-back: KEY_BACK edge -> Back gesture");
                 Gesture g;
                 g.kind = GestureKind::Back;
                 g.t_ms = now_ms;

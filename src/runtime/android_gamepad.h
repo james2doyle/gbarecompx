@@ -106,12 +106,13 @@ inline int android_keycode_to_pad(int keycode) {
         case kAKeyCodeButtonThumbr: return kPadRightThumb;
         case kAKeyCodeButtonStart: return kPadStart;
         case kAKeyCodeButtonSelect: return kPadBack;
+        case kAKeyCodeButtonMode: return kPadGuide;
         case kAKeyCodeDpadUp: return kPadDpadUp;
         case kAKeyCodeDpadDown: return kPadDpadDown;
         case kAKeyCodeDpadLeft: return kPadDpadLeft;
         case kAKeyCodeDpadRight: return kPadDpadRight;
-        // No canonical slot (Odin's extra face buttons C/Z, MODE, dpad
-        // CENTER) and the menu contract (BACK): unmap, never collide.
+        // No canonical slot (Odin's extra face buttons C/Z, dpad CENTER) and
+        // the menu contract (BACK): unmap, never collide.
         default: return -1;
     }
 }
@@ -141,6 +142,47 @@ inline int android_axis_scaled(int axis, float value) {
     float f = value;
     if (axis == kAMotionAxisGas || axis == kAMotionAxisBrake) f = f * 2.0f - 1.0f;
     return static_cast<int>(f * 32767.0f);
+}
+
+// AKeyEvent_getFlags bit (NDK r28b android/input.h:276): the InputDispatcher
+// set this when the event was SYNTHESIZED as a fallback for another,
+// unhandled key — the Generic.kcm mechanism below.
+constexpr int kAKeyEventFlagFallback = 0x400;
+
+// Pure: should the hook CONSUME this KEY event (never shown to raylib)?
+//
+// Rule 1 — the gamepad-button range (BUTTON_A..BUTTON_MODE, 96..110) is
+// consumed ALWAYS, source bits notwithstanding. Reason: raylib leaves these
+// events unhandled — its gamepad branch is skipped when the source also
+// carries KEYBOARD (#5387), its keyboard table maps every BUTTON_* to 0, and
+// the callback then returns 0. The InputDispatcher answers an unhandled key
+// by synthesizing the device KeyCharacterMap's FALLBACK key (verified
+// verbatim on the Odin's Generic.kcm): BUTTON_B→BACK (the user-visible
+// menu-on-B report, arriving ~36ms after the raw BUTTON_B, auto-repeating
+// while held), BUTTON_A→DPAD_CENTER, BUTTON_X→DEL (a SECOND menu path
+// through the touch-emulated Backspace arm), BUTTON_Y→SPACE,
+// BUTTON_START→DPAD_CENTER, BUTTON_SELECT→MENU, BUTTON_MODE→HOME. Marking
+// the event handled at the hook kills the fallback at its source, and the
+// GBA mapping happens from OUR state instead.
+//
+// Rule 2 — defense in depth: a key event that still arrives tagged
+// FLAG_FALLBACK with keycode BACK or DPAD_CENTER is consumed too. Those two
+// fallback targets are the ones with host meaning (BACK = the menu gesture;
+// CENTER is unmapped but pairs with A's fallback). A REAL Back-key press
+// carries no fallback flag, so KEY_BACK → menu stays live — that is the
+// contract, not a casualty.
+//
+// DPAD_* keys and ordinary keyboard keys are never consumed: the d-pad must
+// reach raylib's keyboard table (DPAD_* → arrows) so the settings menu stays
+// navigable by pad, and a real keyboard's B is AKEYCODE_B (30), not
+// BUTTON_B.
+inline bool android_key_consumed(int keycode, int flags) {
+    if (keycode >= kAKeyCodeButtonA && keycode <= kAKeyCodeButtonMode)
+        return true;
+    if ((flags & kAKeyEventFlagFallback) != 0 &&
+        (keycode == kAKeyCodeBack || keycode == kAKeyCodeDpadCenter))
+        return true;
+    return false;
 }
 
 // One capture slot. Written by the glue's input thread (onInputEvent), read

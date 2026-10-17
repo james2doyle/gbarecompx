@@ -40,12 +40,17 @@ int main() {
     assert(android_keycode_to_pad(kAKeyCodeButtonStart) == kPadStart);
     assert(android_keycode_to_pad(kAKeyCodeButtonSelect) == kPadBack);
 
-    // No canonical slot: the Odin's extra face buttons (C/Z), MODE, dpad
-    // CENTER. These must stay unmapped rather than collide with a real id.
+    // No canonical slot: the Odin's extra face buttons (C/Z), dpad CENTER.
+    // These must stay unmapped rather than collide with a real id.
     assert(android_keycode_to_pad(kAKeyCodeButtonC) < 0);
     assert(android_keycode_to_pad(kAKeyCodeButtonZ) < 0);
-    assert(android_keycode_to_pad(kAKeyCodeButtonMode) < 0);
     assert(android_keycode_to_pad(kAKeyCodeDpadCenter) < 0);
+
+    // The pad's menu button (GUIDE; BUTTON_MODE on Android — the Odin's
+    // center button, BTN_MODE in the live capture) has a canonical id: the
+    // backends inject the CONFIGURED HK_MENU key from it. It carries no GBA
+    // bit — the guide button is host UI, never game input.
+    assert(android_keycode_to_pad(kAKeyCodeButtonMode) == kPadGuide);
 
     // THE MENU CONTRACT: BACK must NEVER become a pad button. The Back key
     // is the platform menu-open gesture (KEY_BACK → Back gesture → menu
@@ -184,6 +189,53 @@ int main() {
     assert(!boost.available());
     assert(!boost.button_down(kPadA));
     assert(boost.axis(kPadAxisLeftX) == 0);
+
+    // ---- hook consume policy (the fallback-synthesis defense) -------------
+    // raylib leaves gamepad key events unhandled (the #5387 guard skips them,
+    // the keyboard table maps BUTTON_* to 0, the callback returns 0), and the
+    // InputDispatcher then synthesizes the device KeyCharacterMap's fallback
+    // keys for the unhandled press. Measured verbatim on the Odin's
+    // Generic.kcm: BUTTON_B→BACK (the menu-on-B report), BUTTON_A→
+    // DPAD_CENTER, BUTTON_X→DEL (a second menu path through the
+    // touch-emulated Backspace arm), BUTTON_Y→SPACE, BUTTON_START→
+    // DPAD_CENTER, BUTTON_SELECT→MENU, BUTTON_MODE→HOME. Consuming the whole
+    // gamepad-button range marks those events handled: no fallback is ever
+    // synthesized, and the GBA mapping happens from OUR state.
+    assert(android_key_consumed(kAKeyCodeButtonA, 0));
+    assert(android_key_consumed(kAKeyCodeButtonB, 0));
+    assert(android_key_consumed(kAKeyCodeButtonX, 0));
+    assert(android_key_consumed(kAKeyCodeButtonY, 0));
+    assert(android_key_consumed(kAKeyCodeButtonC, 0));    // fallbacks too
+    assert(android_key_consumed(kAKeyCodeButtonZ, 0));
+    assert(android_key_consumed(kAKeyCodeButtonL1, 0));
+    assert(android_key_consumed(kAKeyCodeButtonR1, 0));
+    assert(android_key_consumed(kAKeyCodeButtonL2, 0));
+    assert(android_key_consumed(kAKeyCodeButtonR2, 0));
+    assert(android_key_consumed(kAKeyCodeButtonThumbl, 0));
+    assert(android_key_consumed(kAKeyCodeButtonThumbr, 0));
+    assert(android_key_consumed(kAKeyCodeButtonStart, 0));
+    assert(android_key_consumed(kAKeyCodeButtonSelect, 0));
+    assert(android_key_consumed(kAKeyCodeButtonMode, 0));
+
+    // THE MENU CONTRACT, again: a REAL Back key press is NOT consumed —
+    // KEY_BACK → Back gesture → menu toggle stays live. Only a SYNTHESIZED
+    // fallback (FLAG_FALLBACK, the Generic.kcm mechanism measured above) is
+    // eaten, and only the two fallback targets that touch host behavior.
+    assert(!android_key_consumed(kAKeyCodeBack, 0));
+    assert(android_key_consumed(kAKeyCodeBack, kAKeyEventFlagFallback));
+    assert(!android_key_consumed(kAKeyCodeDpadCenter, 0));
+    assert(android_key_consumed(kAKeyCodeDpadCenter, kAKeyEventFlagFallback));
+
+    // D-pad keys are never consumed: they must reach raylib's keyboard table
+    // (DPAD_* → arrows) so the settings menu stays navigable by pad.
+    assert(!android_key_consumed(kAKeyCodeDpadUp, 0));
+    assert(!android_key_consumed(kAKeyCodeDpadDown, 0));
+    assert(!android_key_consumed(kAKeyCodeDpadLeft, 0));
+    assert(!android_key_consumed(kAKeyCodeDpadRight, 0));
+
+    // Ordinary keys (a real keyboard's B is AKEYCODE_B=30, not BUTTON_B) are
+    // never touched by the policy.
+    assert(!android_key_consumed(30, 0));
 
     return 0;
 }
