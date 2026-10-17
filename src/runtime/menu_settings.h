@@ -194,6 +194,11 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
     if (!dir || !*dir) return;
     const std::string path = std::string(dir) + "/config.ini";
     std::vector<std::string> kept;
+    // Foreign [video] lines (launcher-owned keys) — re-emitted inside the
+    // ONE [video] section this writer produces. The 2026-10-16 writer kept
+    // the old [video] header AND appended a new one, so every save added a
+    // duplicate header (the device reached ~50); headers are now merged.
+    std::vector<std::string> video_extra;
     {
         std::ifstream f(path);
         std::string line;
@@ -201,7 +206,8 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
         while (std::getline(f, line)) {
             while (!line.empty() && line.back() == '\r') line.pop_back();
             std::string::size_type b = line.find_first_not_of(" \t");
-            if (b != std::string::npos && line[b] == '[') {
+            const bool is_header = b != std::string::npos && line[b] == '[';
+            if (is_header) {
                 std::string::size_type e = line.find(']', b);
                 section = (e == std::string::npos)
                               ? ""
@@ -214,13 +220,21 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
             const bool in_menu = section == "menu";
             const bool in_video = section == "video";
             if (in_menu) continue;  // ours alone: dropped, rewritten below
+            if (in_video && is_header)
+                continue;  // every [video] header merges into the one below
             if (in_video &&
                 menu_settings_detail::is_lcd_key_line(line))
                 continue;  // our LCD key: merged below, rest preserved
+            if (in_video) {
+                video_extra.push_back(line);  // foreign key: stays in [video]
+                continue;
+            }
             kept.push_back(line);
         }
     }
     while (!kept.empty() && kept.back().empty()) kept.pop_back();
+    while (!video_extra.empty() && video_extra.back().empty())
+        video_extra.pop_back();
     std::ofstream f(path, std::ios::trunc);
     if (!f) return;
     for (const auto& l : kept) f << l << "\n";
@@ -242,6 +256,9 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
     f << "frame_interp = " << (m.frame_interp ? 1 : 0) << "\n";
     f << "frame_blend = " << (m.frame_blend != 0.0f ? 1 : 0) << "\n";
     f << "\n[video]\n";
+    // Foreign (launcher-owned) lines stay first; our LCD keys land last so
+    // last-wins readers always take ours.
+    for (const auto& l : video_extra) f << l << "\n";
     f << "lcd_shader = " << (m.lcd ? 1 : 0) << "\n";
     f << "lcd_boost = " << m.lcd_boost << "\n";
     f << "lcd_dither = " << m.lcd_dither << "\n";

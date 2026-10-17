@@ -86,6 +86,31 @@ void save_rewrite_round_trips_without_dupes() {
     CHECK(back.view_mode == 1);
     CHECK(dir.count_occurrences("fullscreen") == 1);
     CHECK(dir.count_occurrences("[Menu]") == 1);
+    // The [video] merge must produce ONE section too — the device ran with
+    // ~50 accumulated [video] headers (one per save) until 2026-10-16: the
+    // writer kept the old header and appended a new one every save.
+    CHECK(dir.count_occurrences("[video]") == 1);
+}
+
+// The [video] merge: foreign (launcher-owned) lines in [video] survive, land
+// inside the single merged section, and repeated saves are byte-idempotent.
+void video_merge_preserves_foreign_lines_and_is_idempotent() {
+    gbarecomp::testing::TmpConfigDir dir;
+    dir.write_config("[KeyMap]\nTurbo = Tab\n"
+                     "[video]\nlaunchers_own = 1\n");
+    MenuSettings m;
+    m.lcd = true;
+    gbarecomp::save_menu_settings(dir.path().c_str(), m);
+    CHECK(dir.count_occurrences("[video]") == 1);
+    CHECK(dir.count_occurrences("[Menu]") == 1);
+    CHECK(dir.contains("launchers_own = 1"));
+    // The preserved line must still be IN [video] (after its header).
+    const std::string text = dir.read_config();
+    CHECK(text.find("[video]") < text.find("launchers_own = 1"));
+    const std::string once = dir.read_config();
+    gbarecomp::save_menu_settings(dir.path().c_str(), m);
+    const std::string twice = dir.read_config();
+    CHECK(once == twice);  // byte-idempotent: saving changes nothing
 }
 
 void foreign_sections_survive() {
@@ -128,6 +153,7 @@ int main() {
     display_keys_parse_and_clamp();
     audio_and_graphics_keys_parse();
     save_rewrite_round_trips_without_dupes();
+    video_merge_preserves_foreign_lines_and_is_idempotent();
     foreign_sections_survive();
     state_slot_parses_clamps_and_round_trips();
     std::printf("menu_settings tests: PASS\n");
