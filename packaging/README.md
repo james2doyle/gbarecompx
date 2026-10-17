@@ -1,96 +1,58 @@
 # packaging — portable release builds
 
-Game-agnostic packaging for gbarecomp titles. Every game exe is a plain SDL2
-program, so one script per platform serves all of them; a game repo calls in
-rather than copying scripts around.
+> **STATUS (2026-10-17): LEGACY — SDL-era, unverified against the current
+> product.** These scripts were written when every game exe was a plain
+> SDL2 program. Phase 4b retired SDL2 and Phase 4c made raylib the product
+> backend, fetched by pinned SHA and **linked statically** — so the
+> dylib-bundling machinery below (`otool`/`ldd` walks, the
+> sdl2-compat/SDL3 dlopen hunt, `$ORIGIN` rpaths for shim libraries) has
+> nothing left to bundle, and the Flatpak manifests still build an SDL2
+> module that no current target links. Nothing here has been run against a
+> raylib build; treat every command in this directory as unverified until
+> someone re-validates it.
 
-| Platform | Script | Status |
+## The live release pipeline
+
+The reference consumer's packaging does not use this directory. The FFTA
+recomp ships through its own deterministic, guarded pipeline —
+`tools/make_release.py` in the consumer repo — which produces the Linux
+portable zip, the public Android APK, and the static MinGW Windows
+executable from a single allowlist stage (private-material sweep included,
+content-guarded). A new consumer game should copy that shape rather than
+revive these scripts by default: with raylib linked statically, a release
+is an executable plus assets, and most of the complexity below exists to
+solve dynamic-SDL problems that no longer occur.
+
+## What is still true here
+
+- **The ROM and the BIOS are never packaged.** A recompiled binary already
+  embeds translated ROM code, so packaging is for building **your own**
+  copy from **your own** dump. The launcher prompts for both on first
+  run.
+- **`generated/` is not committed anywhere in this ecosystem**; regenerate
+  it locally (the consumer's change cycle) before any packaging step.
+- `packaging/tests/test_generation.sh` still checks the script mechanics
+  (shell syntax, metadata generation from a source path containing `&`,
+  both Flatpak YAML forms, metainfo XML, desktop-entry validation, and
+  that ROM/BIOS plus arbitrary `build-*` directories are excluded). Needs
+  PyYAML and `desktop-file-validate` on Linux.
+
+## The scripts, as they stand
+
+| Path | Era | State |
 |---|---|---|
-| macOS | `package_macos.sh` | verified booting a real ROM |
-| Steam Deck / Flatpak | `flatpak/build_flatpak.sh` | **verified on a real Deck**: builds, installs, launches |
-| Linux (ordinary distros) | `package_linux.sh` | **untested** — the counterpart to the macOS script |
-| Windows | see a game's `tools/package_release.ps1` | pre-existing, unchanged |
+| `package_macos.sh` | SDL | Was verified booting a real ROM (SDL build); untouched since |
+| `package_linux.sh` | SDL | Was **untested** even in the SDL era ("counterpart to the macOS script") |
+| `flatpak/` (manifests + `build_flatpak.sh`) | SDL | Was verified on a real Deck (SDL build); the manifests fetch SDL2 2.30.9 as a module |
+| Windows | — | Lives in the consumer's release pipeline (see above), not here |
 
-## macOS
+## If you revive this for raylib
 
-```bash
-gbarecomp/packaging/package_macos.sh --target BoktaiRecomp --name Boktai \
-   
-```
-
-Produces `release-stage/<name>-macos-<arch>/` plus a `.tar.gz`: the executable,
-every non-system dylib beside it with install names rewritten to
-`@executable_path`, the launcher assets, and an ad-hoc signature.
-
-Two things this handles that a naive script does not:
-
-- **dlopen'd libraries.** `otool -L` cannot see them, and a missing one is not a
-  link error — it is a hard abort at startup with no output. Homebrew's `sdl2` is
-  now often `sdl2-compat`, whose libSDL2 is a shim that dlopens **SDL3**; the
-  script finds and copies it. Without that the game dies with "failed to load
-  SDL3".
-- **No `.app` bundle.** A bundle was tried and is SIGKILLed before it prints a
-  byte. The reason is structural: the launcher resolves its assets directory as
-  the executable's own directory, so `assets/` must live in `Contents/MacOS`,
-  and `codesign` treats everything there as code —
-  `code object is not signed at all / In subcomponent: .../OpenMoji-black-glyf.ttf`
-  — so the bundle cannot hold a valid signature while the assets are where the
-  runtime needs them. A flat directory is not bundle-validated and works signed
-  or unsigned.
-
-`GBARECOMP_STATIC_RELEASE` is deliberately unused here: it pins
-`C:/msys64/mingw64/lib/libSDL2.a` and links Windows system libs, so it is
-MSYS2-only, and macOS has no static libSystem either.
-
-## Linux
-
-```bash
-gbarecomp/packaging/package_linux.sh --target BoktaiRecomp --name Boktai \
-   
-```
-
-Same shape as the macOS script, with an `$ORIGIN` rpath instead of
-`@executable_path`. It deliberately does **not** bundle everything `ldd` reports:
-glibc, libstdc++, the loader and the graphics stack stay on the host, or the binary
-breaks on any machine with a different driver or glibc — bundling libGL in
-particular kills hardware acceleration.
-
-For a Steam Deck prefer the Flatpak below; SteamOS has an immutable root, so a
-package bringing its own runtime beats a tarball that depends on the host.
-
-## Steam Deck
-
-```bash
-gbarecomp/packaging/flatpak/build_flatpak.sh --target BoktaiRecomp \
-    --name Boktai --id tech.recomp.BoktaiRecomp
-```
-
-Flatpak is the right answer for SteamOS because its root filesystem is
-immutable: the runtime supplies SDL2 and the toolchain, so nothing is installed
-into the OS and no static linking is needed. Run it in Desktop Mode, then add
-the result via Steam > Games > Add a Non-Steam Game to reach it from Gaming Mode.
-
-`--generate-only` writes the manifest, `.desktop` and metainfo without building,
-which is all CI can do.
-
-## What is never packaged
-
-The ROM and the BIOS. A recompiled binary already embeds translated ROM code, so
-these scripts are for building **your own** copy from **your own** dump — not for
-redistribution. The launcher prompts for both on first run.
-
-Recompiled sources (`generated/`) are not committed anywhere in this ecosystem;
-regenerate them locally before packaging.
-
-## Generation checks
-
-Run the portable packaging smoke test on Linux with PyYAML and
-`desktop-file-validate` installed:
-
-```sh
-packaging/tests/test_generation.sh
-```
-
-It checks shell syntax, generates metadata from a source path containing `&`,
-parses both Flatpak YAML forms and the metainfo XML, validates the desktop entry,
-and confirms ROM/BIOS plus arbitrary `build-*` directories are excluded.
+The work is smaller than the history: drop the SDL2 module from both
+Flatpak manifests (raylib needs only GL/EGL and the X11 client libs the
+freedesktop runtime already ships — or add raylib as a module if you want
+it built in the sandbox), delete the dylib-bundling walks from the
+macOS/Linux scripts (a statically-linked exe ships alone), re-point the
+example targets and flags at a current consumer, and then re-verify on
+real hardware — the Deck verification predates the backend swap by two
+backend generations.
