@@ -2926,7 +2926,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         }
         void record(uint64_t frame, uint64_t t0, uint64_t t1, uint64_t t2,
                     uint64_t t3, uint64_t t4, uint64_t t5,
-                    uint64_t /*c0*/, uint64_t /*c4*/) {
+                    // c0/c4 feed the __ANDROID__ thread-CPU sampler below;
+                    // desktop compiles that block out, so the lint sweep
+                    // (desktop compile database) sees them unused. Renaming
+                    // them in the 2026-10-16 lint pass broke the Android
+                    // build — names stay.
+                    // NOLINTNEXTLINE(misc-unused-parameters)
+                    uint64_t c0, uint64_t c4) {
             if (!active()) return;
             FramePhaseSample s;
             s.frame = frame;
