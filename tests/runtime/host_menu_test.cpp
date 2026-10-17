@@ -142,7 +142,7 @@ void build_seeds_from_backend() {
     CHECK(section_by_title(m, "Graphics") == 1);
     CHECK(section_by_title(m, "Audio") == 2);
     CHECK(section_by_title(m, "System") == 3);
-    CHECK(m.row_count == 13);
+    CHECK(m.row_count == 16);  // 13 settings rows + the three State rows
 
     const int scale = row_by_label(m, "Window scale");
     CHECK(scale >= 0 && gbarecomp::menu_value_int(m, scale) == 5);
@@ -387,7 +387,10 @@ void resume_action_closes_without_hook() {
     press(host, backend, kDown);  // 1
     press(host, backend, kDown);  // 2
     press(host, backend, kDown);  // 3 (System)
-    press(host, backend, kA);     // enter; row 0 = Resume game
+    press(host, backend, kA);     // enter; rows 0-2 = Slot/Save/Load
+    press(host, backend, kDown);  // Slot -> Save state
+    press(host, backend, kDown);  // Save state -> Load state
+    press(host, backend, kDown);  // Load state -> Resume game
     press(host, backend, kA);     // activate
     CHECK(!host.model().open);
     CHECK(log.calls == 0);  // nothing for the host to do
@@ -490,7 +493,7 @@ void build_without_shaders_skips_lcd_group() {
     backend.caps_override.shaders = false;
     HostMenu host;
     host.build(backend);
-    CHECK(host.model().row_count == 9);  // 13 - 4 LCD-group rows
+    CHECK(host.model().row_count == 12);  // 16 - 4 LCD-group rows
     CHECK(row_by_label(host.model(), "LCD boost") == -1);
     CHECK(row_by_label(host.model(), "LCD ghosting (frame blending)") >= 0);
 }
@@ -846,6 +849,118 @@ void menu_view_step_resolves_geometry_policy() {
     CHECK(!clampedLow.resize_driven && clampedLow.fixed_width == 240);
 }
 
+// ── State: save-state slots in the menu ────────────────────────────────
+// The rows must exist with these literal labels in the System section, and
+// the actions must queue slot ops for the host loop's dispatch boundary —
+// never execute mid-frame. A label change or a missing row fails here; the
+// rendered half is pinned in menu_engine_test.cpp and
+// menu_engine_raygui_test.cpp; the product wiring (the drain call in the
+// runtime loop) is pinned by tools/check_menu_state_wiring.py.
+void state_rows_and_actions() {
+    FakeBackend backend;
+    open_fake(backend);
+    HostMenu host;
+    host.build(backend);
+    const MenuModel& m = host.model();
+
+    const int sys = section_by_title(m, "System");
+    CHECK(sys >= 0);
+    const int slot_row = row_by_label(m, "Slot");
+    CHECK(slot_row >= 0);
+    CHECK(m.rows[slot_row].section == sys);
+    CHECK(m.rows[slot_row].kind == MenuRowKind::Choice);
+    CHECK(m.rows[slot_row].choice_count == 9);
+    for (int i = 0; i < 9; ++i) {
+        const char digit[2] = {static_cast<char>('1' + i), '\0'};
+        CHECK(m.rows[slot_row].choices &&
+              std::strcmp(m.rows[slot_row].choices[i], digit) == 0);
+    }
+    CHECK(m.rows[slot_row].int_value == 0);  // slot 1 seeded
+    CHECK(m.rows[slot_row].visible && m.rows[slot_row].enabled);
+
+    const int save_row = row_by_label(m, "Save state");
+    CHECK(save_row >= 0);
+    CHECK(m.rows[save_row].kind == MenuRowKind::Action);
+    CHECK(m.rows[save_row].section == sys);
+    CHECK(m.rows[save_row].visible && m.rows[save_row].enabled);
+    const int load_row = row_by_label(m, "Load state");
+    CHECK(load_row >= 0);
+    CHECK(m.rows[load_row].kind == MenuRowKind::Action);
+    CHECK(m.rows[load_row].section == sys);
+
+    // Nothing queued before an action fires.
+    int save = 0, load = 0;
+    CHECK(!host.take_pending_state_ops(&save, &load));
+
+    // Confirm on "Save state": queue the seeded slot and close — the host
+    // loop executes it at its dispatch boundary, never mid-frame.
+    host.open(backend);
+    select_row(host.model(), sys, save_row);
+    press(host, backend, kA);
+    CHECK(!host.model().open);
+    CHECK(host.take_pending_state_ops(&save, &load));
+    CHECK(save == 1 && load == 0);
+
+    // One-shot: a second take reads empty.
+    save = load = -1;
+    CHECK(!host.take_pending_state_ops(&save, &load));
+    CHECK(save == 0 && load == 0);
+
+    // The Slot choice moves the endpoint; "Load state" then queues a load
+    // for the NEW slot.
+    host.open(backend);
+    select_row(host.model(), sys, slot_row);
+    press(host, backend, kRight);  // 1 -> 2
+    CHECK(host.state_slot() == 2);
+    select_row(host.model(), sys, load_row);
+    press(host, backend, kA);
+    CHECK(!host.model().open);
+    CHECK(host.take_pending_state_ops(&save, &load));
+    CHECK(load == 2 && save == 0);
+
+    // Navigation alone queues nothing.
+    host.open(backend);
+    select_row(host.model(), sys, slot_row);
+    press(host, backend, kRight);
+    CHECK(!host.take_pending_state_ops(&save, &load));
+    CHECK(host.state_slot() == 3);
+}
+
+// The drain helper: menu-queued ops fold into the Events the host loop
+// already executes at its dispatch boundary (the same ev.save_slot /
+// ev.load_slot vocabulary the assist scripts write) — one executor, one
+// boundary. Pure and headless: the runtime loop's call site is pinned by
+// the wiring guard.
+void drain_menu_state_ops_folds_pending_into_events() {
+    FakeBackend backend;
+    open_fake(backend);
+    HostMenu host;
+    host.build(backend);
+
+    Events ev;
+    gbarecomp::drain_menu_state_ops(host, ev);
+    CHECK(ev.save_slot == 0 && ev.load_slot == 0);  // nothing pending
+
+    // Save action for slot 3 (seeded the way the host seeds it).
+    host.set_state_slot(3);
+    host.open(backend);
+    const int sys = section_by_title(host.model(), "System");
+    CHECK(sys >= 0);
+    select_row(host.model(), sys, row_by_label(host.model(), "Save state"));
+    press(host, backend, kA);
+    gbarecomp::drain_menu_state_ops(host, ev);
+    CHECK(ev.save_slot == 3 && ev.load_slot == 0);
+
+    // Load action for slot 2 folds into the same event vocabulary; the
+    // earlier save request is untouched (drain writes only what fired).
+    host.set_state_slot(2);
+    host.open(backend);
+    select_row(host.model(), sys, row_by_label(host.model(), "Load state"));
+    press(host, backend, kA);
+    gbarecomp::drain_menu_state_ops(host, ev);
+    CHECK(ev.load_slot == 2 && ev.save_slot == 3);
+}
+
 int main() {
     build_seeds_from_backend();
     open_seeds_and_suppresses();
@@ -871,6 +986,8 @@ int main() {
     view_row_follows_endpoint();
     menu_toggle_step_decides_open_and_close();
     menu_view_step_resolves_geometry_policy();
+    state_rows_and_actions();
+    drain_menu_state_ops_folds_pending_into_events();
 
     std::printf("host_menu tests: PASS\n");
     return 0;

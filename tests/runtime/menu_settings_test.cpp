@@ -102,11 +102,34 @@ void foreign_sections_survive() {
 
 }  // namespace
 
+// The save-state slot: parses under [Menu], clamps to the 1..9 slot
+// vocabulary, garbage keeps the value, and the round-trip survives the
+// drop-and-rewrite without duplicates.
+void state_slot_parses_clamps_and_round_trips() {
+    MenuSettings m;
+    CHECK(gbarecomp::apply_menu_settings_line(m, "state_slot", "7"));
+    CHECK(m.state_slot == 7);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "state_slot", "99"));
+    CHECK(m.state_slot == 9);  // clamped high
+    CHECK(gbarecomp::apply_menu_settings_line(m, "state_slot", "0"));
+    CHECK(m.state_slot == 1);  // clamped low
+    CHECK(!gbarecomp::apply_menu_settings_line(m, "state_slot", "junk"));
+    CHECK(m.state_slot == 1);  // garbage keeps the value
+    gbarecomp::testing::TmpConfigDir dir;
+    m.state_slot = 4;
+    gbarecomp::save_menu_settings(dir.path().c_str(), m);
+    MenuSettings back;
+    gbarecomp::load_menu_settings(dir.path().c_str(), back);
+    CHECK(back.state_slot == 4);
+    CHECK(dir.count_occurrences("state_slot") == 1);
+}
+
 int main() {
     display_keys_parse_and_clamp();
     audio_and_graphics_keys_parse();
     save_rewrite_round_trips_without_dupes();
     foreign_sections_survive();
+    state_slot_parses_clamps_and_round_trips();
     std::printf("menu_settings tests: PASS\n");
     return 0;
 }

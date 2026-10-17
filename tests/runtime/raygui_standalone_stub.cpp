@@ -106,8 +106,12 @@ void assemble_text_runs() {
     if (drawn_codepoints().empty()) return;
 
     // Group the codepoint log into runs: a run continues while the next
-    // codepoint sits on the same line (same y) and advances x by roughly a
-    // glyph (the dummy font is fixed-advance; allow slack for spacing).
+    // codepoint sits on the same line (same y). raygui never DRAWS space
+    // glyphs (it just advances), so word boundaries arrive as missing
+    // glyphs — reconstruct them the way the launcher harness does: a gap
+    // of roughly one extra glyph advance folds a space into the run;
+    // anything wider splits it (the dummy font is fixed-advance, so the
+    // bands are multiples of the drawn size).
     const DrawnCodepoint* prev = nullptr;
     TextRun run;
     auto flush = [&]() {
@@ -115,10 +119,17 @@ void assemble_text_runs() {
         run.text.clear();
     };
     for (const auto& cp : drawn_codepoints()) {
-        if (prev != nullptr && cp.position.y == prev->position.y &&
-            (cp.position.x - prev->position.x) > 0.0f &&
-            (cp.position.x - prev->position.x) <= cp.font_size * 2.0f) {
-            // continuation of the current run
+        if (prev != nullptr && cp.position.y == prev->position.y) {
+            const float gap = cp.position.x - prev->position.x;
+            if (gap > 0.0f && gap <= cp.font_size * 0.9f) {
+                // direct continuation: keep the run's origin
+            } else if (gap > cp.font_size * 0.9f &&
+                       gap <= cp.font_size * 2.5f) {
+                run.text.push_back(' ');
+            } else {
+                flush();
+                run = TextRun{"", cp.position, cp.font_size, cp.color};
+            }
         } else {
             flush();
             run = TextRun{"", cp.position, cp.font_size, cp.color};

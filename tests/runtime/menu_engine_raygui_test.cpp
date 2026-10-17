@@ -19,6 +19,9 @@
 #include "menu_model.h"
 #include "raygui_standalone_recorder.h"
 
+#include "host_menu.h"
+#include "support/fake_backend.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -222,6 +225,41 @@ int main() {
         engine.draw(ov, m);
         CHECK(gbarecomp::testing::font_texture_id() == 0);  // stays healed
         CHECK(gbarecomp::testing::shapes_texture_binds() == 1);  // idempotent
+    }
+
+    // The State rows render through THIS engine too (the desktop product
+    // path): a HostMenu-built model — the product path, not a fixture —
+    // drawn and asserted at the run layer. The run assembler reconstructs
+    // word gaps, so multi-word labels assert exactly; a missing row, an
+    // invisible row, or a label change fails here.
+    {
+        gbarecomp::testing::FakeBackend backend;
+        CHECK(backend.open(gbarecomp::OpenParams{}).ok());
+        gbarecomp::HostMenu host;
+        host.build(backend);
+        host.open(backend);
+
+        gbarecomp::testing::reset_recording();
+        engine.draw(ov, host.model());  // top level: the section list
+        CHECK(has_text("System"));
+
+        MenuModel& m = host.model();
+        int sys = -1;
+        for (int i = 0; i < m.section_count; ++i)
+            if (m.sections[i].title &&
+                std::strcmp(m.sections[i].title, "System") == 0)
+                sys = i;
+        CHECK(sys >= 0);
+        m.editing = true;
+        m.section_index = sys;
+        m.row_index = 0;
+        gbarecomp::testing::reset_recording();
+        engine.draw(ov, m);
+        CHECK(has_text("Slot"));
+        CHECK(has_text("Save state"));
+        CHECK(has_text("Load state"));
+        CHECK(has_text("1"));  // the seeded slot value
+        CHECK(has_text("Resume game"));
     }
 
     std::printf("menu_engine_raygui_test: PASS (toggle wording On/Off, "

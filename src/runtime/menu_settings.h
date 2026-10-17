@@ -46,6 +46,8 @@ struct MenuSettings {
     // [Menu] audio.
     bool audio_enabled = true;
     int volume = 100;         // 0..100
+    // [Menu] save-state slot (the menu's State rows: 1..9).
+    int state_slot = 1;
     // [Menu] graphics policy.
     bool frame_interp = false;
     float frame_blend = 0.0f;  // 0 or 1 (the menu Toggle semantics)
@@ -131,6 +133,8 @@ inline bool apply_menu_settings_line(MenuSettings& m, const char* key,
     if (ci_key(key, "audio_enabled") || ci_key(key, "enabled"))
         return parse_toggle(val, &m.audio_enabled);
     if (ci_key(key, "volume")) return parse_clamped_int(val, 0, 100, &m.volume);
+    if (ci_key(key, "state_slot"))
+        return parse_clamped_int(val, 1, 9, &m.state_slot);
     if (ci_key(key, "frame_interp")) return parse_toggle(val, &m.frame_interp);
     if (ci_key(key, "frame_blend")) {
         bool b = false;
@@ -234,6 +238,7 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
         f << "view_width = " << m.fixed_width << "\n";
     f << "audio_enabled = " << (m.audio_enabled ? 1 : 0) << "\n";
     f << "volume = " << m.volume << "\n";
+    f << "state_slot = " << m.state_slot << "\n";
     f << "frame_interp = " << (m.frame_interp ? 1 : 0) << "\n";
     f << "frame_blend = " << (m.frame_blend != 0.0f ? 1 : 0) << "\n";
     f << "\n[video]\n";

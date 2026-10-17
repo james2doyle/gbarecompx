@@ -50,6 +50,10 @@ inline MenuToggleAction menu_toggle_step(bool toggle_edge, bool menu_open) {
     return menu_open ? MenuToggleAction::Close : MenuToggleAction::Open;
 }
 
+// The save-state slot vocabulary: slots 1..9, the same paths the assist
+// scripts and the (retired) F1..F9 hotkeys used — states/<rom>.state<N>.
+inline constexpr int kMenuStateSlotMax = 9;
+
 // The View dirty step sync_resize_driven_view consumes: a framework mode
 // maps to either drawable-driven geometry (Adaptive), 240 (Native), or a
 // fixed width (Fixed). `fixed_width` carries the actual fixed width — the
@@ -144,6 +148,32 @@ public:
         view_available_ = available;
     }
 
+    // Save-state slot (framework content): the State section's Slot choice
+    // seeds from here and updates it; the host persists it (the apply hook
+    // fires on the change) and seeds it back at startup. 1..kMenuStateSlotMax.
+    void set_state_slot(int slot) {
+        state_slot_ = std::clamp(slot, 1, kMenuStateSlotMax);
+    }
+    int state_slot() const { return state_slot_; }
+
+    // Take and clear the ops the Save/Load action rows queued. Returns true
+    // when either slot is nonzero. The HOST LOOP calls this right after
+    // frame() — see drain_menu_state_ops — and the executor runs the op at
+    // that loop's clean dispatch boundary, never inside a menu callback
+    // mid-frame (the same doctrine the imgui-era menu documented).
+    bool take_pending_state_ops(int* save_slot, int* load_slot) {
+        const bool any = pending_save_slot_ != 0 || pending_load_slot_ != 0;
+        if (save_slot) {
+            *save_slot = pending_save_slot_;
+            pending_save_slot_ = 0;
+        }
+        if (load_slot) {
+            *load_slot = pending_load_slot_;
+            pending_load_slot_ = 0;
+        }
+        return any;
+    }
+
     // Apply one MenuResult (public so hosts can feed results they produce
     // themselves, e.g. hotkey-driven changes). Returns true when a change or
     // action was handled.
@@ -172,6 +202,9 @@ private:
         Volume,
         Resume,
         ViewMode,
+        StateSlot,
+        SaveState,
+        LoadState,
     };
 
     MenuModel model_;
@@ -187,6 +220,25 @@ private:
     void (*view_set_)(void*, int) = nullptr;
     void* view_user_ = nullptr;
     bool view_available_ = false;
+    // Save-state slot state (see set_state_slot / take_pending_state_ops).
+    int state_slot_ = 1;
+    int pending_save_slot_ = 0;
+    int pending_load_slot_ = 0;
 };
+
+// Fold the menu's queued state ops into the Events the host loop executes
+// at its dispatch boundary — the same ev.save_slot / ev.load_slot
+// vocabulary the assist scripts write, so exactly one executor handles
+// every save/load regardless of how the player asked for it. Writes only
+// what fired; a hotkey/assist request already in `ev` survives. Pure and
+// headless-testable; the runtime loop's call site (right after
+// host_menu.frame) is pinned by tools/check_menu_state_wiring.py.
+inline void drain_menu_state_ops(HostMenu& host, Events& ev) {
+    int save = 0, load = 0;
+    if (host.take_pending_state_ops(&save, &load)) {
+        if (save) ev.save_slot = save;
+        if (load) ev.load_slot = load;
+    }
+}
 
 }  // namespace gbarecomp

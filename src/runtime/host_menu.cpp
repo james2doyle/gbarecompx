@@ -24,6 +24,11 @@ const char* const kFullscreenChoices[] = {"Windowed", "Borderless",
 // any other carried width such as a --view-width 320 CLI run.
 const char* const kViewChoices[] = {"Native", "Adaptive", "Fixed"};
 
+// The State section's Slot choice: the menu shows slot NUMBERS; the row's
+// int_value is the choice INDEX (slot - 1).
+const char* const kStateSlotChoices[kMenuStateSlotMax] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9"};
+
 }  // namespace
 
 void HostMenu::build(WindowBackend& backend) {
@@ -195,6 +200,37 @@ void HostMenu::build(WindowBackend& backend) {
     // ── System ──────────────────────────────────────────────────────────
     const int system = section("System");
     {
+        // Save-state slots (framework content, every product build): the
+        // Slot choice picks 1..9; the Save/Load actions QUEUE ops that the
+        // host loop drains into ev.save_slot / ev.load_slot (see
+        // drain_menu_state_ops) and executes at its clean dispatch
+        // boundary — never from inside a menu callback mid-frame. The
+        // executor and slot paths in runtime.cpp are deliberately ungated
+        // framework content; the imgui-era menu's version of this feature
+        // compiled out with it, which is why the rows carry literal-label
+        // pins in the headless suites.
+        MenuRow slot_row;
+        slot_row.kind = MenuRowKind::Choice;
+        slot_row.label = "Slot";
+        slot_row.choices = kStateSlotChoices;
+        slot_row.choice_count = kMenuStateSlotMax;
+        slot_row.int_value = state_slot_ - 1;
+        slot_row.section = system;
+        add(slot_row, Bind::StateSlot);
+
+        MenuRow save_row;
+        save_row.kind = MenuRowKind::Action;
+        save_row.label = "Save state";
+        save_row.section = system;
+        add(save_row, Bind::SaveState);
+
+        MenuRow load_row;
+        load_row.kind = MenuRowKind::Action;
+        load_row.label = "Load state";
+        load_row.section = system;
+        add(load_row, Bind::LoadState);
+    }
+    {
         MenuRow row;
         row.kind = MenuRowKind::Action;
         row.label = "Resume game";
@@ -346,6 +382,14 @@ bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
                 model_, row, view_get_ ? view_get_(view_user_) : v);
             break;
         }
+        case Bind::StateSlot: {
+            // Choice index -> slot number; reseed like the View row (the
+            // host owns the slot, the model only proposed it).
+            state_slot_ = std::clamp(menu_value_int(model_, row) + 1, 1,
+                                     kMenuStateSlotMax);
+            menu_set_value_int(model_, row, state_slot_ - 1);
+            break;
+        }
         }
         if (apply_hook_ && bind != Bind::Resume) {
             menu_set_status(model_, "Saved");
@@ -360,6 +404,20 @@ bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
         const int row = result.action_row;
         if (binds_[row] == Bind::Resume) {
             // Framework-owned: close settings and return to the game.
+            menu_close(model_);
+            return true;
+        }
+        if (binds_[row] == Bind::SaveState) {
+            // Record and close: the actual save runs on the host loop at
+            // the clean dispatch boundary (drain_menu_state_ops -> the
+            // ev.save_slot executor), never inside a menu callback
+            // mid-frame — the imgui-era menu's documented doctrine.
+            pending_save_slot_ = state_slot_;
+            menu_close(model_);
+            return true;
+        }
+        if (binds_[row] == Bind::LoadState) {
+            pending_load_slot_ = state_slot_;
             menu_close(model_);
             return true;
         }

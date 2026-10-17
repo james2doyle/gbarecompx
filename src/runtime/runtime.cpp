@@ -3561,6 +3561,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                     if (ms.view_mode == 2 && *ctx->fixed_width > 0)
                         ms.fixed_width = *ctx->fixed_width;
                 }
+                ms.state_slot = ctx->host->state_slot();
                 save_menu_settings(ctx->dir, ms);
                 window.audio().set_enabled(ms.audio_enabled);
             },
@@ -3583,6 +3584,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         },
         &runtime_ui_context,
         opts.resize_driven_view && opts.max_resize_view_width > 240);
+
+    // Save-state slots: the menu's System section rows (Slot / Save state /
+    // Load state) seed from the persisted setting; the actions queue ops
+    // that drain_menu_state_ops folds into ev.save_slot / ev.load_slot —
+    // the same ungated executor the assist scripts use (below). The slot
+    // round-trips through config.ini via the apply hook.
+    host_menu.set_state_slot(menu_settings.state_slot);
 
     // Host-window save-state slots: the ROM path with a .stateN extension.
     // Shift+F1..F9 writes slots 1..9 and F1..F9 restores them; a runtime menu
@@ -3900,6 +3908,10 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             menu_pointer_down = pointer.down;
 
             host_menu.frame(*menu_backend, ev, pointer);
+            // Menu state ops fold into the same events the assist scripts
+            // write; the executor below runs them at this loop's clean
+            // dispatch boundary — never inside a menu callback mid-frame.
+            drain_menu_state_ops(host_menu, ev);
             // The backend derives its own suppression from the presented
             // model, but that present happens after this mask: mask here too
             // so the opening frame's trigger input cannot reach the game.
@@ -4112,10 +4124,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                 std::printf("savestate_saved slot=%d path=\"%s\"\n",
                             ev.save_slot, path.c_str());
                 std::fflush(stdout);
+                char slot_text[16];
+                std::snprintf(slot_text, sizeof(slot_text), "Slot %d",
+                              ev.save_slot);
+                menu_set_toast(host_menu.model(), "State saved", slot_text);
             } else {
                 std::fprintf(stderr,
                              "[gbarecomp:runtime] savestate save (slot %d) "
                              "failed: %s\n", ev.save_slot, e.c_str());
+                menu_set_toast(host_menu.model(), "State save failed",
+                               e.c_str());
             }
         }
         if (ev.load_slot) {
@@ -4138,10 +4156,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                 if (pacer) pacer->reset();
                 rewind_history.clear();
                 next_rewind_capture_frame = ppu.frame_count();
+                char slot_text[16];
+                std::snprintf(slot_text, sizeof(slot_text), "Slot %d",
+                              ev.load_slot);
+                menu_set_toast(host_menu.model(), "State loaded", slot_text);
             } else {
                 std::fprintf(stderr,
                              "[gbarecomp:runtime] savestate load (slot %d) "
                              "failed: %s\n", ev.load_slot, e.c_str());
+                menu_set_toast(host_menu.model(), "State load failed",
+                               e.c_str());
             }
         }
         bool rewind_requested = ev.rewind;
