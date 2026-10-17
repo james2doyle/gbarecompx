@@ -9,6 +9,8 @@
 
 #include <cstdint>
 
+#include "presentation_layout.h"
+
 namespace gbarecomp {
 
 namespace {
@@ -28,6 +30,30 @@ const char* const kViewChoices[] = {"Native", "Adaptive", "Fixed"};
 // int_value is the choice INDEX (slot - 1).
 const char* const kStateSlotChoices[kMenuStateSlotMax] = {
     "1", "2", "3", "4", "5", "6", "7", "8", "9"};
+
+// Sharp-scaling honesty (the 2026-10-17 "does nothing, even at scale 8"
+// report): at an exact integer layout the prescale is a no-op BY DESIGN —
+// every game pixel already spans whole device pixels, so there is nothing
+// to even out. Say so on the status line instead of leaving the toggle
+// looking broken. The decision is the SAME computation the present pipeline
+// runs (compute_sharp_prescale_factor over the live drawable), so the menu
+// can never disagree with the renderer; with sharp off (or engaged) the
+// status is left alone. kMaxStatus is 48 — both strings fit.
+void sharp_status_if_inert(WindowBackend& backend, MenuModel& model) {
+    if (!backend.fx().settings().sharp) return;
+    int lw = 0, lh = 0, dw = 0, dh = 0;
+    backend.video().logical_size(&lw, &lh);
+    if (lw <= 0 || lh <= 0) return;
+    if (!backend.video().drawable_size(&dw, &dh)) return;
+    const PresentationLayout lay =
+        compute_presentation_layout(dw, dh, lw, lh);
+    if (lay.width <= 0) return;
+    if (compute_sharp_prescale_factor(lay, lw, lh) >= 2) return;
+    menu_set_status(model,
+                    lay.integer_scale > 0
+                        ? "Sharp scaling: inert at exact scale"
+                        : "Sharp scaling: window too small to engage");
+}
 
 }  // namespace
 
@@ -286,6 +312,10 @@ void HostMenu::build(WindowBackend& backend) {
 
     // Games re-append their rows here, with values seeded from game state.
     if (rebuild_hook_) rebuild_hook_(rebuild_user_, model_);
+
+    // Opened onto an inert sharp toggle? Say so now (the toggle path does
+    // the same live, in apply()).
+    sharp_status_if_inert(backend, model_);
 }
 
 void HostMenu::open(WindowBackend& backend) {
@@ -411,6 +441,10 @@ bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
             backend.fx().apply(s);
             menu_set_value_int(model_, row,
                                backend.fx().settings().sharp ? 1 : 0);
+            // The user just flipped sharp while looking at the picture: if
+            // the layout makes it a no-op, say so NOW (the reopen path does
+            // the same in build()).
+            sharp_status_if_inert(backend, model_);
             break;
         }
         case Bind::LcdBorder: {

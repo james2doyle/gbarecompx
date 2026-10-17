@@ -1635,6 +1635,13 @@ public:
 #endif
     }
 
+    // The logical size the present pipeline scales from — the widescreen
+    // view width lives in base_w too, so this is the layout's true input.
+    void logical_size(int* width, int* height) const override {
+        if (width) *width = impl_->base_w;
+        if (height) *height = impl_->base_h;
+    }
+
     bool set_surface_size(int base_w, int base_h) override {
         if (base_w < 1 || base_h < 1) return false;
         if (base_w == impl_->base_w && base_h == impl_->base_h) return true;

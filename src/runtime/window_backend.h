@@ -177,6 +177,15 @@ public:
     virtual bool readback(std::vector<std::uint8_t>& out, int& w, int& h) const = 0;
     virtual float refresh_hz() const = 0;
     virtual bool drawable_size(int* w, int* h) const = 0;
+    // The logical (game-framebuffer) size the present pipeline scales from —
+    // what compute_presentation_layout's logical_width/height arguments mean
+    // for THIS backend right now. Default = native GBA geometry so fakes and
+    // minimal implementers stay valid; the raylib backend returns its live
+    // base (widescreen view sizes included).
+    virtual void logical_size(int* w, int* h) const {
+        if (w) *w = 240;
+        if (h) *h = 160;
+    }
     virtual bool set_surface_size(int base_w, int base_h) = 0;
     virtual void set_title(const char* title) = 0;
     virtual int  scale() const = 0;

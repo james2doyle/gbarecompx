@@ -523,6 +523,50 @@ void build_without_shaders_skips_lcd_group() {
     CHECK(row_by_label(host.model(), "LCD ghosting (frame blending)") >= 0);
 }
 
+// ── 15b. Sharp-scaling honesty: the menu SAYS when the toggle is inert ──
+// At an exact integer layout the prescale is a no-op BY DESIGN (every game
+// pixel already spans whole device pixels) — the 2026-10-17 "does nothing,
+// even at scale 8" report. The fake's default drawable (720x480) is an
+// exact 3x layout: with sharp on, the status line names the inertness; a
+// fractional drawable (700x500) engages and must stay silent; and the
+// toggle path shows the status the moment the user turns sharp on at an
+// inert size, not just on the next open.
+void sharp_inert_status() {
+    FakeBackend backend;
+    open_fake(backend);
+    FxSettings fx;
+    fx.sharp = true;
+    backend.fake_fx.stored = fx;
+
+    HostMenu host;
+    host.build(backend);
+    CHECK(std::strstr(host.model().status, "inert") != nullptr);
+
+    // Engaged: a fractional drawable computes a prescale — no status.
+    backend.recording_video.drawable_w = 700;
+    backend.recording_video.drawable_h = 500;
+    host.build(backend);
+    CHECK(host.model().status[0] == '\0');
+
+    // The toggle path: sharp off at the inert size, open, toggle on — the
+    // status must appear on THAT apply, without a reopen. open(), not
+    // build(): frame() processes input only while the menu is open.
+    backend.recording_video.drawable_w = 720;
+    backend.recording_video.drawable_h = 480;
+    fx.sharp = false;
+    backend.fake_fx.stored = fx;
+    host.open(backend);
+    CHECK(host.model().status[0] == '\0');
+    const int display = section_by_title(host.model(), "Display");
+    CHECK(display >= 0);
+    select_row(host.model(), display,
+               row_by_label(host.model(), "Sharp scaling"));
+    CHECK(host.model().status[0] == '\0');
+    press(host, backend, kA);
+    CHECK(backend.fake_fx.stored.sharp);
+    CHECK(std::strstr(host.model().status, "inert") != nullptr);
+}
+
 // ── 16. The hook is optional: no hook, no "Saved" status ────────────────
 void no_hook_no_status() {
     FakeBackend backend;
@@ -1027,6 +1071,7 @@ void toast_and_status_clocks_expire() {
 
 int main() {
     build_seeds_from_backend();
+    sharp_inert_status();
     open_seeds_and_suppresses();
     edge_detection_one_move_per_press();
     nav_applies_toggle_and_persists();
