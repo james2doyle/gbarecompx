@@ -109,6 +109,28 @@ libmgba itself is linked only into the opt-in oracle binary
 - **Modifications:** none.
 
 
+## MMPX
+
+- **Upstream:** McGuire & Gagiu, "MMPX Style-Preserving Pixel Art
+  Magnification", Journal of Computer Graphics Techniques (JCGT) vol. 10
+  no. 2, 2021 — https://jcgt.org/published/0010/02/04/ (open access;
+  reference code MIT). The vendored C99 form is credited in-file to
+  ITotalJustice's transcription of the authors' code.
+- **License:** MIT
+- **Used as:** `src/runtime/mmpx.h` — an algorithm-level C++ mirror + GLSL
+  transliteration (both dialects) of the rule cascade, our own code: no
+  libretro slang text was carried. `tests/runtime/support/
+  mmpx_reference_c99.c` — a vendored, **test-only** copy of the
+  reference C99 implementation, used as a byte-for-byte differential
+  oracle.
+- **Modifications:** the oracle's `clamp()` min/max comparison is
+  corrected to the documented intent (upper-clamp never fired upstream —
+  out-of-bounds reads on malformed input); DEVIATION note in-file. Our
+  GLSL assumes opaque input (FFTA's framebuffer) — equality is RGB-only;
+  the mirror stays alpha-faithful and the differential test runs opaque
+  data, where the two agree exactly.
+
+
 ## emibios
 
 - **Upstream:** https://github.com/coolbho3k/emibios

@@ -33,15 +33,17 @@ inherits upstream's license terms (see [License](#license)).
   strict replay routes pin every executed path; CI runs the full gate on
   every push.
 - **Enhancements without behavior change.** Widescreen view modes
-  (native, adaptive, fixed 16:9), LCD subpixel-grid and ghosting
-  shaders, an in-game settings menu that persists per game,
-  fast-forward and rewind assist, and a mod-package loader — all opt-in
-  and safe to the frame hashes by construction.
+  (native, adaptive, fixed 16:9), a present-time shader stack — sharp
+  scaling, MMPX edge smoothing, pixel grid + opacity, LCD subpixel
+  grille, ghosting, boost, dither, deband — an in-game settings menu
+  that persists per game, fast-forward and rewind assist, and a
+  mod-package loader — all opt-in and safe to the frame hashes by
+  construction.
 - **A real player experience.** A **raygui pre-boot launcher** fronts the
   game on desktop: Play, select a ROM (drag-and-drop or the native file
   dialog), first-boot picking, gamepad navigation, optional box art. In
-  game, the settings overlay carries the view modes, LCD effects, audio and
-  assist toggles — all persisted. (On Android the platform's own setup
+  game, the settings overlay carries the view modes, the shader stack,
+  audio and assist toggles — all persisted. (On Android the platform's own setup
   activity is the pre-boot surface; the launch screen is desktop-only.)
 - **Runs where players are.** raylib 6 on desktop with packaged releases
   (portable zip, static Windows executable, public Android APK), and an
@@ -59,7 +61,7 @@ here, replaced by lighter things the framework owns outright.
 | Capability | The SDL2 era | The raylib era |
 |---|---|---|
 | Host layer | SDL2 window/audio/input glue; SDL2 dev packages on every build machine | One backend-neutral seam; raylib 6 fetched by CMake at configure time; no system GUI packages anywhere |
-| Display effects | CPU blits; CRT-style filters at best | GPU-side LCD subpixel-grid shader (one cell per game pixel, scale-aware, anti-aliased), Bayer dither against BGR555 banding, adaptive deband — each an independent pass, off by default, invisible to frame hashes |
+| Display effects | CPU blits; CRT-style filters at best | GPU-side present chain: MMPX 2× edge-directed smoothing (palette-exact), sharp prescale+bilinear for fractional scales, LCD subpixel grille and pixel-border grid (one shared mask pass, scale-aware, anti-aliased), Bayer dither against BGR555 banding, adaptive deband, ghosting — each an independent toggle, off by default, invisible to frame hashes |
 | Headless / CI | A display server required for anything visual | Software-GL headless tier: present/readback with no display server at all |
 | Android | The SDLActivity shell and its class-loader quirks | A direct NativeActivity scaffold: touch controls, suspend/resume, no SDL |
 | Contracts | Discovered by absence of effect | Capabilities, errors and threading are contracts in one interface |
@@ -72,6 +74,26 @@ here, replaced by lighter things the framework owns outright.
 | Pre-boot experience | None — CLI flags or a config file | A launch screen: Play, select ROM (drag-and-drop included), first-boot picker, gamepad navigation, optional box art |
 | In-game settings | The recomp-ui menu surface, carried per backend | The framework's own generic menu: every row applied live and persisted per game, including the widescreen View modes |
 | Mods surface | recomp-ui's Mods UI | The launcher-seam option surface, hidden unless the game supplies a catalog |
+
+## The present-time shader stack
+
+Between the emulated framebuffer and the window, the raylib backend
+composes an opt-in chain of GPU passes — each a settings toggle, off by
+default, ordered so the structural work happens first and the display
+masks last (MMPX → sharp prescale → deband → dither → LCD):
+
+| Toggle | What it does | Engages |
+|---|---|---|
+| **Edge smoothing** | MMPX (McGuire & Gagiu, JCGT 2021): a 2× edge-directed prepass that rebuilds diagonals, intersections and corners while preserving the palette exactly — every output pixel is a source pixel, no blends, so hand-dithered gradients pass through as content. Differentially tested byte-for-byte against the algorithm's MIT reference implementation (see `THIRD_PARTY_ATTRIBUTION.md`). | Display ≥ 2×; inert below |
+| **Sharp scaling** | At fractional integer-scaler layouts the frame is prescaled to the nearest whole multiple and finished with bilinear, so every game pixel occupies an equal on-screen width — the uneven texel alternation a fractional blit produces above ~3× is what this removes. | Fractional layouts only; exact integer scales are inert by design |
+| **Pixel grid** + **Grid opacity** | A ~1-screen-pixel dark line on every game-pixel boundary, anti-aliased and scale-aware — a port of LADXHD's PixelGrid, composed onto the shared LCD program as a second mask rather than a second pass. | Scale ≥ 2 |
+| **LCD** | The subpixel grille, one cell per game pixel, the same shared mask pass — **Pixel grid** composes with it into a single draw. | As configured |
+| **LCD boost / dither / deband / ghosting** | Panel color lift, Bayer dither against BGR555 banding, adaptive debanding, frame-blend ghosting. | As configured |
+
+Everything is anchored in game-pixel space, so widescreen bars and
+letterboxing never distort the masks; nothing touches the emulator's own
+output — readback, frame diffs and golden hashes see the raw
+framebuffer, by construction.
 
 ## How a consumer game uses it
 
