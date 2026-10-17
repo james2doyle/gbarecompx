@@ -45,6 +45,13 @@ inherits upstream's license terms (see [License](#license)).
   game, the settings overlay carries the view modes, the shader stack,
   audio and assist toggles — all persisted. (On Android the platform's own setup
   activity is the pre-boot surface; the launch screen is desktop-only.)
+- **Controllers on Android, without patching raylib.** A glue-level input
+  capture trusts the keycode, not the per-event source bits — devices
+  that flag gamepad buttons as keyboard events (raylib #5387's class)
+  keep full controller support, and the OS's KeyCharacterMap fallback
+  synthesis (the device keymap turns an unhandled BUTTON_B into BACK —
+  the classic "B opens the menu" plague) is consumed before it can fire.
+  The pad's menu button opens the settings overlay on every platform.
 - **Runs where players are.** raylib 6 on desktop with packaged releases
   (portable zip, static Windows executable, public Android APK), and an
   Android scaffold with touch controls and a complete
