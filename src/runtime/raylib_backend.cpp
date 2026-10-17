@@ -31,8 +31,10 @@
 #endif
 #if defined(__ANDROID__)
 #include <EGL/egl.h>
+#include <android/input.h>  // AInputEvent getters + SOURCE/AXIS ids (pad hook)
 #endif
 
+#include "android_gamepad.h"
 #include "assist_pad_binding.h"
 #include "audio_convert.h"
 #include "audio_gain.h"
@@ -1850,6 +1852,91 @@ private:
     Impl* impl_;
 };
 
+#if defined(__ANDROID__)
+// ── Android gamepad capture (android_gamepad.h) ─────────────────────────────
+// raylib's Android backend drops gamepad KEY events whose source ALSO carries
+// KEYBOARD (upstream issue #5387; our pinned 6.0 SHA predates the 5e14ac5
+// fix): the branch requires GAMEPAD/JOYSTICK and NOT KEYBOARD, and the
+// keyboard fallback table maps every AKEYCODE_BUTTON_* to 0 — a dual-class
+// device loses every button. Measured live on the vendor-0x2020 AYN Odin
+// (dumpsys: Classes KEYBOARD | GAMEPAD | JOYSTICK): sticks (JOYSTICK-source
+// motion) reached raylib, every button was dead, and the vendor's BACK key
+// (HID 0x9e → AKEYCODE_BACK → KEY_BACK → the Back gesture → menu toggle) was
+// the only visibly "working" control — the user's menu-on-B report.
+//
+// This hook owns the gamepad truth at the glue level and trusts the KEYCODE,
+// not the source bits — the direction upstream's post-pin fix took. It
+// CHAINS to raylib's callback: the glue has exactly ONE onInputEvent slot,
+// so returning 0 would drop the event for raylib too. Chaining keeps every
+// raylib behavior — BACK→KEY_BACK, launcher gamepad nav, touch. The input
+// pump's Android block reads g_android_pad instead of raylib's gamepad
+// state; the GBA mapping stays in gamepad_map.h (shared with desktop).
+//
+// Threading: the glue invokes onInputEvent on ITS input thread while the
+// game thread pumps; AndroidPadState's fields are atomics for exactly this.
+struct android_app;
+extern "C" struct android_app* GetAndroidApp(void);  // rcore_android.c
+
+static gbarecomp::AndroidPadState g_android_pad;
+static int32_t (*g_android_pad_saved)(struct android_app*, AInputEvent*) =
+    nullptr;
+static bool g_android_pad_installed = false;
+
+// Bounded census: the FIRST sighting of each distinct keycode / motion
+// source, with the event source — on-device evidence for which transport a
+// pad uses (the #5387 question: what source do its key events carry). Same
+// spirit as the copy-guard lines: bounded, unconditional, diagnostic.
+static void pad_census_key(int keycode, int source) {
+    static std::map<int, bool> logged;
+    if (logged.emplace(keycode, true).second)
+        TraceLog(LOG_INFO, "pad-census: key keycode=%d source=0x%X", keycode,
+                 static_cast<unsigned>(source));
+}
+
+static void pad_census_motion(int source) {
+    static int logged_source = -1;
+    if (logged_source != source) {
+        logged_source = source;
+        TraceLog(LOG_INFO, "pad-census: motion source=0x%X",
+                 static_cast<unsigned>(source));
+    }
+}
+
+static int32_t android_pad_observe(struct android_app* app,
+                                   AInputEvent* event) {
+    const int32_t type = AInputEvent_getType(event);
+    const int32_t source = AInputEvent_getSource(event);
+    if (type == AINPUT_EVENT_TYPE_KEY) {
+        const int32_t keycode = AKeyEvent_getKeyCode(event);
+        if (gbarecomp::android_keycode_to_pad(keycode) >= 0) {
+            pad_census_key(keycode, source);
+            g_android_pad.key(
+                keycode, AKeyEvent_getAction(event) != AKEY_EVENT_ACTION_UP);
+        }
+    } else if (type == AINPUT_EVENT_TYPE_MOTION &&
+               ((source & AINPUT_SOURCE_JOYSTICK) != 0 ||
+                (source & AINPUT_SOURCE_GAMEPAD) != 0)) {
+        pad_census_motion(source);
+        // Axis ids ascending, so the standard GAS/BRAKE trigger pair (22/23)
+        // lands AFTER the LTRIGGER/RTRIGGER aliases (17/18) when a pad
+        // reports both: the standard convention wins the shared slot.
+        for (const int axis :
+             {gbarecomp::kAMotionAxisX, gbarecomp::kAMotionAxisY,
+              gbarecomp::kAMotionAxisZ, gbarecomp::kAMotionAxisRZ,
+              gbarecomp::kAMotionAxisLTrigger,
+              gbarecomp::kAMotionAxisRTrigger, gbarecomp::kAMotionAxisGas,
+              gbarecomp::kAMotionAxisBrake})
+            g_android_pad.motion_axis(
+                axis, AMotionEvent_getAxisValue(event, axis, 0));
+        g_android_pad.hat(
+            AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_HAT_X, 0),
+            AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_HAT_Y, 0));
+    }
+    // Observe-only: hand the event to raylib unchanged.
+    return g_android_pad_saved ? g_android_pad_saved(app, event) : 0;
+}
+#endif  // __ANDROID__
+
 // ── V2 concern: Input ───────────────────────────────────────────
 // The V2 `Input` interface over the backend's Impl state. read() is the
 // snapshot fill (levels only) that used to sit at the top of the flat
@@ -1935,57 +2022,57 @@ public:
         // backend. The native->canonical table is explicit so an upstream
         // reordering cannot silently remap a binding.
 #if defined(__ANDROID__)
-        // No GLFW on Android: raylib's own (capped, unfiltered) slots are all
-        // there is.
-        s.pad_connected = impl_->api->IsGamepadAvailable(0);
+        // Gamepad capture is OURS on Android (see android_pad_observe above):
+        // raylib's Android backend drops gamepad key events on dual-class
+        // devices (#5387) and maps no AKEYCODE_BUTTON_* as keyboard keys, so
+        // its gamepad state cannot be trusted for buttons here. The hook's
+        // state feeds the SAME shared mapping the desktop GLFW path uses —
+        // the gba_bit column, stick_to_dpad() for the left stick, and
+        // gamepad_to_keyinput() are gamepad_map.h, not re-derived. The assist
+        // pad defaults (raylib_keymap.h) already bind the right trigger to
+        // fast-forward through kPadAxisRightTrigger.
+        s.pad_connected = g_android_pad.available();
         if (s.pad_connected) {
             static const struct {
-                int ray_button;
                 int pad_button;
                 std::uint16_t gba_bit;   // 0 when the button has no GBA meaning
             } kPadMap[] = {
-                {GAMEPAD_BUTTON_RIGHT_FACE_DOWN, kPadA, kGbaKeyA},
-                {GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, kPadB, kGbaKeyB},
-                {GAMEPAD_BUTTON_RIGHT_FACE_LEFT, kPadX, 0},
-                {GAMEPAD_BUTTON_RIGHT_FACE_UP, kPadY, 0},
-                {GAMEPAD_BUTTON_LEFT_TRIGGER_1, kPadLeftBumper, kGbaKeyL},
-                {GAMEPAD_BUTTON_RIGHT_TRIGGER_1, kPadRightBumper, kGbaKeyR},
-                {GAMEPAD_BUTTON_MIDDLE_LEFT, kPadBack, kGbaKeySelect},
-                {GAMEPAD_BUTTON_MIDDLE_RIGHT, kPadStart, kGbaKeyStart},
-                {GAMEPAD_BUTTON_LEFT_THUMB, kPadLeftThumb, 0},
-                {GAMEPAD_BUTTON_RIGHT_THUMB, kPadRightThumb, 0},
-                {GAMEPAD_BUTTON_LEFT_FACE_UP, kPadDpadUp, kGbaKeyUp},
-                {GAMEPAD_BUTTON_LEFT_FACE_RIGHT, kPadDpadRight, kGbaKeyRight},
-                {GAMEPAD_BUTTON_LEFT_FACE_DOWN, kPadDpadDown, kGbaKeyDown},
-                {GAMEPAD_BUTTON_LEFT_FACE_LEFT, kPadDpadLeft, kGbaKeyLeft},
-                {GAMEPAD_BUTTON_LEFT_TRIGGER_2, kPadLeftTrigger, 0},
-                {GAMEPAD_BUTTON_RIGHT_TRIGGER_2, kPadRightTrigger, 0},
+                {kPadA, kGbaKeyA},
+                {kPadB, kGbaKeyB},
+                {kPadX, 0},
+                {kPadY, 0},
+                {kPadLeftBumper, kGbaKeyL},
+                {kPadRightBumper, kGbaKeyR},
+                {kPadBack, kGbaKeySelect},
+                {kPadStart, kGbaKeyStart},
+                {kPadLeftThumb, 0},
+                {kPadRightThumb, 0},
+                {kPadDpadUp, kGbaKeyUp},
+                {kPadDpadRight, kGbaKeyRight},
+                {kPadDpadDown, kGbaKeyDown},
+                {kPadDpadLeft, kGbaKeyLeft},
+                {kPadLeftTrigger, 0},
+                {kPadRightTrigger, 0},
             };
             GamepadSnapshot pad;
             for (const auto& m : kPadMap) {
-                if (impl_->api->IsGamepadButtonDown(0, m.ray_button)) {
+                if (g_android_pad.button_down(m.pad_button)) {
                     s.hold_pad_button(m.pad_button);
                     pad.buttons |= m.gba_bit;
                 }
             }
-            // raylib axes are float -1..1; the shared mapping works in SDL's int
-            // units (-32768..32767), so scale. Triggers rest at -1 and press to
-            // +1, which lands on the same side of the 16000 threshold as SDL's
-            // 0..32767 range does.
-            const float lx = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
-            const float ly = impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
-            pad.stick_x = static_cast<int>(lx * 32767.0f);
-            pad.stick_y = static_cast<int>(ly * 32767.0f);
+            // The hook's axes already live in the shared int units
+            // (-32768..32767; android_axis_scaled), triggers included.
+            pad.stick_x = g_android_pad.axis(kPadAxisLeftX);
+            pad.stick_y = g_android_pad.axis(kPadAxisLeftY);
             s.hold_pad_axis(kPadAxisLeftX, pad.stick_x);
             s.hold_pad_axis(kPadAxisLeftY, pad.stick_y);
-            s.hold_pad_axis(kPadAxisRightX, static_cast<int>(
-                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_X) * 32767.0f));
-            s.hold_pad_axis(kPadAxisRightY, static_cast<int>(
-                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_Y) * 32767.0f));
-            s.hold_pad_axis(kPadAxisLeftTrigger, static_cast<int>(
-                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_TRIGGER) * 32767.0f));
-            s.hold_pad_axis(kPadAxisRightTrigger, static_cast<int>(
-                impl_->api->GetGamepadAxisMovement(0, GAMEPAD_AXIS_RIGHT_TRIGGER) * 32767.0f));
+            s.hold_pad_axis(kPadAxisRightX, g_android_pad.axis(kPadAxisRightX));
+            s.hold_pad_axis(kPadAxisRightY, g_android_pad.axis(kPadAxisRightY));
+            s.hold_pad_axis(kPadAxisLeftTrigger,
+                            g_android_pad.axis(kPadAxisLeftTrigger));
+            s.hold_pad_axis(kPadAxisRightTrigger,
+                            g_android_pad.axis(kPadAxisRightTrigger));
             // gamepad_to_keyinput() returns ACTIVE-LOW; the snapshot carries
             // ACTIVE-HIGH pressed bits (see input_translate.h), so invert once.
             s.pad_gba_bits =
@@ -2374,7 +2461,10 @@ public:
 #if defined(GBARECOMP_USE_RAYLIB)
         if (!impl_->open || !impl_->api->IsWindowReady()) return false;
 #if defined(__ANDROID__)
-        return impl_->api->IsGamepadAvailable(0);
+        // Our capture knows the pad even before its first stick move —
+        // raylib's slot only lights up on a JOYSTICK-source motion event,
+        // which a button-only session never produces. Either truth counts.
+        return g_android_pad.available() || impl_->api->IsGamepadAvailable(0);
 #elif defined(PLATFORM_MEMORY)
         return false;  // no input system, no GLFW (see above)
 #else
@@ -3004,6 +3094,21 @@ Result RaylibBackend::open(const OpenParams& params) {
     // combined with linear_filter defaulting to FALSE meant the default window
     // was invisible and never shown again -- nothing else cleared the flag.
     // Found by the raylib_present integration test, which asserts visibility.
+
+#if defined(__ANDROID__)
+    // Chain the pad capture onto raylib's callback. raylib installed its own
+    // AndroidInputCallback inside InitWindow; the glue has one slot, so the
+    // hook saves it and forwards (android_pad_observe). Idempotent: open()
+    // re-entry must not re-save our own hook as "raylib's".
+    {
+        struct android_app* app = GetAndroidApp();
+        if (app && !g_android_pad_installed) {
+            g_android_pad_saved = app->onInputEvent;
+            app->onInputEvent = android_pad_observe;
+            g_android_pad_installed = true;
+        }
+    }
+#endif
 
     // raylib 5+ removed CreateTexture(); a streaming texture is created from an
     // Image we own, then fed with UpdateTexture() every present.

@@ -1326,6 +1326,10 @@ add_executable(gamepad_map_tests tests/runtime/gamepad_map_test.cpp)
 target_include_directories(gamepad_map_tests PRIVATE src/runtime)
 add_test(NAME gamepad_map_tests COMMAND gamepad_map_tests)
 
+add_executable(android_gamepad_tests tests/runtime/android_gamepad_test.cpp)
+target_include_directories(android_gamepad_tests PRIVATE src/runtime)
+add_test(NAME android_gamepad_tests COMMAND android_gamepad_tests)
+
 add_executable(assist_pad_binding_tests tests/runtime/assist_pad_binding_test.cpp)
 target_include_directories(assist_pad_binding_tests PRIVATE src/runtime)
 add_test(NAME assist_pad_binding_tests COMMAND assist_pad_binding_tests)
