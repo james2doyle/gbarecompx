@@ -125,6 +125,45 @@ void foreign_sections_survive() {
     CHECK(dir.contains("Turbo = Tab"));  // untouched section preserved
 }
 
+// Sharp scaling + the border pixel grid: parse, clamp, and round-trip.
+// sharp_filter keeps the historical [video] key the runtime config parser
+// reads (runtime.cpp); the grid keys follow the lcd_* claim-the-key family.
+void sharp_and_pixel_grid_keys_parse() {
+    MenuSettings m;
+    CHECK(gbarecomp::apply_menu_settings_line(m, "sharp_filter", "1"));
+    CHECK(m.sharp_filter);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "sharp_filter", "off"));
+    CHECK(!m.sharp_filter);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "sharp_filter", "junk"));
+    CHECK(!m.sharp_filter);  // garbage keeps the value
+    CHECK(gbarecomp::apply_menu_settings_line(m, "lcd_border", "on"));
+    CHECK(m.lcd_border);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "lcd_grid_alpha", "0.6"));
+    CHECK(m.lcd_grid_alpha == 0.6f);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "lcd_grid_alpha", "5"));
+    CHECK(m.lcd_grid_alpha == 1.0f);  // clamped high
+    CHECK(gbarecomp::apply_menu_settings_line(m, "lcd_grid_alpha", "-1"));
+    CHECK(m.lcd_grid_alpha == 0.0f);  // clamped low
+    CHECK(!gbarecomp::apply_menu_settings_line(m, "nope", "1"));
+}
+
+void sharp_and_grid_round_trip() {
+    gbarecomp::testing::TmpConfigDir dir;
+    MenuSettings m;
+    m.sharp_filter = true;
+    m.lcd_border = true;
+    m.lcd_grid_alpha = 0.65f;
+    gbarecomp::save_menu_settings(dir.path().c_str(), m);
+    MenuSettings back;
+    gbarecomp::load_menu_settings(dir.path().c_str(), back);
+    CHECK(back.sharp_filter);
+    CHECK(back.lcd_border);
+    CHECK(back.lcd_grid_alpha == 0.65f);
+    CHECK(dir.count_occurrences("sharp_filter") == 1);
+    CHECK(dir.count_occurrences("lcd_border") == 1);
+    CHECK(dir.count_occurrences("lcd_grid_alpha") == 1);
+}
+
 }  // namespace
 
 // The save-state slot: parses under [Menu], clamps to the 1..9 slot
@@ -152,6 +191,8 @@ void state_slot_parses_clamps_and_round_trips() {
 int main() {
     display_keys_parse_and_clamp();
     audio_and_graphics_keys_parse();
+    sharp_and_pixel_grid_keys_parse();
+    sharp_and_grid_round_trip();
     save_rewrite_round_trips_without_dupes();
     video_merge_preserves_foreign_lines_and_is_idempotent();
     foreign_sections_survive();

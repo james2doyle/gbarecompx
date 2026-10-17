@@ -206,6 +206,9 @@ struct Args {
     bool lcd_dither_given = false;
     float lcd_deband = 0.0f;        // --lcd-deband 0.0..16.0: vertical smooth
     bool lcd_deband_given = false;  // threshold in LSB (0 = off)
+    // --sharp-filter has a given marker of its own: the menu-persisted
+    // [video] sharp_filter key applies only when the CLI did not set it.
+    bool sharp_filter_given = false;
     // Explicitly-given markers for the menu-persisted settings: a given
     // CLI flag beats config.ini, which beats the built-in default. Same
     // precedence the LCD group uses. Without these, a config value would
@@ -1222,6 +1225,7 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
                 return false;
             }
             args->sharp_filter = sf != 0;
+            args->sharp_filter_given = true;
             continue;
         }
         if (s == "--affine-filter") {
@@ -3225,6 +3229,13 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             if (!args.lcd_boost_given) win.set_lcd_boost(menu_settings.lcd_boost);
             if (!args.lcd_dither_given) win.set_lcd_dither(menu_settings.lcd_dither);
             if (!args.lcd_deband_given) win.set_lcd_deband(menu_settings.lcd_deband);
+            // Border grid + sharp scaling: the same [video] keys, applied
+            // under the same CLI-beats-config precedence (no dedicated CLI
+            // given-flags for the grid; sharp's --sharp-filter is its given
+            // flag and is applied at its own site below).
+            win.set_lcd_border(menu_settings.lcd_border);
+            win.set_lcd_grid_alpha(menu_settings.lcd_grid_alpha);
+            if (!args.sharp_filter_given) win.set_sharp_filter(menu_settings.sharp_filter);
             win.set_touch_pad_scale(args.touch_pad_scale);
             win.configure_touch(opts.input_frame != nullptr,
                                 opts.touch_gesture_claims,
@@ -3562,6 +3573,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                     ms.lcd_dither = menu_value_float(model, row);
                 if (const int row = row_by_label("LCD deband"); row >= 0)
                     ms.lcd_deband = menu_value_float(model, row);
+                if (const int row = row_by_label("Pixel grid"); row >= 0)
+                    ms.lcd_border = menu_value_int(model, row) != 0;
+                if (const int row = row_by_label("Grid opacity"); row >= 0)
+                    ms.lcd_grid_alpha = menu_value_float(model, row);
+                if (const int row = row_by_label("Sharp scaling"); row >= 0)
+                    ms.sharp_filter = menu_value_int(model, row) != 0;
                 if (const int row = row_by_label("View"); row >= 0) {
                     ms.view_mode = menu_value_int(model, row);
                     if (ms.view_mode == 2 && *ctx->fixed_width > 0)

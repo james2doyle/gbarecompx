@@ -20,6 +20,7 @@
 
 #include "raylib_api.h"
 
+#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -179,14 +180,29 @@ public:
             case SHADER_UNIFORM_VEC2: comps = 2; break;
             case SHADER_UNIFORM_VEC3: comps = 3; break;
             case SHADER_UNIFORM_VEC4: comps = 4; break;
+            case SHADER_UNIFORM_IVEC2: comps = 2; break;
+            case SHADER_UNIFORM_IVEC3: comps = 3; break;
+            case SHADER_UNIFORM_IVEC4: comps = 4; break;
             default: comps = 1; break;
         }
         ShaderUniformWrite w{};
         w.loc = locIndex;
         w.type = uniformType;
         w.components = comps;
-        const float* f = static_cast<const float*>(value);
-        for (int i = 0; i < comps; ++i) w.values[i] = f[i];
+        if (uniformType == SHADER_UNIFORM_INT ||
+            uniformType == SHADER_UNIFORM_IVEC2 ||
+            uniformType == SHADER_UNIFORM_IVEC3 ||
+            uniformType == SHADER_UNIFORM_IVEC4) {
+            // Int uniforms hand an int*: record the ints bit-exact in the
+            // float slots (same 4 bytes) so the int read accessor gets them
+            // back without a float round-trip destroying them.
+            const int* iv = static_cast<const int*>(value);
+            for (int i = 0; i < comps; ++i)
+                std::memcpy(&w.values[i], &iv[i], sizeof(int));
+        } else {
+            const float* f = static_cast<const float*>(value);
+            for (int i = 0; i < comps; ++i) w.values[i] = f[i];
+        }
         for (const auto& kv : uniform_names)
             if (kv.second == locIndex) w.name = kv.first;
         uniform_write_log.push_back(w);
@@ -198,6 +214,21 @@ public:
              it != uniform_write_log.rend(); ++it) {
             if (it->name == uniformName && it->components == components) {
                 for (int i = 0; i < components; ++i) out[i] = it->values[i];
+                return true;
+            }
+        }
+        return false;
+    }
+    // INT-uniform read: SetShaderValue hands SHADER_UNIFORM_INT an int*, and
+    // the record side stores the ints bit-exact in the float slots; read them
+    // back the same way.
+    bool uniform_value_int(const char* uniformName, int* out,
+                           int components) const {
+        for (auto it = uniform_write_log.rbegin();
+             it != uniform_write_log.rend(); ++it) {
+            if (it->name == uniformName && it->components == components) {
+                for (int i = 0; i < components; ++i)
+                    std::memcpy(&out[i], &it->values[i], sizeof(int));
                 return true;
             }
         }

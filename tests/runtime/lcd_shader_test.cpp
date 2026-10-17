@@ -123,6 +123,53 @@ int main() {
               "extent is known only with both a size and a scale");
     }
 
+    // ---- border grid (LADXHD PixelGrid port) ------------------------------
+    // A ~1-screen-px dark line on every game-pixel boundary, opacity-tunable,
+    // anchored to the same PresentGrid as the grille (so the wide-view margins
+    // and the bars get identical treatment). Coverage mirrors the GLSL:
+    // clamp(1 - d) with d the fragment-centre distance to the nearest
+    // boundary in screen px.
+    {
+        const PresentGrid g4{40, 0, 240, 160, 4.0f, 4.0f};  // 320x160 view
+        // game x=1's left boundary is at screen x=44: a fragment centred there
+        // sits on the line.
+        check(std::fabs(lcd_border_mask_game(44.0f, 2.0f, g4, 0.4f) - 0.4f) <
+                  1e-6f,
+              "boundary fragment gets the full line");
+        // Cell centre (game x=1.5 -> screen 46) is far from both edges.
+        check(lcd_border_mask_game(46.0f, 2.0f, g4, 0.4f) == 0.0f,
+              "cell interior is clean");
+        // AA is linear over the 1px band: 0.25px from the edge = 0.75 cover.
+        check(std::fabs(lcd_border_mask_game(44.25f, 2.0f, g4, 0.4f) - 0.3f) <
+                  1e-6f,
+              "line coverage falls off linearly across 1px");
+        // Vertical boundaries too (game y=1 -> screen y=4).
+        check(std::fabs(lcd_border_mask_game(46.0f, 4.0f, g4, 0.4f) - 0.4f) <
+                  1e-6f,
+              "horizontal boundary lines draw too");
+        // Opacity 0 disables entirely; the mask is capped at the opacity.
+        check(lcd_border_mask_game(44.0f, 2.0f, g4, 0.0f) == 0.0f,
+              "opacity 0 kills the line");
+        // Scale gate (LADXHD's >=2): at 1x a 1px line would cover half of
+        // every game pixel.
+        const PresentGrid g1{0, 0, 240, 160, 1.0f, 1.0f};
+        check(lcd_border_mask_game(1.0f, 2.0f, g1, 0.4f) == 0.0f,
+              "border is inert at scale 1");
+        // Fractional scale keeps boundaries on game-pixel edges: game x=1 at
+        // 6.75 is screen 40+6.75 = 46.75.
+        const PresentGrid gf{40, 0, 240, 160, 6.75f, 6.75f};
+        check(std::fabs(lcd_border_mask_game(46.75f, 2.0f, gf, 0.4f) - 0.4f) <
+                  1e-6f,
+              "fractional scale keeps lines on game pixels");
+        // Letterbox bars exempt (origin 40: x=39 is the bar).
+        check(lcd_border_mask_game(39.0f, 2.0f, g4, 0.4f) == 0.0f,
+              "bars carry no border");
+        // A grid without extent (degenerate) is inert, not a NaN source.
+        const PresentGrid gz{0, 0, 240, 160, 0.0f, 0.0f};
+        check(lcd_border_mask_game(1.0f, 1.0f, gz, 0.4f) == 0.0f,
+              "zero scale is inert");
+    }
+
     // ---- scale-1 parity ---------------------------------------------------
     // The game-space mask must reproduce the pinned Shadertoy table exactly at
     // 1:1. Sampled at pixel centres (gl_FragCoord's convention, where the old
@@ -658,10 +705,13 @@ int main() {
     // The mask must MULTIPLY the frame. Writing it as the output colour is a
     // one-token mistake that leaves every CPU-side assertion true while the
     // screen turns into a flat wash (shipped once; see the shaded-output check
-    // in the raylib present suite for the GPU-side proof).
-    check(std::strstr(kLcdShaderFragment330, "tex.rgb * mask") != nullptr,
+    // in the raylib present suite for the GPU-side proof). The compose now
+    // lives inline (`tex.rgb *= ...`) so the border factor can join it; the
+    // multiply property is what the pin keeps.
+    check(std::strstr(kLcdShaderFragment330, "tex.rgb *= mix(stripe") != nullptr,
           "LCD 330 masks the texel rather than replacing it");
-    check(std::strstr(kLcdShaderFragmentES100, "tex.rgb * mask") != nullptr,
+    check(std::strstr(kLcdShaderFragmentES100, "tex.rgb *= mix(stripe") !=
+              nullptr,
           "LCD ES100 masks the texel rather than replacing it");
     check(std::strstr(kDitherFragment330, "finalColor = tex") != nullptr,
           "dither perturbs the texel in place");

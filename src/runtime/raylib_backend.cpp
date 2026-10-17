@@ -277,6 +277,11 @@ struct RaylibBackend::Impl {
     // cannot clobber an explicit env choice.
     bool lcd_shader = false;
     bool lcd_env_override = false;
+    // Border pixel grid (LADXHD PixelGrid port): rides the LCD program with
+    // uMaskMode=1 (or 2 when the grille is also on). [video] lcd_border /
+    // lcd_grid_alpha tune it; the menu row maps to the same fields.
+    bool lcd_border = false;
+    float lcd_grid_alpha = kLcdDefaultGridAlpha;
     // Pre-mask gain compensating the mask's ~0.43x throughput (see
     // lcd_shader.h). Read at present(); [video] lcd_boost tunes it.
     float lcd_boost = kLcdDefaultBoost;
@@ -295,6 +300,9 @@ struct RaylibBackend::Impl {
     // directly, so its periods were drawable pixels rather than game pixels.
     int lcd_grid_loc = -1;
     int lcd_gamesize_loc = -1;
+    // Border-grid mode (uMaskMode 0/1/2) and its opacity, same program.
+    int lcd_mask_mode_loc = -1;
+    int lcd_grid_alpha_loc = -1;
     Shader dither_handle{};
     int dither_loc = -1;
     // Same grid uniforms as the LCD program: the dither cell is indexed by
@@ -450,7 +458,17 @@ bool RaylibBackend::ensure_sharp_target(RaylibBackend::Impl* impl, int factor) {
     impl->sharp_ready = true;
     impl->sharp_w = w;
     impl->sharp_h = h;
-    impl->api->SetTextureFilter(impl->sharp_target.texture, TEXTURE_FILTER_POINT);
+    // Bilinear, not POINT: the prescale is the integer part; the final blit
+    // still scales by the remainder (scale/factor, in [1,2)) and POINT there
+    // rotates uneven texel sizes inside every game pixel (GBA dither makes
+    // the rotation visible). Bilinear on the prescaled target is the classic
+    // prescale+bilinear recipe (rsn8887's original sharp-bilinear): the blend
+    // band is one PRESCALED texel = 1/factor game px -- <=1/3 game pixel at
+    // the factors this path engages (>=2), invisible above ~3.5x (the
+    // dosbox-staging analysis). At remainder == 1 (exact fit) bilinear
+    // degenerates to POINT anyway (samples hit texel centres).
+    impl->api->SetTextureFilter(impl->sharp_target.texture,
+                                TEXTURE_FILTER_BILINEAR);
     return true;
 #else
     (void)impl;
@@ -505,6 +523,10 @@ void RaylibBackend::load_lcd_shader(RaylibBackend::Impl* impl) {
         impl->api->GetShaderLocation(impl->lcd_shader_handle, "uGrid");
     impl->lcd_gamesize_loc =
         impl->api->GetShaderLocation(impl->lcd_shader_handle, "uGameSize");
+    impl->lcd_mask_mode_loc =
+        impl->api->GetShaderLocation(impl->lcd_shader_handle, "uMaskMode");
+    impl->lcd_grid_alpha_loc =
+        impl->api->GetShaderLocation(impl->lcd_shader_handle, "uGridAlpha");
     impl->lcd_shader_ready = true;
     std::fprintf(stderr, "raylib_backend: LCD shader enabled\n");
 #else
@@ -520,6 +542,8 @@ void RaylibBackend::unload_lcd_shader(RaylibBackend::Impl* impl) {
     impl->lcd_boost_loc = -1;
     impl->lcd_grid_loc = -1;
     impl->lcd_gamesize_loc = -1;
+    impl->lcd_mask_mode_loc = -1;
+    impl->lcd_grid_alpha_loc = -1;
     impl->lcd_shader_ready = false;
 #else
     (void)impl;
@@ -1065,7 +1089,14 @@ public:
             // targets, whose geometry is not the screen. Deband samples game
             // texels through the same geometry. The overlay below stays
             // unshaded too (pad UI must remain legible).
-            const bool lcd = impl_->lcd_shader && impl_->lcd_shader_ready;
+            const bool lcd_border = impl_->lcd_border &&
+                                    impl_->lcd_grid_alpha > 0.0f;
+            const bool lcd =
+                (impl_->lcd_shader || lcd_border) && impl_->lcd_shader_ready;
+            // Mask composition for the shared program: 0 grille, 1 border,
+            // 2 both.
+            const int mask_mode = impl_->lcd_shader ? (lcd_border ? 2 : 0)
+                                                    : (lcd_border ? 1 : 0);
             // Deband stands alone: active whenever threshold > 0, grid or not.
             // Lazily compiled — config can enable it after open().
             bool deband = impl_->lcd_deband > 0.0f;
@@ -1219,6 +1250,20 @@ public:
                     // pixel, one dark row per game row, bars unshaded.
                     upload_grid(impl_->lcd_shader_handle, impl_->lcd_grid_loc,
                                 impl_->lcd_gamesize_loc);
+                    // Border grid: which masks the shared program composes
+                    // (0 grille / 1 border / 2 both) and the border opacity.
+                    // Same in-shader-window placement rule as the boost.
+                    if (impl_->lcd_mask_mode_loc >= 0) {
+                        impl_->api->SetShaderValue(
+                            impl_->lcd_shader_handle, impl_->lcd_mask_mode_loc,
+                            &mask_mode, SHADER_UNIFORM_INT);
+                    }
+                    if (impl_->lcd_grid_alpha_loc >= 0) {
+                        impl_->api->SetShaderValue(
+                            impl_->lcd_shader_handle,
+                            impl_->lcd_grid_alpha_loc, &impl_->lcd_grid_alpha,
+                            SHADER_UNIFORM_FLOAT);
+                    }
                     impl_->api->DrawTexturePro(*pass_tex, pass_rect, final_dst, {0.0f, 0.0f},
                                    0.0f, WHITE);
                     impl_->api->EndShaderMode();
@@ -2253,6 +2298,9 @@ public:
         s.lcd_boost = impl_->lcd_boost;
         s.lcd_dither = impl_->lcd_dither;
         s.lcd_deband = impl_->lcd_deband;
+        s.lcd_border = impl_->lcd_border;
+        s.lcd_grid_alpha = impl_->lcd_grid_alpha;
+        s.sharp = impl_->sharp_filter;
         return s;
     }
 
@@ -2269,6 +2317,10 @@ public:
         if (s.lcd_boost != impl_->lcd_boost) set_lcd_boost(s.lcd_boost);
         if (s.lcd_dither != impl_->lcd_dither) set_lcd_dither(s.lcd_dither);
         if (s.lcd_deband != impl_->lcd_deband) set_lcd_deband(s.lcd_deband);
+        if (s.lcd_border != impl_->lcd_border) set_lcd_border(s.lcd_border);
+        if (s.lcd_grid_alpha != impl_->lcd_grid_alpha)
+            set_lcd_grid_alpha(s.lcd_grid_alpha);
+        if (s.sharp != impl_->sharp_filter) set_sharp_scaling(s.sharp);
     }
 
     void reset_frame_blend() override {
@@ -2290,22 +2342,35 @@ public:
         float boost = impl_->lcd_boost;
         float dither = impl_->lcd_dither;
         float deband = impl_->lcd_deband;
+        bool border = impl_->lcd_border;
+        float grid_alpha = impl_->lcd_grid_alpha;
         ini_scan_section((base + "config.ini").c_str(), "video",
-                         [&lcd, &boost, &dither, &deband](const char* key,
-                                                          const char* val) {
+                         [&](const char* key, const char* val) {
             apply_lcd_shader_line(key, val, &lcd);
             apply_lcd_boost_line(key, val, &boost);
             apply_lcd_dither_line(key, val, &dither);
             apply_lcd_deband_line(key, val, &deband);
+            apply_lcd_border_line(key, val, &border);
+            apply_lcd_grid_alpha_line(key, val, &grid_alpha);
         });
         // Direct field writes (no clamps): the apply_*_line helpers validated
         // the ini values, exactly as the pre-4a static did.
         impl_->lcd_boost = boost;
         impl_->lcd_dither = dither;
         impl_->lcd_deband = deband;
+        impl_->lcd_border = border;
+        impl_->lcd_grid_alpha = grid_alpha;
         if (lcd != impl_->lcd_shader) {
             FxSettings s = settings();
             s.lcd = lcd;
+            apply(s);
+        }
+        // The border rides the LCD program: make sure it compiles when only
+        // the border is configured on (set_lcd_border's policy, applied here
+        // because the direct field write above bypassed the setter).
+        if (impl_->lcd_border || impl_->lcd_shader) {
+            FxSettings s = settings();
+            s.lcd_border = impl_->lcd_border;
             apply(s);
         }
     }
@@ -2358,6 +2423,38 @@ private:
         // As with dither-off: toggling a pass drops the chain targets; the
         // surviving pass (if any) recreates what it needs next present.
         if (impl_->lcd_deband == 0.0f) release_post_targets(impl_);
+    }
+
+    void set_lcd_border(bool enabled) {
+        impl_->lcd_border = enabled;
+        // The border rides the LCD program; make sure it can compile the
+        // moment either effect needs it (same policy as set_lcd_shader: the
+        // compile-now attempt is guarded like its sibling).
+        if (enabled || impl_->lcd_shader) load_lcd_shader(impl_);
+    }
+
+    void set_lcd_grid_alpha(float alpha) {
+        impl_->lcd_grid_alpha = lcd_clamp_grid_alpha(alpha);
+    }
+
+    void set_sharp_scaling(bool enabled) {
+        impl_->sharp_filter = enabled;
+        // Sharp and linear are mutually exclusive (the resolve-time rule the
+        // flat setter enforces): enabling sharp clears linear, and enabling
+        // linear clears sharp (set_linear_filter does that side).
+        if (enabled && impl_->linear_filter) {
+            impl_->linear_filter = false;
+            release_sharp_target(impl_);
+#if defined(GBARECOMP_USE_RAYLIB)
+            if (impl_->open && impl_->api->IsWindowReady() &&
+                impl_->texture_ready)
+                impl_->api->SetTextureFilter(impl_->texture,
+                                             TEXTURE_FILTER_POINT);
+#endif
+        }
+        // Disabling drops the prescale target so the next present takes the
+        // direct path again.
+        if (!enabled) release_sharp_target(impl_);
     }
 
     Impl* impl_;

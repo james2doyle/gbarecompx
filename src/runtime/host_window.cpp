@@ -308,6 +308,42 @@ float HostWindow::lcd_dither() const {
     return impl_->fx().settings().lcd_dither;
 }
 
+void HostWindow::set_lcd_border(bool enabled) {
+    if (!open_ || !impl_) return;
+    FxSettings s = impl_->fx().settings();
+    s.lcd_border = enabled;
+    impl_->fx().apply(s);
+}
+
+bool HostWindow::lcd_border() const {
+    if (!open_ || !impl_) return false;
+    return impl_->fx().settings().lcd_border;
+}
+
+void HostWindow::set_lcd_grid_alpha(float alpha) {
+    if (!open_ || !impl_) return;
+    FxSettings s = impl_->fx().settings();
+    s.lcd_grid_alpha = alpha;
+    impl_->fx().apply(s);
+}
+
+float HostWindow::lcd_grid_alpha() const {
+    if (!open_ || !impl_) return 0.4f;
+    return impl_->fx().settings().lcd_grid_alpha;
+}
+
+void HostWindow::set_sharp_filter(bool enabled) {
+    if (!open_ || !impl_) return;
+    FxSettings s = impl_->fx().settings();
+    s.sharp = enabled;
+    impl_->fx().apply(s);
+}
+
+bool HostWindow::sharp_filter() const {
+    if (!open_ || !impl_) return false;
+    return impl_->fx().settings().sharp;
+}
+
 
 
 void HostWindow::set_lcd_deband(float deband) {
@@ -562,6 +598,12 @@ void HostWindow::set_lcd_dither(float /*dither*/) {}
 float HostWindow::lcd_dither() const { return 1.0f; }
 void HostWindow::set_lcd_deband(float /*deband*/) {}
 float HostWindow::lcd_deband() const { return 0.0f; }
+void HostWindow::set_lcd_border(bool /*enabled*/) {}
+bool HostWindow::lcd_border() const { return false; }
+void HostWindow::set_lcd_grid_alpha(float /*alpha*/) {}
+float HostWindow::lcd_grid_alpha() const { return 0.4f; }
+void HostWindow::set_sharp_filter(bool /*enabled*/) {}
+bool HostWindow::sharp_filter() const { return false; }
 void HostWindow::set_frame_interp(bool /*enabled*/) {}
 bool HostWindow::frame_interp() const { return false; }
 void HostWindow::set_resize_driven_view(bool /*enabled*/) {}

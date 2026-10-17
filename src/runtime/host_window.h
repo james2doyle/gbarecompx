@@ -134,6 +134,12 @@ public:
     float lcd_dither() const;
     void set_lcd_deband(float deband);
     float lcd_deband() const;
+    void set_lcd_border(bool enabled);
+    bool lcd_border() const;
+    void set_lcd_grid_alpha(float alpha);
+    float lcd_grid_alpha() const;
+    void set_sharp_filter(bool enabled);
+    bool sharp_filter() const;
     // One display-clock tick for the pacer wait: sleep until the next
     // display boundary (or deadline_ns, whichever comes first — a slower
     // panel must never hold the guest wait past its deadline), then

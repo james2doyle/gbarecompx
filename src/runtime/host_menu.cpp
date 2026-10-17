@@ -86,6 +86,18 @@ void HostMenu::build(WindowBackend& backend) {
         add(row, Bind::LinearFilter);
     }
     {
+        // Sharp scaling: integer prescale + bilinear finish at fractional
+        // scales (the >3x uneven-pixel fix). Mutually exclusive with the
+        // linear filter (sharp wins at resolve time; the apply cases clear
+        // the sibling). Plain RT + sampler state, so no Caps::shaders gate.
+        MenuRow row;
+        row.kind = MenuRowKind::Toggle;
+        row.label = "Sharp scaling";
+        row.int_value = fx_settings.sharp ? 1 : 0;
+        row.section = display;
+        add(row, Bind::SharpScaling);
+    }
+    {
         MenuRow row;
         row.kind = MenuRowKind::Toggle;
         row.label = "Show FPS";
@@ -139,6 +151,28 @@ void HostMenu::build(WindowBackend& backend) {
             row.int_value = fx_settings.lcd ? 1 : 0;
             row.section = graphics;
             add(row, Bind::Lcd);
+        }
+        {
+            // Border pixel grid (LADXHD PixelGrid port): a 1-screen-px dark
+            // line on every game-pixel boundary. Rides the LCD program; the
+            // two effects compose (uMaskMode).
+            MenuRow row;
+            row.kind = MenuRowKind::Toggle;
+            row.label = "Pixel grid";
+            row.int_value = fx_settings.lcd_border ? 1 : 0;
+            row.section = graphics;
+            add(row, Bind::LcdBorder);
+        }
+        {
+            MenuRow row;
+            row.kind = MenuRowKind::StepFloat;
+            row.label = "Grid opacity";
+            row.min_value = 0.0f;  // kLcdMinGridAlpha/MaxGridAlpha (lcd_shader.h)
+            row.max_value = 1.0f;
+            row.step = 0.05f;
+            row.float_value = fx_settings.lcd_grid_alpha;
+            row.section = graphics;
+            add(row, Bind::LcdGridAlpha);
         }
         {
             MenuRow row;
@@ -343,6 +377,36 @@ bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
             backend.fx().apply(s);
             menu_set_value_int(model_, row,
                                backend.fx().settings().lcd ? 1 : 0);
+            break;
+        }
+        case Bind::SharpScaling: {
+            // Mutual exclusion, mirror of set_linear_filter's side: sharp on
+            // clears the linear filter (the resolve-time "sharp wins" rule
+            // lives in the backend's set_linear_filter; this is the other
+            // direction). Linear lives on the Video interface, not FxSettings.
+            FxSettings s = backend.fx().settings();
+            s.sharp = menu_value_int(model_, row) != 0;
+            if (s.sharp && backend.video().linear_filter())
+                backend.video().set_linear_filter(false);
+            backend.fx().apply(s);
+            menu_set_value_int(model_, row,
+                               backend.fx().settings().sharp ? 1 : 0);
+            break;
+        }
+        case Bind::LcdBorder: {
+            FxSettings s = backend.fx().settings();
+            s.lcd_border = menu_value_int(model_, row) != 0;
+            backend.fx().apply(s);
+            menu_set_value_int(model_, row,
+                               backend.fx().settings().lcd_border ? 1 : 0);
+            break;
+        }
+        case Bind::LcdGridAlpha: {
+            FxSettings s = backend.fx().settings();
+            s.lcd_grid_alpha = menu_value_float(model_, row);
+            backend.fx().apply(s);
+            menu_set_value_float(model_, row,
+                                 backend.fx().settings().lcd_grid_alpha);
             break;
         }
         case Bind::LcdBoost: {

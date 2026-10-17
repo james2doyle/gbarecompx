@@ -56,6 +56,12 @@ struct MenuSettings {
     float lcd_boost = 1.0f;
     float lcd_dither = 1.0f;
     float lcd_deband = 0.0f;
+    // Border pixel grid (LADXHD PixelGrid port) + its opacity, same group.
+    bool lcd_border = false;
+    float lcd_grid_alpha = 0.4f;
+    // Sharp scaling: the historical [video] sharp_filter key (the runtime
+    // config parser reads the same key), surfaced as a menu row.
+    bool sharp_filter = false;
 };
 
 namespace menu_settings_detail {
@@ -147,6 +153,21 @@ inline bool apply_menu_settings_line(MenuSettings& m, const char* key,
     if (ci_key(key, "lcd_boost")) return parse_clamped_float(val, 1.0f, 3.0f, &m.lcd_boost);
     if (ci_key(key, "lcd_dither")) return parse_clamped_float(val, 0.0f, 2.0f, &m.lcd_dither);
     if (ci_key(key, "lcd_deband")) return parse_clamped_float(val, 0.0f, 16.0f, &m.lcd_deband);
+    if (ci_key(key, "lcd_border") || ci_key(key, "sharp_filter")) {
+        // [video]-section toggles CLAIM the key on garbage (the section is
+        // shared with the launcher; a typo must not fall through to another
+        // reader) and leave the value untouched — the apply_lcd_shader_line
+        // contract, not parse_toggle's false-return one.
+        bool b = false;
+        if (!parse_toggle(val, &b)) return true;
+        if (ci_key(key, "lcd_border"))
+            m.lcd_border = b;
+        else
+            m.sharp_filter = b;
+        return true;
+    }
+    if (ci_key(key, "lcd_grid_alpha"))
+        return parse_clamped_float(val, 0.0f, 1.0f, &m.lcd_grid_alpha);
     return false;
 }
 
@@ -165,7 +186,9 @@ inline bool is_lcd_key_line(const std::string& line) {
     std::string lower;
     for (char c : key) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return lower == "lcd_shader" || lower == "lcd_boost" ||
-           lower == "lcd_dither" || lower == "lcd_deband";
+           lower == "lcd_dither" || lower == "lcd_deband" ||
+           lower == "lcd_border" || lower == "lcd_grid_alpha" ||
+           lower == "sharp_filter";
 }
 
 }  // namespace menu_settings_detail
@@ -263,6 +286,9 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
     f << "lcd_boost = " << m.lcd_boost << "\n";
     f << "lcd_dither = " << m.lcd_dither << "\n";
     f << "lcd_deband = " << m.lcd_deband << "\n";
+    f << "lcd_border = " << (m.lcd_border ? 1 : 0) << "\n";
+    f << "lcd_grid_alpha = " << m.lcd_grid_alpha << "\n";
+    f << "sharp_filter = " << (m.sharp_filter ? 1 : 0) << "\n";
 }
 
 }  // namespace gbarecomp

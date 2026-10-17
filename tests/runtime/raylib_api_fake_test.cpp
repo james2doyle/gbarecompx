@@ -278,6 +278,84 @@ void all_passes_off_writes_no_grid() {
     b.close();
 }
 
+// 13. The border pixel grid (LADXHD PixelGrid port) rides the LCD program:
+// border-only runs the program with uMaskMode=1, grille+border is 2, and the
+// opacity flows through uGridAlpha. The grid uniforms ride along (the border
+// is anchored to the same PresentGrid).
+void border_grid_uploads_mask_mode_and_alpha() {
+    FakeRaylibApi fake;
+    fake.screen_w = 960;
+    fake.screen_h = 640;  // 4x, origin
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+
+    // Border only: the LCD program runs, mode 1.
+    FxSettings s = b.fx().settings();
+    s.lcd = false;
+    s.lcd_border = true;
+    s.lcd_grid_alpha = 0.5f;
+    s.lcd_dither = 0.0f;
+    s.lcd_deband = 0.0f;
+    b.fx().apply(s);
+    CHECK(b.fx().settings().lcd_border);
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    int mode = 0;
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 1,
+          "border-only uploads uMaskMode=1");
+    float alpha = 0.0f;
+    CHECK(fake.uniform_value("uGridAlpha", &alpha, 1) &&
+              std::fabs(alpha - 0.5f) < 1e-4f,
+          "border opacity reaches uGridAlpha");
+    CHECK(fake.uniform_written("uGrid"),
+          "the border is anchored to the game grid too");
+
+    // Grille + border: mode 2.
+    s.lcd = true;
+    b.fx().apply(s);
+    b.video().present(frame.data(), false);
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 2,
+          "grille+border uploads uMaskMode=2");
+
+    // Grille only (the pre-existing path): mode 0 — the regression pin for
+    // the shared program's default.
+    s.lcd_border = false;
+    b.fx().apply(s);
+    b.video().present(frame.data(), false);
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 0,
+          "grille-only uploads uMaskMode=0");
+    b.close();
+}
+
+// 14. Sharp scaling: at a fractional layout the prescale engages and the
+// finish is BILINEAR (prescale+bilinear classic — the >3x uneven-pixel fix).
+// The fake records the last filter set, and the prescale's target is the
+// last texture filtered inside this present (no later call happens).
+void sharp_prescale_finishes_bilinear() {
+    FakeRaylibApi fake;
+    fake.screen_w = 1920;
+    fake.screen_h = 1080;  // scale 6.75 -> factor 6, remainder 1.125
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    // Linear first so the mutual exclusion has something to clear.
+    b.video().set_linear_filter(true);
+    FxSettings s = b.fx().settings();
+    s.sharp = true;
+    s.lcd_dither = 0.0f;
+    s.lcd_deband = 0.0f;
+    b.fx().apply(s);
+    CHECK(b.fx().settings().sharp);
+    CHECK(!b.video().linear_filter(),
+          "enabling sharp cleared the linear filter");
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    CHECK(fake.load_render_texture_calls >= 1,
+          "the sharp prescale allocated its render target");
+    CHECK(fake.last_texture_filter == TEXTURE_FILTER_BILINEAR,
+          "the sharp finish is bilinear, not POINT");
+    b.close();
+}
+
 int main() {
     init_window_failure_is_a_window_error();
     audio_unavailable_refuses_claim();
@@ -291,6 +369,8 @@ int main() {
     dither_program_gets_the_grid_too();
     unknown_uniform_locations_degrade_cleanly();
     all_passes_off_writes_no_grid();
+    border_grid_uploads_mask_mode_and_alpha();
+    sharp_prescale_finishes_bilinear();
 
     std::printf("raylib_api_fake tests: PASS\n");
     return 0;

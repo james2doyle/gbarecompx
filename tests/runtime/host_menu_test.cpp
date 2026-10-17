@@ -131,6 +131,9 @@ void build_seeds_from_backend() {
     fx.lcd_boost = 1.25f;
     fx.lcd_dither = 0.75f;
     fx.lcd_deband = 4.0f;
+    fx.lcd_border = true;
+    fx.lcd_grid_alpha = 0.55f;
+    fx.sharp = true;
     backend.fake_fx.stored = fx;
 
     HostMenu host;
@@ -142,12 +145,14 @@ void build_seeds_from_backend() {
     CHECK(section_by_title(m, "Graphics") == 1);
     CHECK(section_by_title(m, "Audio") == 2);
     CHECK(section_by_title(m, "System") == 3);
-    CHECK(m.row_count == 16);  // 13 settings rows + the three State rows
-
+    CHECK(m.row_count == 19);  // 16 settings rows + the three State rows
     const int scale = row_by_label(m, "Window scale");
     CHECK(scale >= 0 && gbarecomp::menu_value_int(m, scale) == 5);
     const int linear = row_by_label(m, "Linear filter");
     CHECK(linear >= 0 && gbarecomp::menu_value_int(m, linear) == 1);
+    const int sharp = row_by_label(m, "Sharp scaling");
+    CHECK(sharp >= 0);
+    CHECK(gbarecomp::menu_value_int(m, sharp) == 1);  // seeded
     const int fps = row_by_label(m, "Show FPS");
     CHECK(fps >= 0 && gbarecomp::menu_value_int(m, fps) == 1);
     const int ghost = row_by_label(m, "LCD ghosting (frame blending)");
@@ -163,6 +168,11 @@ void build_seeds_from_backend() {
     const int deband = row_by_label(m, "LCD deband");
     CHECK(deband >= 0 &&
           std::fabs(gbarecomp::menu_value_float(m, deband) - 4.0f) < 1e-4f);
+    const int grid = row_by_label(m, "Pixel grid");
+    CHECK(grid >= 0 && gbarecomp::menu_value_int(m, grid) == 1);
+    const int galpha = row_by_label(m, "Grid opacity");
+    CHECK(galpha >= 0 &&
+          std::fabs(gbarecomp::menu_value_float(m, galpha) - 0.55f) < 1e-4f);
     const int audio = row_by_label(m, "Audio");
     CHECK(audio >= 0 && gbarecomp::menu_value_int(m, audio) == 1);
     const int volume = row_by_label(m, "Volume");
@@ -300,6 +310,8 @@ void float_row_applies() {
     press(host, backend, kA);         // enter; row 0 = ghosting
     press(host, backend, kDown);      // interp
     press(host, backend, kDown);      // LCD
+    press(host, backend, kDown);      // Pixel grid
+    press(host, backend, kDown);      // Grid opacity
     press(host, backend, kDown);      // LCD boost
     const int boost = row_by_label(host.model(), "LCD boost");
     const int before = backend.fake_fx.apply_calls;
@@ -493,8 +505,13 @@ void build_without_shaders_skips_lcd_group() {
     backend.caps_override.shaders = false;
     HostMenu host;
     host.build(backend);
-    CHECK(host.model().row_count == 12);  // 16 - 4 LCD-group rows
+    CHECK(host.model().row_count == 13);  // 19 - the 6 LCD-group rows
     CHECK(row_by_label(host.model(), "LCD boost") == -1);
+    CHECK(row_by_label(host.model(), "Pixel grid") == -1);
+    CHECK(row_by_label(host.model(), "Grid opacity") == -1);
+    // Sharp scaling is NOT in the LCD group: it is plain render-path work
+    // (RT + sampler), so it is offered even without shader support.
+    CHECK(row_by_label(host.model(), "Sharp scaling") >= 0);
     CHECK(row_by_label(host.model(), "LCD ghosting (frame blending)") >= 0);
 }
 

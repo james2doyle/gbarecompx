@@ -235,6 +235,102 @@ inline LcdMask lcd_pixel_mask(int screen_x, int screen_y,
                                static_cast<float>(screen_y) + 0.5f, unit, p);
 }
 
+// ---- border grid (LADXHD PixelGrid port, 2026-10-16) ------------------------
+// A ~1-screen-px dark line on every game-pixel boundary — the LADXHD
+// "PixelGrid" effect (gitlab bighead.0/ladxhd_updated, recovered from its
+// vcdiff asset patch): their fwidth/step formulation re-expressed against our
+// game-anchored PresentGrid. Deliberate delta from theirs: our line is
+// anti-aliased over the 1px band (lcdCoverage with w=1) instead of their hard
+// step(), because a hard line shimmers under fractional scales — the same
+// reasoning that put the grille on lcdCoverage. Their opaque-black +
+// GridOpacity lerp becomes this multiplier: output = tex * (1 - line).
+//
+// The LADXHD gate `_scale >= 2` is kept as a hard rule: at 1x a game pixel is
+// one screen pixel and the line would cover half of it (their comment: "at a
+// scale of 1 a 1px grid line would cover the entire screen"). Below 2 the
+// function is inert rather than the toggle being hidden — the shader path is
+// shared, and a degenerate grid must stay quiet.
+//
+// Returns the border strength already scaled by the opacity (0..alpha), so
+// the caller composes output = tex * (1 - border).
+inline float lcd_border_mask_game(float screen_x, float screen_y,
+                                  const PresentGrid& g, float alpha) {
+    if (!(alpha > 0.0f)) return 0.0f;  // NaN-safe: opacity 0 (or NaN) = off
+    const float scale = g.scale_x < g.scale_y ? g.scale_x : g.scale_y;
+    if (!(scale >= 2.0f)) return 0.0f;  // the >=2 gate; NaN fails it too
+    if (!lcd_inside_grid(screen_x, screen_y, g)) return 0.0f;  // bars exempt
+    const float gx = lcd_grid_game_x(screen_x, g);
+    const float gy = lcd_grid_game_y(screen_y, g);
+    // Fragment position within its game cell, in screen pixels: the cell is
+    // `scale` screen px wide, so the fractional part scales directly.
+    const float fx = (gx - std::floor(gx)) * g.scale_x;
+    const float fy = (gy - std::floor(gy)) * g.scale_y;
+    // Distance to the nearest cell edge in screen px (half the line band).
+    const float dx = fx < g.scale_x - fx ? fx : g.scale_x - fx;
+    const float dy = fy < g.scale_y - fy ? fy : g.scale_y - fy;
+    const float d = dx < dy ? dx : dy;
+    const float coverage = 1.0f - d;  // lcdCoverage with w = 1
+    if (!(coverage > 0.0f)) return 0.0f;
+    const float c = coverage < 1.0f ? coverage : 1.0f;
+    return c * alpha;
+}
+
+// The [video] key family: the border toggle and its opacity. Same
+// claim-the-key contract as apply_lcd_shader_line (garbage still claims).
+inline bool apply_lcd_border_line(const char* key, const char* val,
+                                  bool* out) {
+    if (!key || !val || !out) return false;
+    auto ci_equal = [](const char* a, const char* b) {
+        while (*a && *b) {
+            char ca = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a;
+            char cb = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+            if (ca != cb) return false;
+            ++a; ++b;
+        }
+        return *a == *b;
+    };
+    if (!ci_equal(key, "lcd_border")) return false;
+    if (ci_equal(val, "1") || ci_equal(val, "true") || ci_equal(val, "on") ||
+        ci_equal(val, "yes"))
+        *out = true;
+    else if (ci_equal(val, "0") || ci_equal(val, "false") ||
+             ci_equal(val, "off") || ci_equal(val, "no"))
+        *out = false;
+    return true;
+}
+
+// Default 0.4 = LADXHD's GridOpacity default; 0..1.
+inline constexpr float kLcdDefaultGridAlpha = 0.4f;
+inline constexpr float kLcdMinGridAlpha = 0.0f;
+inline constexpr float kLcdMaxGridAlpha = 1.0f;
+
+inline float lcd_clamp_grid_alpha(float a) {
+    if (!(a > kLcdMinGridAlpha)) return kLcdMinGridAlpha;  // NaN-safe floor
+    if (a > kLcdMaxGridAlpha) return kLcdMaxGridAlpha;
+    return a;
+}
+
+// One [video] line for the border opacity. Same claim-the-key contract.
+inline bool apply_lcd_grid_alpha_line(const char* key, const char* val,
+                                      float* out) {
+    if (!key || !val || !out) return false;
+    auto ci_equal = [](const char* a, const char* b) {
+        while (*a && *b) {
+            char ca = *a >= 'A' && *a <= 'Z' ? *a + 32 : *a;
+            char cb = *b >= 'A' && *b <= 'Z' ? *b + 32 : *b;
+            if (ca != cb) return false;
+            ++a; ++b;
+        }
+        return *a == *b;
+    };
+    if (!ci_equal(key, "lcd_grid_alpha")) return false;
+    float v = 0.0f;
+    int n = 0;
+    if (std::sscanf(val, "%f%n", &v, &n) != 1 || val[n] != '\0') return true;
+    *out = lcd_clamp_grid_alpha(v);
+    return true;
+}
+
 // ---- enablement -----------------------------------------------------------
 // Same env convention as GBARECOMP_TOUCH_CONTROLS: set and not "0" means on.
 // A set env var (including "0") overrides the config file; unset defers to it.
@@ -515,6 +611,8 @@ inline constexpr const char* kLcdShaderFragmentES100 =
     "uniform sampler2D texture0;\n"
     "uniform vec4 colDiffuse;\n"
     "uniform float boost;\n"
+    "uniform int uMaskMode;\n"
+    "uniform float uGridAlpha;\n"
     "uniform vec4 uGrid;\n"
     "uniform vec2 uGameSize;\n"
     "float lcdCoverage(float d, float w) {\n"
@@ -534,28 +632,37 @@ inline constexpr const char* kLcdShaderFragmentES100 =
     "        return;\n"
     "    }\n"
     "    vec2 g = p / uGrid.zw;\n"
-    "    vec3 stripe;\n"
-    "    if (uGrid.z >= 3.0) {\n"
-    "        float w = min(1.0, 3.0 / uGrid.z);\n"
-    "        float f = g.x * 3.0;\n"
-    "        stripe = vec3(0.6, 0.6, 1.0) * lcdCoverage(lcdDist(f, 0.5, 3.0), w)\n"
-    "               + vec3(1.0, 0.6, 0.6) * lcdCoverage(lcdDist(f, 1.5, 3.0), w)\n"
-    "               + vec3(0.6, 1.0, 0.6) * lcdCoverage(lcdDist(f, 2.5, 3.0), w);\n"
-    "    } else {\n"
-    "        float c = mod(floor(g.x), 3.0);\n"
-    "        if (c < 1.0) stripe = vec3(0.6, 0.6, 1.0);\n"
-    "        else if (c < 2.0) stripe = vec3(1.0, 0.6, 0.6);\n"
-    "        else stripe = vec3(0.6, 1.0, 0.6);\n"
+    "    float border = 0.0;\n"
+    "    if (uMaskMode >= 1 && uGrid.z >= 2.0 && uGrid.w >= 2.0) {\n"
+    "        vec2 cell = fract(g) * uGrid.zw;\n"
+    "        vec2 db = min(cell, uGrid.zw - cell);\n"
+    "        border = clamp(1.0 - min(db.x, db.y), 0.0, 1.0) * uGridAlpha;\n"
     "    }\n"
-    "    float dark;\n"
-    "    if (uGrid.w >= 1.0) {\n"
-    "        float w = min(1.0, 1.0 / uGrid.w);\n"
-    "        dark = lcdCoverage(lcdDist(g.y, 0.5, 2.0), w);\n"
-    "    } else {\n"
-    "        dark = mod(floor(g.y), 2.0) < 1.0 ? 1.0 : 0.0;\n"
+    "    if (uMaskMode == 0 || uMaskMode == 2) {\n"
+    "        vec3 stripe;\n"
+    "        if (uGrid.z >= 3.0) {\n"
+    "            float w = min(1.0, 3.0 / uGrid.z);\n"
+    "            float f = g.x * 3.0;\n"
+    "            stripe = vec3(0.6, 0.6, 1.0) * lcdCoverage(lcdDist(f, 0.5, 3.0), w)\n"
+    "                   + vec3(1.0, 0.6, 0.6) * lcdCoverage(lcdDist(f, 1.5, 3.0), w)\n"
+    "                   + vec3(0.6, 1.0, 0.6) * lcdCoverage(lcdDist(f, 2.5, 3.0), w);\n"
+    "        } else {\n"
+    "            float c = mod(floor(g.x), 3.0);\n"
+    "            if (c < 1.0) stripe = vec3(0.6, 0.6, 1.0);\n"
+    "            else if (c < 2.0) stripe = vec3(1.0, 0.6, 0.6);\n"
+    "            else stripe = vec3(0.6, 1.0, 0.6);\n"
+    "        }\n"
+    "        float dark;\n"
+    "        if (uGrid.w >= 1.0) {\n"
+    "            float w = min(1.0, 1.0 / uGrid.w);\n"
+    "            dark = lcdCoverage(lcdDist(g.y, 0.5, 2.0), w);\n"
+    "        } else {\n"
+    "            dark = mod(floor(g.y), 2.0) < 1.0 ? 1.0 : 0.0;\n"
+    "        }\n"
+    "        tex.rgb *= mix(stripe, vec3(0.7), dark);\n"
     "    }\n"
-    "    vec3 mask = mix(stripe, vec3(0.7), dark);\n"
-    "    gl_FragColor = vec4(tex.rgb * mask, tex.a);\n"
+    "    if (uMaskMode >= 1) tex.rgb *= (1.0 - border);\n"
+    "    gl_FragColor = vec4(tex.rgb, tex.a);\n"
     "}\n";
 
 inline constexpr const char* kDitherFragmentES100 =
@@ -621,6 +728,8 @@ inline constexpr const char* kLcdShaderFragment330 =
     "uniform sampler2D texture0;\n"
     "uniform vec4 colDiffuse;\n"
     "uniform float boost;\n"
+    "uniform int uMaskMode;\n"
+    "uniform float uGridAlpha;\n"
     "uniform vec4 uGrid;\n"
     "uniform vec2 uGameSize;\n"
     "out vec4 finalColor;\n"
@@ -641,28 +750,37 @@ inline constexpr const char* kLcdShaderFragment330 =
     "        return;\n"
     "    }\n"
     "    vec2 g = p / uGrid.zw;\n"
-    "    vec3 stripe;\n"
-    "    if (uGrid.z >= 3.0) {\n"
-    "        float w = min(1.0, 3.0 / uGrid.z);\n"
-    "        float f = g.x * 3.0;\n"
-    "        stripe = vec3(0.6, 0.6, 1.0) * lcdCoverage(lcdDist(f, 0.5, 3.0), w)\n"
-    "               + vec3(1.0, 0.6, 0.6) * lcdCoverage(lcdDist(f, 1.5, 3.0), w)\n"
-    "               + vec3(0.6, 1.0, 0.6) * lcdCoverage(lcdDist(f, 2.5, 3.0), w);\n"
-    "    } else {\n"
-    "        float c = mod(floor(g.x), 3.0);\n"
-    "        if (c < 1.0) stripe = vec3(0.6, 0.6, 1.0);\n"
-    "        else if (c < 2.0) stripe = vec3(1.0, 0.6, 0.6);\n"
-    "        else stripe = vec3(0.6, 1.0, 0.6);\n"
+    "    float border = 0.0;\n"
+    "    if (uMaskMode >= 1 && uGrid.z >= 2.0 && uGrid.w >= 2.0) {\n"
+    "        vec2 cell = fract(g) * uGrid.zw;\n"
+    "        vec2 db = min(cell, uGrid.zw - cell);\n"
+    "        border = clamp(1.0 - min(db.x, db.y), 0.0, 1.0) * uGridAlpha;\n"
     "    }\n"
-    "    float dark;\n"
-    "    if (uGrid.w >= 1.0) {\n"
-    "        float w = min(1.0, 1.0 / uGrid.w);\n"
-    "        dark = lcdCoverage(lcdDist(g.y, 0.5, 2.0), w);\n"
-    "    } else {\n"
-    "        dark = mod(floor(g.y), 2.0) < 1.0 ? 1.0 : 0.0;\n"
+    "    if (uMaskMode == 0 || uMaskMode == 2) {\n"
+    "        vec3 stripe;\n"
+    "        if (uGrid.z >= 3.0) {\n"
+    "            float w = min(1.0, 3.0 / uGrid.z);\n"
+    "            float f = g.x * 3.0;\n"
+    "            stripe = vec3(0.6, 0.6, 1.0) * lcdCoverage(lcdDist(f, 0.5, 3.0), w)\n"
+    "                   + vec3(1.0, 0.6, 0.6) * lcdCoverage(lcdDist(f, 1.5, 3.0), w)\n"
+    "                   + vec3(0.6, 1.0, 0.6) * lcdCoverage(lcdDist(f, 2.5, 3.0), w);\n"
+    "        } else {\n"
+    "            float c = mod(floor(g.x), 3.0);\n"
+    "            if (c < 1.0) stripe = vec3(0.6, 0.6, 1.0);\n"
+    "            else if (c < 2.0) stripe = vec3(1.0, 0.6, 0.6);\n"
+    "            else stripe = vec3(0.6, 1.0, 0.6);\n"
+    "        }\n"
+    "        float dark;\n"
+    "        if (uGrid.w >= 1.0) {\n"
+    "            float w = min(1.0, 1.0 / uGrid.w);\n"
+    "            dark = lcdCoverage(lcdDist(g.y, 0.5, 2.0), w);\n"
+    "        } else {\n"
+    "            dark = mod(floor(g.y), 2.0) < 1.0 ? 1.0 : 0.0;\n"
+    "        }\n"
+    "        tex.rgb *= mix(stripe, vec3(0.7), dark);\n"
     "    }\n"
-    "    vec3 mask = mix(stripe, vec3(0.7), dark);\n"
-    "    finalColor = vec4(tex.rgb * mask, tex.a);\n"
+    "    if (uMaskMode >= 1) tex.rgb *= (1.0 - border);\n"
+    "    finalColor = vec4(tex.rgb, tex.a);\n"
     "}\n";
 
 // Standalone dither pass: the same Bayer step as its own program, so

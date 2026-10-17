@@ -138,6 +138,15 @@ struct FxSettings {
     // when unsupported; rendering ignores them.
     bool  lcd = false;
     float lcd_boost = 1.0f, lcd_dither = 1.0f, lcd_deband = 0.0f;
+    // Border pixel grid (LADXHD PixelGrid port): a 1-screen-px dark line on
+    // every game-pixel boundary; rides the LCD pass (uMaskMode) when either
+    // effect is on.
+    bool  lcd_border = false;
+    float lcd_grid_alpha = 0.4f;  // 0..1, LADXHD's GridOpacity default
+    // Sharp scaling (the existing --sharp-filter path surfaced): integer
+    // prescale with a bilinear finish at fractional scales. Not a shader
+    // effect — offered wherever the prescale RT exists, shaders or not.
+    bool  sharp = false;
 };
 
 struct TouchConfig {
