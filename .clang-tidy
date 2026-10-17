@@ -1,0 +1,17 @@
+# Curated, low-noise check set: guards that are green across the owned
+# runtime sources and fail on regressions — dead stores, unused bindings,
+# missing overrides, redundant member init. Deliberately NOT a style
+# config (formatting stays with the house style; clang-format is not
+# wired). Scope rules live in tools/check_clang_tidy.sh: src/runtime
+# first-generation files only, never generated_bios/ (recompiler output)
+# and never vendor/ (raygui).
+---
+Checks: >
+  -*,
+  clang-analyzer-deadcode.DeadStores,
+  misc-unused-parameters,
+  misc-unused-using-decls,
+  misc-unused-alias-decls,
+  modernize-use-override,
+  readability-redundant-member-init
+HeaderFilterRegex: '.*'

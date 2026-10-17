@@ -271,7 +271,7 @@ public:
 private:
     using clock = std::chrono::steady_clock;
     std::chrono::nanoseconds period_{};
-    clock::time_point next_{};
+    clock::time_point next_;  // chrono time_point default-constructs to epoch
     bool uncapped_ = false;
     bool raised_timer_res_ = false;
     // HP-002: Windows high-resolution waitable timer (HANDLE, void* here to

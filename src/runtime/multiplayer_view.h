@@ -41,7 +41,7 @@ unsigned gba_netplay_view_width(GbaNetplayView, int drawable_width = 0, int draw
 class GbaNetplayPresentation final : public gba::GbaPpu::PresentationObserver {
 public:
     explicit GbaNetplayPresentation(GbaNetplayViewPolicy, bool affine_filter = false);
-    ~GbaNetplayPresentation();
+    ~GbaNetplayPresentation() override;
     void request_width(unsigned width);
     const std::uint8_t* pixels() const;
     unsigned width() const;

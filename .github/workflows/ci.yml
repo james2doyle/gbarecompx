@@ -239,6 +239,11 @@ jobs:
           python3 tools/check_menu_state_wiring.py
           python3 tools/check_launch_screen_wiring.py --self-test
           python3 tools/check_launch_screen_wiring.py
+          # Best-effort tier: runners without clang-tidy or a configured
+          # tree SKIP (exit 0); local runs are the strict gate.
+          if command -v clang-tidy >/dev/null 2>&1; then
+            bash tools/check_clang_tidy.sh
+          fi
           python3 -m unittest discover -s tools/tests -p 'test_*.py' -v
           if [ -f tools/check_raylib_backend_complete.py ]; then
             python3 tools/check_raylib_backend_complete.py

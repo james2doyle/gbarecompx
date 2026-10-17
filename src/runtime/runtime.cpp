@@ -2925,8 +2925,8 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             return b > a ? static_cast<uint32_t>((b - a) / 1000ull) : 0u;
         }
         void record(uint64_t frame, uint64_t t0, uint64_t t1, uint64_t t2,
-                    uint64_t t3, uint64_t t4, uint64_t t5, uint64_t c0,
-                    uint64_t c4) {
+                    uint64_t t3, uint64_t t4, uint64_t t5,
+                    uint64_t /*c0*/, uint64_t /*c4*/) {
             if (!active()) return;
             FramePhaseSample s;
             s.frame = frame;

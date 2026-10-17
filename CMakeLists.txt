@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(gbarecomp C CXX)
 
+# clang-tidy reads this (tools/check_clang_tidy.sh); harmless to always write.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -1147,8 +1150,10 @@ target_sources(menu_engine_raygui_tests PRIVATE
 target_compile_definitions(menu_engine_raygui_tests PRIVATE
     GBARECOMP_USE_RAYLIB=1 RAYGUI_STANDALONE RAYGUI_NO_ICONS)
 target_include_directories(menu_engine_raygui_tests PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/vendor")
-target_link_libraries(menu_engine_raygui_tests PRIVATE gbarecomp_menu_model)
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/vendor"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime")
+target_link_libraries(menu_engine_raygui_tests PRIVATE gbarecomp_menu_model
+    gbarecomp_host_menu)
 add_test(NAME menu_engine_raygui_tests COMMAND menu_engine_raygui_tests)
 
 # The launch screen's shared visual language (launcher_style.h): palette +
@@ -1243,9 +1248,9 @@ add_test(NAME menu_draw_tests COMMAND menu_draw_tests)
 # The legacy engine runs headless; the raygui engine is compile-checked via
 # gbarecomp_raylib_backend (its draw needs a raylib frame context).
 add_executable(menu_engine_tests tests/runtime/menu_engine_test.cpp)
-target_include_directories(menu_engine_tests PRIVATE src/runtime)
+target_include_directories(menu_engine_tests PRIVATE src/runtime tests/runtime)
 target_link_libraries(menu_engine_tests PRIVATE gbarecomp_menu_model
-    gbarecomp_menu_engine_legacy)
+    gbarecomp_menu_engine_legacy gbarecomp_host_menu)
 add_test(NAME menu_engine_tests COMMAND menu_engine_tests)
 
 # Phase 3c — the host-loop wiring on the Phase 2-tail fakes: build from the

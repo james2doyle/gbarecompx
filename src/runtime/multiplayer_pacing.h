@@ -26,7 +26,7 @@ public:
         next_+=frame_period;
     }
 private:
-    Time next_{};
+    Time next_;  // chrono time_point default-constructs to the epoch
     void* wake_timer_ = nullptr;
     bool tried_timer_ = false;
 };

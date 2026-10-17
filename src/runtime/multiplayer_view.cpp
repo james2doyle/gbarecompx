@@ -92,7 +92,7 @@ struct GlobalScope {
 struct GbaNetplayPresentation::Impl {
     gba::GbaPpu mirror;
     GbaNetplayViewPolicy policy;
-    Globals globals{};
+    Globals globals;  // tuple of pointers + int: default-init == value-init
     unsigned requested = 240, latched_width = 240, next_line = 0;
     std::uint64_t epoch = 1;
     bool initialized = false, reset_pending = false, complete = false;

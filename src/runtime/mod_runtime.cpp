@@ -452,11 +452,11 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
             } else if (name == "feature") {
                 section = Section::Feature;
                 out.features.emplace_back();
-                feature = &out.features.back();
+                // The cursor pointers are (re)derived per key line below —
+                // section-header stores here would be dead.
             } else if (name == "option") {
                 section = Section::Option;
                 out.options.emplace_back();
-                option = &out.options.back();
             } else if (name == "option.choice") {
                 if (out.options.empty()) {
                     set_error(error, "option.choice appears before option");
@@ -464,14 +464,11 @@ bool read_manifest(const fs::path& path, Package& out, std::string* error) {
                 }
                 section = Section::Choice;
                 out.options.back().choices.emplace_back();
-                option = &out.options.back();
-                choice = &option->choices.back();
             } else if (name == "plugin") {
                 section = Section::Plugin;
             } else if (name == "asset") {
                 section = Section::Asset;
                 out.required_assets.emplace_back();
-                asset = &out.required_assets.back();
             } else {
                 set_error(error, "unsupported manifest section [[" + name + "]]");
                 return false;
