@@ -549,6 +549,14 @@ else()
 endif()
 target_include_directories(gbarecomp_runtime PUBLIC src/runtime
     "${CMAKE_CURRENT_SOURCE_DIR}/src/vendor")
+if(ANDROID)
+    # The Android pad hook (raylib_backend.cpp) chains onto the glue's
+    # onInputEvent and needs struct android_app's definition. The vendored
+    # glue is this repo's own material (the game's CMake may fall back to the
+    # NDK copy for the .c, but the header contract is identical).
+    target_include_directories(gbarecomp_raylib_backend PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/platform/android/native_app_glue")
+endif()
 if(GBARECOMP_RUNTIME_UI_ROOT AND
    EXISTS "${GBARECOMP_RUNTIME_UI_ROOT}/src/recomp_runtime_ui.h")
     target_compile_definitions(gbarecomp_runtime PUBLIC GBARECOMP_RUNTIME_UI=1)

@@ -1874,7 +1874,7 @@ private:
 //
 // Threading: the glue invokes onInputEvent on ITS input thread while the
 // game thread pumps; AndroidPadState's fields are atomics for exactly this.
-struct android_app;
+#include "android_native_app_glue.h"  // struct android_app (onInputEvent chain)
 extern "C" struct android_app* GetAndroidApp(void);  // rcore_android.c
 
 static gbarecomp::AndroidPadState g_android_pad;
