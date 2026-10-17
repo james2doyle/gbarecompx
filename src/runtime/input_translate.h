@@ -80,6 +80,11 @@ enum PadButton {
     kPadLeftThumb, kPadRightThumb,
     kPadDpadUp, kPadDpadRight, kPadDpadDown, kPadDpadLeft,
     kPadLeftTrigger, kPadRightTrigger,
+    // The pad's menu button (Xbox GUIDE / home / Android BUTTON_MODE). No
+    // GBA meaning: the backends inject the CONFIGURED HK_MENU key from it,
+    // so the settings overlay opens from the controller through the menu's
+    // own binding (and closes on a second press, via the hotkey edge).
+    kPadGuide,
     kPadButtonCount
 };
 
