@@ -41,6 +41,7 @@
 
 #include "../gba/gba_bus.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -586,6 +587,14 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
     g_bridge_max_call_depth = 0;
     std::uint64_t iters = 0;
     std::uint64_t bridged_insns = 0;
+    // A subtree may return PAST its own frame: a shared epilogue reached by BL
+    // (`add sp; pop {..}; pop {r0}; bx r0`) pops the caller's frame and returns
+    // to the grandparent. Native code handles that in
+    // runtime_call_should_return (match any open frame above the IRQ floor,
+    // trim the stack to it, cascade the host frames). Mirror it here, or the
+    // bridge never sees its stop_pc and interprets the whole game loop.
+    const std::uint32_t entry_floor = runtime_call_stack_floor();
+    std::uint32_t unwound_depth = UINT32_MAX;
     for (;;) {
         // Sync interp -> g_cpu (pre-execution state) so the fingerprint ring,
         // the BIOS-read gate, and any IRQ/SWI excursion all see exactly what
@@ -691,6 +700,38 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
 
         if (!irq_cont && (cpu.R[15] & ~1u) == stop_pc) break;
 
+        // Return into an outer frame (see entry_floor above). Only a transfer
+        // that is neither a call nor the return of a call opened inside this
+        // subtree can be such a return.
+        if (!irq_cont && !top_level && forced_stop_pc == 0u && entry_depth >= 2u) {
+            const std::uint32_t newpc = cpu.R[15] & ~1u;
+            const std::uint32_t seqpc = (pc + (was_thumb ? 2u : 4u)) & ~1u;
+            const bool is_call = insn.op == armv4t::IrOp::BL ||
+                                 insn.op == armv4t::IrOp::BL_suffix ||
+                                 insn.op == armv4t::IrOp::BLX_reg;
+            const bool inner_return =
+                std::find_if(call_nest.begin(), call_nest.end(),
+                             [&](std::uint32_t r) { return (r & ~1u) == newpc; }) !=
+                call_nest.end();
+            if (newpc != seqpc && !is_call && !inner_return) {
+                for (std::uint32_t slot = entry_depth - 1u; slot-- > entry_floor;) {
+                    if ((entry_stack[slot] & ~1u) == newpc) {
+                        unwound_depth = slot;
+                        break;
+                    }
+                }
+                if (unwound_depth != UINT32_MAX) {
+                    if (self_heal_verbose())
+                        std::fprintf(stderr,
+                            "runtime_arm: SELF-HEAL bridge for 0x%08X returned past "
+                            "its frame from pc=0x%08X to 0x%08X (outer frame %u of "
+                            "%u, stop_pc=0x%08X)\n",
+                            entry_pc, pc, newpc, unwound_depth, entry_depth, stop_pc);
+                    break;
+                }
+            }
+        }
+
         // Heal-to-static: for a top-level miss (no reliable return address),
         // the moment the bridged subtree branches/returns back into a
         // statically-recompiled function, stop interpreting and let the main
@@ -749,7 +790,13 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
     // An IRQ continuation that healed to static is not a subroutine return —
     // runtime_irq()'s loop re-dispatches the static entry natively — so do not
     // pop a call-return frame here.
-    if (!top_level && !irq_cont) {
+    if (unwound_depth != UINT32_MAX) {
+        // Returned into an outer frame: drop that frame and every frame above
+        // it, exactly as runtime_call_should_return does natively. The
+        // recompiled BL site sees R15 != its return address and cascades the
+        // host frames up to the frame that owns this PC.
+        runtime_call_stack_restore(entry_stack.data(), unwound_depth);
+    } else if (!top_level && !irq_cont) {
         // Restore the entry stack minus exactly the one frame the missed
         // subroutine's return idiom (`bx lr` / `pop {pc}`) would have popped
         // via runtime_call_should_return.
