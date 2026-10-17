@@ -961,6 +961,45 @@ void drain_menu_state_ops_folds_pending_into_events() {
     CHECK(ev.load_slot == 2 && ev.save_slot == 3);
 }
 
+// ── Toast/status clocks: the host ticks them, so they must expire ───────
+// The model has no clock (menu_model_test: "the host decrements; no clock
+// in the model") — but nothing in src/ ever ticked either counter. The
+// status line was masked (it draws only while the menu is OPEN), while the
+// toast draws while CLOSED and rendered forever: the device sat on
+// "State loaded" 2026-10-16 after every menu load. Red-first here.
+void toast_and_status_clocks_expire() {
+    FakeBackend backend;
+    open_fake(backend);
+    HostMenu host;
+    host.open(backend);
+    host.close();  // the device scenario: the toast draws while closed
+
+    menu_set_toast(host.model(), "State loaded", "Slot 1");
+    CHECK(host.model().toast_frames == MenuModel::kToastFrames);
+
+    // Tick one frame short of expiry: still presented (the engine's draw
+    // gate is toast_frames > 0).
+    for (int i = 0; i < MenuModel::kToastFrames - 1; ++i)
+        frame(host, backend);
+    CHECK(host.model().toast_frames == 1);
+    CHECK(backend.fake_menu.last_model->toast_frames == 1);
+
+    // The expiry frame: the clock lands on zero and the presented model
+    // the engine read carries the same zero — nothing can draw the toast.
+    frame(host, backend);
+    CHECK(host.model().toast_frames == 0);
+    CHECK(backend.fake_menu.last_model->toast_frames == 0);
+
+    // The status clock is the same mechanism (90 frames), independent, and
+    // a stale toast must stay expired while it runs out.
+    menu_set_status(host.model(), "Saved");
+    CHECK(host.model().status_frames == MenuModel::kStatusFrames);
+    for (int i = 0; i < MenuModel::kStatusFrames; ++i)
+        frame(host, backend);
+    CHECK(host.model().status_frames == 0);
+    CHECK(host.model().toast_frames == 0);
+}
+
 int main() {
     build_seeds_from_backend();
     open_seeds_and_suppresses();
@@ -988,6 +1027,7 @@ int main() {
     menu_view_step_resolves_geometry_policy();
     state_rows_and_actions();
     drain_menu_state_ops_folds_pending_into_events();
+    toast_and_status_clocks_expire();
 
     std::printf("host_menu tests: PASS\n");
     return 0;

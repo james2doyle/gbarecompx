@@ -275,6 +275,14 @@ void HostMenu::frame(WindowBackend& backend, const Events& ev,
             apply(backend, menu_navigate(model_, in));
         }
     }
+    // The toast/status clocks are frame counts and the model has no clock
+    // (menu_model_test: "the host decrements") — the host ticks them here,
+    // every frame, open or closed. The toast draws while the menu is
+    // closed, so without this tick "State loaded" rendered forever
+    // (device, 2026-10-16); the identical dead status clock was masked by
+    // the m.open gate in the presentation and never screamed.
+    if (model_.status_frames > 0) --model_.status_frames;
+    if (model_.toast_frames > 0) --model_.toast_frames;
     // The presentation runs every frame (a toast draws while closed).
     apply(backend, backend.menu().present(model_, pointer));
 }
