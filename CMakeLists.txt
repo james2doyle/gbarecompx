@@ -1311,6 +1311,66 @@ target_include_directories(host_menu_tests PRIVATE src/runtime tests/runtime)
 target_link_libraries(host_menu_tests PRIVATE gbarecomp_host_menu)
 add_test(NAME host_menu_tests COMMAND host_menu_tests)
 
+# ── HostWindow construction contract (moved from the FFTA test tree) ────────
+# The framework owns HostWindow and the backend factory; the fork's
+# standalone build resolves the dispatch via in-tree generated_dispatch.cpp,
+# which retires the old "cannot compile host_window.cpp standalone" reason
+# the tests lived in the game repo. The closed-state asserts + the
+# backend-factory selection/independence checks are config-adaptive: the
+# stub build asserts the nullptr path, the raylib build the product path.
+add_executable(host_window_closed_tests
+    tests/runtime/host_window_closed_test.cpp)
+target_include_directories(host_window_closed_tests PRIVATE src/runtime)
+target_link_libraries(host_window_closed_tests PRIVATE gbarecomp_runtime)
+target_compile_options(host_window_closed_tests PRIVATE -UNDEBUG)
+add_test(NAME host_window_closed_tests COMMAND host_window_closed_tests)
+
+# HostWindow delegation: every facade method must reach its concern through
+# the V2 backend (the spy records per-method effects; the factory failure
+# path proves error reporting + ownership). Skips loudly in configurations
+# with no window backend.
+add_executable(host_window_delegation_tests
+    tests/runtime/host_window_delegation_test.cpp)
+target_include_directories(host_window_delegation_tests PRIVATE
+    src/runtime tests/runtime)
+target_link_libraries(host_window_delegation_tests PRIVATE gbarecomp_runtime)
+target_compile_options(host_window_delegation_tests PRIVATE -UNDEBUG)
+add_test(NAME host_window_delegation_tests
+         COMMAND host_window_delegation_tests)
+
+# Host-stack budget guard (mobile_platform): the predicates must be live on
+# the host platform and the two tiers (primary margin / critical tier) must
+# order correctly against the calling thread's real stack bounds. Linux-only
+# APIs; skips elsewhere.
+add_executable(host_stack_guard_tests
+    tests/runtime/host_stack_guard_test.cpp)
+target_include_directories(host_stack_guard_tests PRIVATE src/runtime)
+target_link_libraries(host_stack_guard_tests PRIVATE gbarecomp_runtime)
+target_compile_options(host_stack_guard_tests PRIVATE -UNDEBUG)
+add_test(NAME host_stack_guard_tests COMMAND host_stack_guard_tests)
+
+# FramePacer banked wait (host_platform): a k-frame present must throttle
+# ~k periods (the issue-#8 fix), uncapped is immediate, absurd banks clamp.
+add_executable(frame_pacer_tests tests/runtime/frame_pacer_test.cpp)
+target_include_directories(frame_pacer_tests PRIVATE src/runtime)
+target_link_libraries(frame_pacer_tests PRIVATE gbarecomp_runtime)
+target_compile_options(frame_pacer_tests PRIVATE -UNDEBUG)
+add_test(NAME frame_pacer_tests COMMAND frame_pacer_tests)
+
+# Raylib present pipeline at the pixels (real GL): the upload/readback
+# contract, fx() live toggles, and the sharp fractional/integer pixel pins
+# (70% of layout pixels differ at a fractional layout; pixel-identical at
+# an exact 2x — the designed inertness). Needs a display; skips cleanly
+# without one. CI runs it under Xvfb+llvmpipe (the pins are hardened for
+# that renderer: one context, readback-liveness gate, resize settle).
+if(GBARECOMP_USE_RAYLIB)
+add_executable(raylib_present_tests tests/runtime/raylib_present_test.cpp)
+target_include_directories(raylib_present_tests PRIVATE src/runtime)
+target_link_libraries(raylib_present_tests PRIVATE gbarecomp_raylib_backend)
+target_compile_options(raylib_present_tests PRIVATE -UNDEBUG)
+add_test(NAME raylib_present_tests COMMAND raylib_present_tests)
+endif()
+
 # Phase 3d — the engine long-press cue (ring collector + drawing) over a
 # recording HostOverlay. Pure; no window, no raylib.
 add_executable(long_press_ring_tests tests/runtime/long_press_ring_test.cpp)

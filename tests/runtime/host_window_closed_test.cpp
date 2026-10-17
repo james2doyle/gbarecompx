@@ -10,6 +10,7 @@
 // and never dereference a null impl_.
 
 #include "host_window.h"
+#include "host_backend_factory.h"
 
 #include <cassert>
 #include <cstdio>
@@ -27,10 +28,15 @@ int main() {
     assert(w.volume() == 100);
     assert(w.window_scale() == 1);
     assert(!w.linear_filter());
+    assert(!w.lcd_shader());                   // the fx getters' fallbacks
+    assert(w.lcd_boost() == 1.0f);
+    assert(w.lcd_dither() == 1.0f);
+    assert(w.lcd_deband() == 0.0f);
     assert(!w.frame_interp());
     assert(!w.frame_blend());
     assert(!w.audio_enabled());
-    assert(!w.resize_driven_view());
+    // (no resize_driven_view getter exists by design; its setter's
+    // closed-window no-op is exercised with the other mutators below)
     assert(!w.touch_pad_visible());
     assert(!w.fps_readout());
     assert(w.assist_tools_enabled());          // enhancement defaults ON
@@ -57,6 +63,10 @@ int main() {
     w.set_frame_interp(true);
     w.set_frame_blend(true);
     w.reset_frame_blend();
+    w.set_lcd_shader(true);
+    w.set_lcd_boost(2.0f);
+    w.set_lcd_dither(0.0f);
+    w.set_lcd_deband(6.0f);
     w.set_audio_enabled(false);
     w.set_resize_driven_view(true);
     w.set_view_margins(1, 2, 3, 4);
@@ -84,6 +94,44 @@ int main() {
     assert(!w.frame_blend());
     assert(!w.touch_pad_visible());
     assert(!w.fps_readout());
+    assert(!w.lcd_shader());
+    assert(w.lcd_boost() == 1.0f);
+    assert(w.lcd_dither() == 1.0f);
+    assert(w.lcd_deband() == 0.0f);
+
+    // ---- backend factory -------------------------------------------------
+    // The factory is the single place that decides which backend a build
+    // uses: raylib ON builds the product backend; raylib OFF is the stub
+    // (nullptr). Constructing and destroying through the base pointer
+    // exercises the virtual destructor, which is how HostWindow::close()
+    // releases the backend. (Folded in from the FFTA test tree, where this
+    // lived as test_backend_select.cpp.)
+    {
+#if defined(GBARECOMP_USE_RAYLIB)
+        gbarecomp::WindowBackend* b = gbarecomp::host_make_backend();
+        assert(b != nullptr);
+        assert(!b->is_open());  // freshly constructed, never opened
+        assert(!b->input().gamepad_connected());  // nothing to claim yet
+        delete b;  // must go through ~WindowBackend()
+        assert(gbarecomp::host_using_raylib_backend());
+#else
+        // The stub compile-check build: no window backend at all.
+        assert(gbarecomp::host_make_backend() == nullptr);
+        assert(!gbarecomp::host_using_raylib_backend());
+#endif
+    }
+
+#if defined(GBARECOMP_USE_RAYLIB)
+    // Two backends must be independent objects, not a shared singleton: a
+    // leaked instance would silently share window/audio state.
+    {
+        gbarecomp::WindowBackend* a = gbarecomp::host_make_backend();
+        gbarecomp::WindowBackend* c = gbarecomp::host_make_backend();
+        assert(a && c && a != c);
+        delete a;
+        delete c;
+    }
+#endif
 
     std::printf("host_window_closed tests: PASS\n");
     return 0;
