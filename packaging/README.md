@@ -1,15 +1,15 @@
 # packaging — portable release builds
 
-> **STATUS (2026-10-17): LEGACY — SDL-era, unverified against the current
-> product.** These scripts were written when every game exe was a plain
-> SDL2 program. Phase 4b retired SDL2 and Phase 4c made raylib the product
-> backend, fetched by pinned SHA and **linked statically** — so the
-> dylib-bundling machinery below (`otool`/`ldd` walks, the
+> **STATUS (2026-10-17): the shell scripts below are LEGACY — SDL-era,
+> unverified against the current product.** They were written when every
+> game exe was a plain SDL2 program. Phase 4b retired SDL2 and Phase 4c
+> made raylib the product backend, fetched by pinned SHA and **linked
+> statically** — so the dylib-bundling machinery (`otool`/`ldd` walks, the
 > sdl2-compat/SDL3 dlopen hunt, `$ORIGIN` rpaths for shim libraries) has
 > nothing left to bundle, and the Flatpak manifests still build an SDL2
-> module that no current target links. Nothing here has been run against a
-> raylib build; treat every command in this directory as unverified until
-> someone re-validates it.
+> module that no current target links. Nothing in the script sections has
+> been run against a raylib build; treat them as unverified until someone
+> re-validates them. The **Android (APK)** section is current.
 
 ## The live release pipeline
 
@@ -22,6 +22,48 @@ content-guarded). A new consumer game should copy that shape rather than
 revive these scripts by default: with raylib linked statically, a release
 is an executable plus assets, and most of the complexity below exists to
 solve dynamic-SDL problems that no longer occur.
+
+## Android (APK)
+
+The Android scaffold is framework material (`platform/android/`): a
+NativeActivity app whose manifest's `android.app.lib_name` (`main`) loads
+the game's corpus. Gradle's `externalNativeBuild` drives the game's own
+CMake through `platform/android/cpp/CMakeLists.txt`, which pins
+`PLATFORM=Android`, points FetchContent at **one raylib checkout per ABI**
+(the source dir is shared per ABI; different ABIs stay isolated), and
+pulls the vendored native_app_glue for the lifecycle.
+
+Packaging rules that hold for any consumer:
+
+- **Two build personalities.** A *private* build embeds the ROM
+  (test-only: never committed, never distributed — the FFTA pipeline names
+  it in the artifact, `...PRIVATE-rom-included.apk`); a *distributable*
+  build ships without it and imports via the first-boot picker. The public
+  path runs a private-material sweep and a content guard.
+- **The corpus must be fresh.** An APK embeds the desktop-generated corpus
+  (the Android build cannot produce it — the recompiler is a desktop
+  tool). The preflight must check presence AND freshness against a regen
+  stamp; mtimes cannot date a regeneration (byte-identical output keeps
+  them).
+- **Clean repackage before a distributable build.** Incremental
+  repackaging can strand bytes of a prior build in the zip slack —
+  observed twice: a 67 MB junk blob, then ~30 MB of stale entry data
+  between the last entry and the signing block, invisible to
+  `infolist()`-based checks. Remove the Gradle build dir first (native
+  objects under `.cxx` survive) and run a content guard that rejects
+  duplicate and unexpected large entries.
+- **Never commit APKs.** Private builds embed the ROM. Keep outgoing
+  builds in a gitignored archive with manifests + SHA256SUMS so device
+  behavior can be compared across builds; all debug-key builds swap in
+  place with `adb install -r` (saves preserved).
+- **versionName comes from the checkout** (`git describe --tags` minus
+  the leading `v`), so an installed APK always names its own commit — the
+  stale-install guard compares against it.
+
+The reference consumer's operational guide carries the per-game recipe
+(exact Gradle invocations, JDK/SDK preflight, the build+guard+device-gate
+wrapper, the release packager and its debug-signing caveat):
+`android/README.md` in the FFTA repo.
 
 ## What is still true here
 
