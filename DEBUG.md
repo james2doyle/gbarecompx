@@ -196,3 +196,25 @@ window after the fact:
 This ring is **always on**, including in Release builds. Eviction
 keeps memory bounded. Probes pull the requested slice; they do not
 arm a new recording.
+
+# SYNC RULES
+
+(Formerly the tail of `CLAUDE.md`, which is retired; the oracle tools and
+`docs/oracle-harness.md` in consumer trees point here.)
+
+- Sync via **hardware events**, not raw frame numbers.
+  Useful sync points: VBlank IRQ count, DMA completion count, timer
+  overflow count, SWI count, BIOS-IRQ-return count, specific PC at
+  specific function entry.
+- Expect divergence early. The earliest divergence is the only one
+  with a root cause; everything after is consequence.
+- Debug **writes** to VRAM/OAM/PAL, not "what's on screen."
+
+Priority order for early-boot debugging:
+1. BIOS handoff / SWI behavior
+2. Initial CPSR / mode / SP setup
+3. IRQ vector + `IE`/`IME` configuration
+4. DMA channel programming
+5. Timer programming
+6. DISPCNT / BGxCNT initial writes
+7. Palette / VRAM / OAM initial population

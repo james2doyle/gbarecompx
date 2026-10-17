@@ -12,7 +12,7 @@ Both processes are auto-spawned if --no-spawn isn't given:
     gbarecomp_oracle --bios bios/gba_bios.bin --port 19843
 
 Sync: each iteration sends `step` (native) and `emu_step` (oracle).
-Both advance exactly one PPU frame per call. Per CLAUDE.md SYNC RULES,
+Both advance exactly one PPU frame per call. Per DEBUG.md SYNC RULES,
 PPU frame count is OK as a stop signal (not the primary clock).
 """
 

@@ -10,9 +10,8 @@ consumer; this repo is the framework any gbarecomp-style game builds on.
 | Topic | File |
 |---|---|
 | Correctness principles, HLE policy, coverage honesty | `PRINCIPLES.md` |
-| Debugging protocol, frame ring, oracle discipline | `DEBUG.md` |
+| Debugging protocol, frame ring, oracle discipline, sync rules | `DEBUG.md` |
 | TCP debug surface | `TCP.md` |
-| Upstream-inherited agent rules (MinishCap-era wording; the principles are current) | `CLAUDE.md` |
 | Consumer-facing config schema | `docs/TOML_SCHEMA.md` |
 
 ## Ownership (what lives here vs in a consumer game)

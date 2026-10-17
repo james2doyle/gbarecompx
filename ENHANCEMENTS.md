@@ -1,7 +1,6 @@
 # gbarecomp Enhancements — Breaking Faithfulness On Purpose
 
-This project is LLE-first and proven against the oracle (see `PRINCIPLES.md`,
-`CLAUDE.md`). An **enhancement** is the one place we deviate from the faithful
+This project is LLE-first and proven against the oracle (see `PRINCIPLES.md`). An **enhancement** is the one place we deviate from the faithful
 core on purpose — and only ever as an **opt-in, default-off layer** that reduces
 byte-for-byte to the faithful build when disabled. The shared cross-project rules
 live in `../../recomp-template/ENHANCEMENTS.md` (Rule 1: default is

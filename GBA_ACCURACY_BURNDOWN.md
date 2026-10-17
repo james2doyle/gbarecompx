@@ -22,8 +22,7 @@ Engine HEAD at fork: `3262c49`.
   "Matches GBATEK / matches NBA source conventions" does NOT justify rewriting
   code whose output is already oracle-correct.
 - Self-agreement (compiled == our interpreter) proves **backend-equivalence, NOT
-  correctness** — both can be identically wrong. This is project CLAUDE.md /
-  PRINCIPLES.md doctrine, not optional.
+  correctness** — both can be identically wrong. This is project PRINCIPLES.md doctrine, not optional.
 - The user's eyes / the oracle's OUTPUT override source-reading. "Looked right
   before, wrong after" = revert, always.
 
@@ -47,7 +46,7 @@ Granularity verdicts (the GBA cycle vocabulary): `CYCLE-ACCURATE` /
 Always-on ring buffers only — **never arm-then-capture**. Probes QUERY a window
 of a continuously-recording ring; they do not arm recording at probe time, and
 they never pause/step two emulators into lockstep to "synchronize observers"
-(project CLAUDE.md ring-buffer rule).
+(project DEBUG.md ring-buffer rule).
 
 ## Comparative sources (the reference shelf)
 
@@ -245,7 +244,7 @@ vs NBA.
 - [x] Dispatch miss → interpreter bridge (`runtime_dispatch_miss`), logged,
   healed to native overlay (Stage 2), seeds reviewed TOML — never silent, never
   auto-merged (`self_heal.h:1-16`). Honest-self-healing doctrine enforced by
-  CLAUDE.md.
+  PRINCIPLES.md.
 - [x] Gen-code validated by the L1 codegen diff harness (Axis 1) + always-on
   fingerprint-ring cycle diffs.
 - [ ] **GAP — "fully static" is a per-run tally; correctness of gen code is
@@ -689,6 +688,6 @@ GBATEK + confirm which side is right BEFORE coding.
 7. Per-game burndown: each game must read `FULLY_STATIC` (Axis 6) and pass its
    axis-5a audio slice before it is called GREEN.
 
-> Per game CLAUDE.md: validate everything against the oracle on the same input
+> Per project PRINCIPLES.md: validate everything against the oracle on the same input
 > BEFORE applying any fix; no stubs, no skip directives, no edits to generated C,
 > fix the recompiler/runtime/TOML. A research-claimed divergence is a hypothesis.
