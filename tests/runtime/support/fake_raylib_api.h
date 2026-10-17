@@ -153,7 +153,14 @@ public:
     Shader LoadShaderFromMemory(const char* vsCode,
                                 const char* fsCode) override {
         (void)vsCode;
-        uniform_names.clear();
+        // NOTE: uniform_names is deliberately NOT cleared here. Real GL
+        // hands per-program location spaces, and several programs in one
+        // present (LCD/dither/MMPX) share names like "uGrid"; the fake
+        // keeps ONE persistent name->loc map so a write's name can always
+        // be recovered no matter which programs loaded before it. Clearing
+        // here made every post-second-program upload nameless (the fake's
+        // recording flaw behind the 2026-10-16 border-boot hunt's false
+        // green).
         shader_source = fsCode ? fsCode : nullptr;
         return Shader{shader_id, nullptr};
     }

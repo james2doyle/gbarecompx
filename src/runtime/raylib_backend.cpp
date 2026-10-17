@@ -1185,8 +1185,13 @@ public:
             // unshaded too (pad UI must remain legible).
             const bool lcd_border = impl_->lcd_border &&
                                     impl_->lcd_grid_alpha > 0.0f;
-            const bool lcd =
-                (impl_->lcd_shader || lcd_border) && impl_->lcd_shader_ready;
+            // Lazy compile (the dither/deband pattern): whichever effect
+            // wants the shared program gets it compiled right here — boot
+            // ordering can never strand a configured-on effect with an
+            // uncompiled program.
+            const bool lcd_wants = impl_->lcd_shader || lcd_border;
+            if (lcd_wants) load_lcd_shader(impl_);
+            const bool lcd = lcd_wants && impl_->lcd_shader_ready;
             // Mask composition for the shared program: 0 grille, 1 border,
             // 2 both.
             const int mask_mode = impl_->lcd_shader ? (lcd_border ? 2 : 0)
@@ -2506,8 +2511,18 @@ public:
         impl_->lcd_boost = boost;
         impl_->lcd_dither = dither;
         impl_->lcd_deband = deband;
-        impl_->lcd_border = border;
         impl_->lcd_grid_alpha = grid_alpha;
+        // EFFECT toggles go through apply()'s diff (never direct field
+        // writes): a direct write makes settings() agree with itself, so
+        // every later diff-driven path — including the runtime's boot
+        // menu-settings apply — silently no-ops and the program never
+        // compiles (the 2026-10-16 boot-enable bug: config-on grid was
+        // dead until an in-menu toggle).
+        if (border != impl_->lcd_border) {
+            FxSettings s = settings();
+            s.lcd_border = border;
+            apply(s);
+        }
         if (edge != impl_->edge_smoothing) {
             FxSettings s = settings();
             s.edge_smoothing = edge;
@@ -2516,14 +2531,6 @@ public:
         if (lcd != impl_->lcd_shader) {
             FxSettings s = settings();
             s.lcd = lcd;
-            apply(s);
-        }
-        // The border rides the LCD program: make sure it compiles when only
-        // the border is configured on (set_lcd_border's policy, applied here
-        // because the direct field write above bypassed the setter).
-        if (impl_->lcd_border || impl_->lcd_shader) {
-            FxSettings s = settings();
-            s.lcd_border = impl_->lcd_border;
             apply(s);
         }
     }
@@ -3049,10 +3056,13 @@ Result RaylibBackend::open(const OpenParams& params) {
     impl_->api->SetTargetFPS(60);
 #endif
 
-    // The GL context exists from here on, so an env-enabled LCD shader can
-    // compile now (needs IsWindowReady + GPU). A config-enabled one compiles
-    // lazily at set_lcd_shader() when load_input_config() runs.
-    if (impl_->lcd_shader) load_lcd_shader(impl_.get());
+    // The GL context exists from here on, so an env/config-enabled LCD
+    // shader can compile now (needs IsWindowReady + GPU). Compiles lazily
+    // in present() otherwise.
+    if (impl_->lcd_shader || impl_->lcd_border) load_lcd_shader(impl_.get());
+    // Same for MMPX (compiled eagerly when already toggled; lazily by the
+    // present path otherwise).
+    if (impl_->edge_smoothing) load_mmpx_shader(impl_.get());
     // Same for MMPX (compiled eagerly when already toggled; lazily by the
     // present path otherwise).
     if (impl_->edge_smoothing) load_mmpx_shader(impl_.get());

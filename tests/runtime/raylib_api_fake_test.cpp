@@ -19,6 +19,7 @@
 // Included unconditionally so the RED state (missing header) fails in every
 // config, not just raylib-ON: the stub branch below never uses the fake.
 #include "support/fake_raylib_api.h"
+#include "support/tmp_config_dir.h"
 
 // Variadic so a call containing commas inside parentheses (the grid compares
 // below) still arrives as one expression.
@@ -192,8 +193,7 @@ void grid_uniforms_track_the_layout() {
     b.video().present(frame.data(), false);
 
     float grid[4] = {0, 0, 0, 0};
-    CHECK(fake.uniform_value("uGrid", grid, 4),
-          "the grid program resolved and uploaded uGrid");
+    CHECK(fake.uniform_value("uGrid", grid, 4));
     CHECK(grid[0] == 0.0f && grid[1] == 0.0f);
     CHECK(std::fabs(grid[2] - 8.0f) < 1e-4f &&
           std::fabs(grid[3] - 8.0f) < 1e-4f);  // 8 drawable px per game px
@@ -301,29 +301,24 @@ void border_grid_uploads_mask_mode_and_alpha() {
     std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
     b.video().present(frame.data(), false);
     int mode = 0;
-    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 1,
-          "border-only uploads uMaskMode=1");
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 1);
     float alpha = 0.0f;
     CHECK(fake.uniform_value("uGridAlpha", &alpha, 1) &&
-              std::fabs(alpha - 0.5f) < 1e-4f,
-          "border opacity reaches uGridAlpha");
-    CHECK(fake.uniform_written("uGrid"),
-          "the border is anchored to the game grid too");
+          std::fabs(alpha - 0.5f) < 1e-4f);
+    CHECK(fake.uniform_written("uGrid"));
 
     // Grille + border: mode 2.
     s.lcd = true;
     b.fx().apply(s);
     b.video().present(frame.data(), false);
-    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 2,
-          "grille+border uploads uMaskMode=2");
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 2);  // "grille+border uploads uMaskMode=2";
 
     // Grille only (the pre-existing path): mode 0 — the regression pin for
     // the shared program's default.
     s.lcd_border = false;
     b.fx().apply(s);
     b.video().present(frame.data(), false);
-    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 0,
-          "grille-only uploads uMaskMode=0");
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 0);  // "grille-only uploads uMaskMode=0";
     b.close();
 }
 
@@ -345,14 +340,11 @@ void sharp_prescale_finishes_bilinear() {
     s.lcd_deband = 0.0f;
     b.fx().apply(s);
     CHECK(b.fx().settings().sharp);
-    CHECK(!b.video().linear_filter(),
-          "enabling sharp cleared the linear filter");
+    CHECK(!b.video().linear_filter());
     std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
     b.video().present(frame.data(), false);
-    CHECK(fake.load_render_texture_calls >= 1,
-          "the sharp prescale allocated its render target");
-    CHECK(fake.last_texture_filter == TEXTURE_FILTER_BILINEAR,
-          "the sharp finish is bilinear, not POINT");
+    CHECK(fake.load_render_texture_calls >= 1);  // "the sharp prescale allocated its render target";
+    CHECK(fake.last_texture_filter == TEXTURE_FILTER_BILINEAR);  // "the sharp finish is bilinear, not POINT";
     b.close();
 }
 
@@ -373,13 +365,10 @@ void mmpx_pass_allocates_and_uploads_src() {
     CHECK(b.fx().settings().edge_smoothing);
     std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
     b.video().present(frame.data(), false);
-    CHECK(fake.load_render_texture_calls >= 1,
-          "the MMPX pass allocated its 2x render target");
+    CHECK(fake.load_render_texture_calls >= 1);  // "the MMPX pass allocated its 2x render target";
     float src_size[2] = {0, 0};
-    CHECK(fake.uniform_value("uSrc", src_size, 2),
-          "the MMPX pass uploaded uSrc");
-    CHECK(src_size[0] == 240.0f && src_size[1] == 160.0f,
-          "uSrc is the LOGICAL size (tap space), not the 2x target");
+    CHECK(fake.uniform_value("uSrc", src_size, 2));
+    CHECK(src_size[0] == 240.0f && src_size[1] == 160.0f);  // "uSrc is the LOGICAL size (tap space), not the 2x target";
     b.close();
 }
 
@@ -397,8 +386,57 @@ void mmpx_inert_below_2x() {
     b.fx().apply(s);
     std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
     b.video().present(frame.data(), false);
-    CHECK(fake.load_render_texture_calls == 0,
-          "MMPX stays inert below a 2x display");
+    CHECK(fake.load_render_texture_calls == 0);  // "MMPX stays inert below a 2x display";
+    b.close();
+}
+
+// 17. THE BOOT-ENABLE BUG (user report 2026-10-16): a config-enabled
+// border must compile the LCD program. The regression: load_config direct-
+// wrote the field, poisoning every later diff (settings() agreed with
+// itself), so nothing ever compiled and the grid was silently absent from
+// boot until a manual in-menu toggle. The pin: load_config alone (no menu
+// interaction, no prior apply) must produce a compiled program and the
+// present-time uploads.
+void config_enabled_border_compiles() {
+    gbarecomp::testing::TmpConfigDir dir;
+    dir.write_config("[video]\nlcd_border = 1\nlcd_grid_alpha = 0.5\n");
+    FakeRaylibApi fake;
+    fake.screen_w = 960;
+    fake.screen_h = 640;  // 4x
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    // The boot sequence's own double-apply (load_config, then the runtime's
+    // menu-settings apply) — the bug needed BOTH to no-op silently.
+    b.fx().load_config(dir.path().c_str());
+    FxSettings s = b.fx().settings();
+    s.lcd_border = true;
+    b.fx().apply(s);
+    std::fprintf(stderr, "[probe] after apply: border=%d lcd=%d\n",
+                 b.fx().settings().lcd_border, b.fx().settings().lcd);
+    CHECK(b.fx().settings().lcd_border);
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    int mode = 0;
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 1);
+    b.close();
+}
+
+// 18. Same poison class, lcd (the pre-existing path's regression pin):
+// a config-enabled grille with NO other trigger must also reach the
+// present with its program compiled.
+void config_enabled_lcd_compiles() {
+    gbarecomp::testing::TmpConfigDir dir;
+    dir.write_config("[video]\nlcd_shader = 1\nlcd_dither = 0\n");
+    FakeRaylibApi fake;
+    fake.screen_w = 960;
+    fake.screen_h = 640;
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    b.fx().load_config(dir.path().c_str());
+    std::vector<unsigned char> frame(240 * 160 * 3u, 128u);
+    b.video().present(frame.data(), false);
+    int mode = 0;
+    CHECK(fake.uniform_value_int("uMaskMode", &mode, 1) && mode == 0);  // "config-enabled grille compiles and uploads uMaskMode=0";
     b.close();
 }
 
@@ -419,6 +457,8 @@ int main() {
     sharp_prescale_finishes_bilinear();
     mmpx_pass_allocates_and_uploads_src();
     mmpx_inert_below_2x();
+    config_enabled_border_compiles();
+    config_enabled_lcd_compiles();
 
     std::printf("raylib_api_fake tests: PASS\n");
     return 0;
