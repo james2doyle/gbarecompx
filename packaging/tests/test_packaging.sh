@@ -65,6 +65,16 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
     desktop-file-validate "$APPDIR/tiny.desktop"
 fi
 
+# --run-in-place keeps the executable on the mount (for XDG-aware runtimes).
+"$PACKAGING_ROOT/package_linux.sh" \
+    --binary "$SOURCE/tiny" --name TinyInPlace --version v0 --root "$SOURCE" \
+    --icon "$SOURCE/icon.png" --appdir-only --no-tarball --no-smoke \
+    --run-in-place --steamdeck-args "--fullscreen=1" >/dev/null
+INPLACE="$SOURCE/release-stage/TinyInPlace-v0.AppDir/AppRun"
+grep -q 'cd "$APPDIR/usr/bin"' "$INPLACE"
+grep -q 'exec "./tiny" "$@"' "$INPLACE"
+grep -q "STEAMDECK_ARGS='--fullscreen=1'" "$INPLACE"
+
 # Unsafe distribution names are rejected before staging/removal.
 if "$PACKAGING_ROOT/package_linux.sh" \
         --binary "$SOURCE/tiny" --name '../outside' --root "$SOURCE" \
