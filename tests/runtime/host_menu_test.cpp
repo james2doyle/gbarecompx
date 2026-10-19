@@ -124,6 +124,7 @@ void build_seeds_from_backend() {
     backend.recording_video.set_fps_readout(true);
     backend.tapped_audio.set_volume(80);
     backend.tapped_audio.set_enabled(true);
+    backend.scripted_input.ff = 7;
     FxSettings fx;
     fx.frame_interp = true;
     fx.frame_blend = 1.0f;
@@ -141,12 +142,13 @@ void build_seeds_from_backend() {
     host.build(backend);
     const MenuModel& m = host.model();
 
-    CHECK(m.section_count == 4);
+    CHECK(m.section_count == 5);
     CHECK(section_by_title(m, "Display") == 0);
     CHECK(section_by_title(m, "Graphics") == 1);
     CHECK(section_by_title(m, "Audio") == 2);
     CHECK(section_by_title(m, "System") == 3);
-    CHECK(m.row_count == 20);  // 17 settings rows + the three State rows
+    CHECK(section_by_title(m, "Assist") == 4);
+    CHECK(m.row_count == 21);  // 18 settings rows + the three State rows
     const int scale = row_by_label(m, "Window scale");
     CHECK(scale >= 0 && gbarecomp::menu_value_int(m, scale) == 5);
     const int linear = row_by_label(m, "Linear filter");
@@ -180,6 +182,8 @@ void build_seeds_from_backend() {
     CHECK(audio >= 0 && gbarecomp::menu_value_int(m, audio) == 1);
     const int volume = row_by_label(m, "Volume");
     CHECK(volume >= 0 && gbarecomp::menu_value_int(m, volume) == 80);
+    const int speed = row_by_label(m, "Fast-forward speed");
+    CHECK(speed >= 0 && gbarecomp::menu_value_int(m, speed) == 7);
     const int resume = row_by_label(m, "Resume game");
     CHECK(resume >= 0 && m.rows[resume].kind == MenuRowKind::Action);
 }
@@ -297,6 +301,43 @@ void volume_steps_clamp_and_noop_no_persist() {
     CHECK(backend.tapped_audio.volume() == 100);
     CHECK(gbarecomp::menu_value_int(host.model(), volume) == 100);
     CHECK(log.calls == 5);
+    host.close();
+}
+
+// ── 5b. Fast-forward speed: steps, clamps, and persists via the hook ────
+void fast_forward_speed_steps_and_applies() {
+    FakeBackend backend;
+    open_fake(backend);
+    backend.scripted_input.ff = 4;
+    HostMenu host;
+    HookLog log;
+    host.set_apply_hook(hook_fn, &log);
+    host.open(backend);
+
+    // Assist is the last section (index 4).
+    press(host, backend, kDown);
+    press(host, backend, kDown);
+    press(host, backend, kDown);
+    press(host, backend, kDown);
+    press(host, backend, kA);  // enter Assist; row 0 = Fast-forward speed
+
+    const int speed = row_by_label(host.model(), "Fast-forward speed");
+    CHECK(speed >= 0);
+    CHECK(gbarecomp::menu_value_int(host.model(), speed) == 4);
+
+    press(host, backend, kRight);  // 4 -> 5
+    CHECK(backend.scripted_input.ff == 5);
+    CHECK(gbarecomp::menu_value_int(host.model(), speed) == 5);
+    CHECK(log.calls == 1);
+    CHECK(log.last_changed == speed);
+
+    for (int i = 0; i < 5; ++i) press(host, backend, kRight);  // 5 -> 10
+    CHECK(backend.scripted_input.ff == 10);
+    CHECK(gbarecomp::menu_value_int(host.model(), speed) == 10);
+    press(host, backend, kRight);  // clamped: no change, no hook
+    CHECK(backend.scripted_input.ff == 10);
+    CHECK(log.calls == 6);
+
     host.close();
 }
 
@@ -509,10 +550,10 @@ void build_without_shaders_skips_lcd_group() {
     backend.caps_override.shaders = false;
     HostMenu host;
     host.build(backend);
-    // Edge smoothing joins the shader-gated group: 20 total minus the 7
+    // Edge smoothing joins the shader-gated group: 21 total minus the 7
     // gated rows (LCD, Pixel grid, Grid opacity, LCD boost, LCD dither,
-    // LCD deband, Edge smoothing) = 13.
-    CHECK(host.model().row_count == 13);
+    // LCD deband, Edge smoothing) = 14.
+    CHECK(host.model().row_count == 14);
     CHECK(row_by_label(host.model(), "LCD boost") == -1);
     CHECK(row_by_label(host.model(), "Pixel grid") == -1);
     CHECK(row_by_label(host.model(), "Grid opacity") == -1);
@@ -1076,6 +1117,7 @@ int main() {
     edge_detection_one_move_per_press();
     nav_applies_toggle_and_persists();
     volume_steps_clamp_and_noop_no_persist();
+    fast_forward_speed_steps_and_applies();
     float_row_applies();
     choice_cycles_fullscreen();
     scale_clamp_reseeds_model();

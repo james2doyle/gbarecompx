@@ -48,6 +48,9 @@ struct MenuSettings {
     int volume = 100;         // 0..100
     // [Menu] save-state slot (the menu's State rows: 1..9).
     int state_slot = 1;
+    // [Menu] fast-forward speed (Assist row). 0 = unset: leave the backend's
+    // default (or a legacy [Launcher] value) alone; 2..10 once chosen.
+    int fast_forward_multiplier = 0;
     // [Menu] graphics policy.
     bool frame_interp = false;
     float frame_blend = 0.0f;  // 0 or 1 (the menu Toggle semantics)
@@ -143,6 +146,8 @@ inline bool apply_menu_settings_line(MenuSettings& m, const char* key,
     if (ci_key(key, "volume")) return parse_clamped_int(val, 0, 100, &m.volume);
     if (ci_key(key, "state_slot"))
         return parse_clamped_int(val, 1, 9, &m.state_slot);
+    if (ci_key(key, "fast_forward_multiplier"))
+        return parse_clamped_int(val, 2, 10, &m.fast_forward_multiplier);
     if (ci_key(key, "frame_interp")) return parse_toggle(val, &m.frame_interp);
     if (ci_key(key, "frame_blend")) {
         bool b = false;
@@ -281,6 +286,8 @@ inline void save_menu_settings(const char* dir, const MenuSettings& m) {
     f << "audio_enabled = " << (m.audio_enabled ? 1 : 0) << "\n";
     f << "volume = " << m.volume << "\n";
     f << "state_slot = " << m.state_slot << "\n";
+    if (m.fast_forward_multiplier >= 2)
+        f << "fast_forward_multiplier = " << m.fast_forward_multiplier << "\n";
     f << "frame_interp = " << (m.frame_interp ? 1 : 0) << "\n";
     f << "frame_blend = " << (m.frame_blend != 0.0f ? 1 : 0) << "\n";
     f << "\n[video]\n";

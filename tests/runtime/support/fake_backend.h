@@ -136,6 +136,9 @@ public:
     const InputBindings& bindings() const override { return binds; }
     bool assist_tools_enabled() const override { return assist; }
     int fast_forward_multiplier() const override { return ff; }
+    void set_fast_forward_multiplier(int multiplier) override {
+        ff = std::clamp(multiplier, 2, 10);
+    }
     bool gamepad_connected() const override { return pad_connected; }
     void rumble(float low, float high, std::uint32_t duration_ms) override {
         ++rumble_calls;

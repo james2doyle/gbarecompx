@@ -3207,6 +3207,14 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
             win.load_input_config(exe_dir.c_str(),
                                   opts.assist_tools_enabled_by_default,
                                   opts.assist_fast_forward_multiplier_default);
+            // [Menu] owns the in-game menu's fast-forward speed row. Apply it
+            // after the [Launcher] loader so the menu's choice wins over a
+            // legacy launcher value; absent [Menu] leaves the backend default.
+            if (menu_settings.fast_forward_multiplier >= 2) {
+                if (WindowBackend* backend = win.backend_v2())
+                    backend->input().set_fast_forward_multiplier(
+                        menu_settings.fast_forward_multiplier);
+            }
             // --lcd-shader/--lcd-boost/--lcd-dither startup defaults. Applied
             // AFTER load_input_config (not with the frame pair above) and
             // only when explicitly given, so CLI beats the config file, which
@@ -3588,6 +3596,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                         ms.fixed_width = *ctx->fixed_width;
                 }
                 ms.state_slot = ctx->host->state_slot();
+                if (const int row = row_by_label("Fast-forward speed");
+                    row >= 0) {
+                    ms.fast_forward_multiplier = menu_value_int(model, row);
+#if defined(GBARECOMP_RUNTIME_UI)
+                    // The recomp-ui path drains the context, not the backend
+                    // input, so mirror the menu change there as well.
+                    runtime_ui_context.fast_forward_multiplier =
+                        ms.fast_forward_multiplier;
+#endif
+                }
                 save_menu_settings(ctx->dir, ms);
                 window.audio().set_enabled(ms.audio_enabled);
             },

@@ -195,16 +195,51 @@ void state_slot_parses_clamps_and_round_trips() {
     CHECK(dir.count_occurrences("state_slot") == 1);
 }
 
+// The fast-forward speed row: [Menu] owns it, clamps to the engine's 2..10
+// range, and survives the drop-and-rewrite. 0 means "unset" so a legacy
+// [Launcher] value or the game default survives until the row is changed.
+void fast_forward_speed_parses_clamps_and_round_trips() {
+    MenuSettings m;
+    CHECK(m.fast_forward_multiplier == 0);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "fast_forward_multiplier",
+                                              "7"));
+    CHECK(m.fast_forward_multiplier == 7);
+    CHECK(gbarecomp::apply_menu_settings_line(m, "fast_forward_multiplier",
+                                              "1"));
+    CHECK(m.fast_forward_multiplier == 2);  // clamped low
+    CHECK(gbarecomp::apply_menu_settings_line(m, "fast_forward_multiplier",
+                                              "99"));
+    CHECK(m.fast_forward_multiplier == 10);  // clamped high
+    CHECK(!gbarecomp::apply_menu_settings_line(m, "fast_forward_multiplier",
+                                               "junk"));
+    CHECK(m.fast_forward_multiplier == 10);  // garbage keeps the value
+
+    gbarecomp::testing::TmpConfigDir dir;
+    m.fast_forward_multiplier = 8;
+    gbarecomp::save_menu_settings(dir.path().c_str(), m);
+    MenuSettings back;
+    gbarecomp::load_menu_settings(dir.path().c_str(), back);
+    CHECK(back.fast_forward_multiplier == 8);
+    CHECK(dir.count_occurrences("fast_forward_multiplier") == 1);
+
+    // Unset (0) writes no key, so saving unrelated rows cannot invent one.
+    MenuSettings unset;
+    unset.scale = 4;
+    gbarecomp::testing::TmpConfigDir empty_dir;
+    gbarecomp::save_menu_settings(empty_dir.path().c_str(), unset);
+    CHECK(!empty_dir.contains("fast_forward_multiplier"));
+}
+
 int main() {
     display_keys_parse_and_clamp();
     audio_and_graphics_keys_parse();
     sharp_and_pixel_grid_keys_parse();
     sharp_and_grid_round_trip();
-    sharp_and_grid_round_trip();
     save_rewrite_round_trips_without_dupes();
     video_merge_preserves_foreign_lines_and_is_idempotent();
     foreign_sections_survive();
     state_slot_parses_clamps_and_round_trips();
+    fast_forward_speed_parses_clamps_and_round_trips();
     std::printf("menu_settings tests: PASS\n");
     return 0;
 }

@@ -123,6 +123,7 @@ struct NoopInput final : Input {
     const InputBindings& bindings() const override { return empty_bindings; }
     bool assist_tools_enabled() const override { return false; }
     int fast_forward_multiplier() const override { return 1; }
+    void set_fast_forward_multiplier(int) override {}
     bool gamepad_connected() const override { return false; }
     void rumble(float, float, std::uint32_t) override {}
     void haptic_pulse(int, float) override {}

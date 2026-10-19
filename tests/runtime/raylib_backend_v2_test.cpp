@@ -241,6 +241,14 @@ void input_defaults_and_shared_state() {
     in.load_config(nullptr, true, 99);
     CHECK(in.assist_tools_enabled());
     CHECK(in.fast_forward_multiplier() == 10);  // clamped
+
+    // Live setter used by the in-game Assist row: clamps to 2..10.
+    in.set_fast_forward_multiplier(7);
+    CHECK(in.fast_forward_multiplier() == 7);
+    in.set_fast_forward_multiplier(1);
+    CHECK(in.fast_forward_multiplier() == 2);
+    in.set_fast_forward_multiplier(99);
+    CHECK(in.fast_forward_multiplier() == 10);
 }
 
 void input_safe_without_a_window() {

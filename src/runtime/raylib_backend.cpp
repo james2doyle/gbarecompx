@@ -2508,6 +2508,10 @@ public:
         return impl_->fast_forward_multiplier;
     }
 
+    void set_fast_forward_multiplier(int multiplier) override {
+        impl_->fast_forward_multiplier = std::clamp(multiplier, 2, 10);
+    }
+
     bool gamepad_connected() const override {
 #if defined(GBARECOMP_USE_RAYLIB)
         if (!impl_->open || !impl_->api->IsWindowReady()) return false;

@@ -229,6 +229,9 @@ public:
     virtual const InputBindings& bindings() const = 0;
     virtual bool assist_tools_enabled() const = 0;
     virtual int  fast_forward_multiplier() const = 0;
+    // 2..10; the runtime drains this value on every frame, so a menu change
+    // takes effect on the next frame. Out-of-range values are clamped.
+    virtual void set_fast_forward_multiplier(int multiplier) = 0;
     virtual bool gamepad_connected() const = 0;  // standard-mapped pad present
     virtual void rumble(float low, float high, std::uint32_t duration_ms) = 0;
     virtual void haptic_pulse(int duration_ms, float strength) = 0;

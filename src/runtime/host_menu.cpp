@@ -4,7 +4,8 @@
 // (recomp-ui/src/common/recomp_runtime_settings.c) where the V2 capabilities
 // overlap: Display (Fullscreen, Window scale, Linear filter, Show FPS),
 // Graphics (LCD ghosting, Frame interpolation, the LCD shader group when the
-// backend can run it), Audio (Audio, Volume), System (Resume game).
+// backend can run it), Audio (Audio, Volume), System (save states, Resume),
+// and Assist (Fast-forward speed).
 #include "host_menu.h"
 
 #include <cstdint>
@@ -310,6 +311,24 @@ void HostMenu::build(WindowBackend& backend) {
         add(row, Bind::Resume);
     }
 
+    // ── Assist ──────────────────────────────────────────────────────────
+    // Fast-forward speed is a host input setting (the runtime drains the
+    // backend's multiplier each frame). It lives here rather than in a
+    // launcher so it remains reachable on every platform, including the
+    // touch-only Android path.
+    const int assist = section("Assist");
+    {
+        MenuRow row;
+        row.kind = MenuRowKind::StepInt;
+        row.label = "Fast-forward speed";
+        row.min_value = 2.0f;
+        row.max_value = 10.0f;
+        row.step = 1.0f;
+        row.int_value = backend.input().fast_forward_multiplier();
+        row.section = assist;
+        add(row, Bind::FastForwardSpeed);
+    }
+
     // Games re-append their rows here, with values seeded from game state.
     if (rebuild_hook_) rebuild_hook_(rebuild_user_, model_);
 
@@ -516,6 +535,12 @@ bool HostMenu::apply(WindowBackend& backend, const MenuResult& result) {
             menu_set_value_int(model_, row, state_slot_ - 1);
             break;
         }
+        case Bind::FastForwardSpeed:
+            backend.input().set_fast_forward_multiplier(
+                menu_value_int(model_, row));
+            menu_set_value_int(model_, row,
+                               backend.input().fast_forward_multiplier());
+            break;
         }
         if (apply_hook_ && bind != Bind::Resume) {
             menu_set_status(model_, "Saved");

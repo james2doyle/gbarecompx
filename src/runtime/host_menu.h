@@ -209,6 +209,7 @@ private:
         StateSlot,
         SaveState,
         LoadState,
+        FastForwardSpeed,
     };
 
     MenuModel model_;
