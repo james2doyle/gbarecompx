@@ -58,6 +58,12 @@ public:
         if (h) *h = drawable_h;
         return drawable_w > 0 && drawable_h > 0;
     }
+    // The fake's logical base is its mutable surface size; explicit here
+    // because Video::logical_size is pure (the seam guard rejects defaults).
+    void logical_size(int* w, int* h) const override {
+        if (w) *w = base_w;
+        if (h) *h = base_h;
+    }
     bool set_surface_size(int w, int h) override {
         if (w < 1 || h < 1) return false;
         base_w = w;
