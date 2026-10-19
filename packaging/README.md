@@ -99,6 +99,24 @@ directory runs signed or unsigned and keeps the runtime's sidecar layout.
 raylib is linked statically, so the script only verifies that `otool -L`
 shows system libraries; signing/notarization belongs to the consumer.
 
+## Windows (MinGW)
+
+`package_release.ps1` builds/stages a static MinGW release on Windows:
+
+```powershell
+.\gbarecompx\packaging\package_release.ps1 `
+    -Target FFTARecomp -Name FFTARecomp -Version v1.7 `
+    -Payload game.toml,bios,mods,assets
+```
+
+It configures `GBARECOMP_STATIC_RELEASE=ON` with
+`-static -static-libgcc -static-libstdc++` and a deterministic PE
+timestamp, stages the executable/payload into
+`release-stage\<name>-<version>-windows-x64`, rejects third-party DLL
+imports, and writes the zip. The FFTA reference instead cross-compiles
+from Linux with `tools/make_release.py --windows` (same static contract,
+plus the objdump and wine gates); both routes are current.
+
 ## Android (APK)
 
 The Android scaffold is framework material (`platform/android/`): a
