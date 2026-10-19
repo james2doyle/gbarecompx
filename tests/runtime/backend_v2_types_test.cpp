@@ -88,6 +88,7 @@ struct NoopVideo final : Video {
     }
     float refresh_hz() const override { return 0.0f; }
     bool drawable_size(int*, int*) const override { return false; }
+    void logical_size(int*, int*) const override {}
     bool set_surface_size(int, int) override { return false; }
     void set_title(const char*) override {}
     int scale() const override { return 1; }
