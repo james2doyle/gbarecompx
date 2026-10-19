@@ -84,7 +84,8 @@ option(GBA_COSIM
 
 if(GBARECOMP_STATIC_RELEASE)
     # NOTE: -static / -static-libgcc / -static-libstdc++ MUST be set
-    # via -DCMAKE_EXE_LINKER_FLAGS at configure time (see package_release.ps1).
+    # via -DCMAKE_EXE_LINKER_FLAGS at configure time (see
+    # packaging/package_release.ps1).
     # add_link_options() here would only apply to targets defined in
     # gbarecomp's subdir, not to a parent project that includes us via
     # add_subdirectory() (e.g. MinishCapRecomp). The cache var works
@@ -844,26 +845,17 @@ target_include_directories(link_tests PRIVATE src/runtime)
 target_link_libraries(link_tests PRIVATE gbarecomp_gba)
 add_test(NAME link_tests COMMAND link_tests)
 
-# Portable packaging generation is a Unix-only shell path. Register its smoke
-# test when the small validation toolchain is available, while keeping ordinary
-# engine builds independent of packaging-only host packages.
+# Packaging script checks (syntax + the current Linux AppDir/portable staging
+# contract). Unix-only shell path; no Flatpak/PyYAML/appimagetool dependency.
 if(UNIX)
     find_program(GBARECOMP_BASH_EXECUTABLE bash)
-    find_program(GBARECOMP_DESKTOP_FILE_VALIDATE desktop-file-validate)
-    find_package(Python3 COMPONENTS Interpreter QUIET)
-    if(GBARECOMP_BASH_EXECUTABLE AND GBARECOMP_DESKTOP_FILE_VALIDATE
-            AND Python3_Interpreter_FOUND)
-        execute_process(
-            COMMAND ${Python3_EXECUTABLE} -c "import yaml"
-            RESULT_VARIABLE GBARECOMP_PYYAML_RESULT
-            OUTPUT_QUIET ERROR_QUIET)
-        if(GBARECOMP_PYYAML_RESULT EQUAL 0)
-            add_test(NAME packaging_generation_checks
-                COMMAND ${CMAKE_COMMAND} -E env
-                    PYTHON=${Python3_EXECUTABLE}
-                    ${GBARECOMP_BASH_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/packaging/tests/test_generation.sh)
-        endif()
+    find_program(GBARECOMP_CC_EXECUTABLE NAMES cc gcc clang)
+    if(GBARECOMP_BASH_EXECUTABLE AND GBARECOMP_CC_EXECUTABLE)
+        add_test(NAME packaging_checks
+            COMMAND ${CMAKE_COMMAND} -E env
+                CC=${GBARECOMP_CC_EXECUTABLE}
+                ${GBARECOMP_BASH_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/packaging/tests/test_packaging.sh)
     endif()
 endif()
 

@@ -1,27 +1,103 @@
 # packaging — portable release builds
 
-> **STATUS (2026-10-17): the shell scripts below are LEGACY — SDL-era,
-> unverified against the current product.** They were written when every
-> game exe was a plain SDL2 program. Phase 4b retired SDL2 and Phase 4c
-> made raylib the product backend, fetched by pinned SHA and **linked
-> statically** — so the dylib-bundling machinery (`otool`/`ldd` walks, the
-> sdl2-compat/SDL3 dlopen hunt, `$ORIGIN` rpaths for shim libraries) has
-> nothing left to bundle, and the Flatpak manifests still build an SDL2
-> module that no current target links. Nothing in the script sections has
-> been run against a raylib build; treat them as unverified until someone
-> re-validates them. The **Android (APK)** section is current.
+Current raylib-era scripts:
 
-## The live release pipeline
+| Path | What |
+|---|---|
+| `package_linux.sh` | Stage a portable Linux folder/tarball and a Steam-Deck-friendly AppImage |
+| `package_macos.sh` | Stage a portable macOS folder/tarball (raylib is statically linked; no dylib bundling) |
+| `package_android.sh` | Scaffold-level Gradle/APK wrapper (private and distributable personalities) |
+| `package_release.ps1` | Windows/MinGW portable folder + zip, static runtime, PE import guard |
+| Windows cross-build | The FFTA reference uses `tools/make_release.py --windows` (MinGW cross from Linux); this is consumer-owned |
 
-The reference consumer's packaging does not use this directory. The FFTA
-recomp ships through its own deterministic, guarded pipeline —
-`tools/make_release.py` in the consumer repo — which produces the Linux
-portable zip, the public Android APK, and the static MinGW Windows
-executable from a single allowlist stage (private-material sweep included,
-content-guarded). A new consumer game should copy that shape rather than
-revive these scripts by default: with raylib linked statically, a release
-is an executable plus assets, and most of the complexity below exists to
-solve dynamic-SDL problems that no longer occur.
+The SDL-era Flatpak manifests, dylib-collection walks and the old
+`package_linux.sh`/`package_macos.sh` were removed when raylib became the
+product backend; the static-linked release is an executable plus staged
+assets. Git history preserves the SDL versions if a port ever needs them.
+
+## Linux / Steam Deck (AppImage)
+
+`package_linux.sh` builds (or takes) an executable, stages the consumer's
+payload, writes a portable folder/tarball, and optionally an AppImage:
+
+```sh
+gbarecompx/packaging/package_linux.sh \
+    --target FFTARecomp --name FFTARecomp --version v1.7 \
+    --binary build-compat/FFTARecomp \
+    --payload game.toml --payload bios --payload mods \
+    --payload recomp/launcher/boxart.png=assets/img/boxart.png \
+    --icon recomp/launcher/appimage-icon.png
+```
+
+Output in `release-stage/`:
+
+```
+<name>-<version>-linux-<arch>/                 portable payload
+<name>-<version>-linux-<arch>.tar.gz
+<name>-<version>-linux-<arch>.AppImage
+<name>-<version>.AppDir/                        with --appdir-only
+```
+
+**The writable-sidecar rule.** gbarecomp games conventionally resolve
+`rom.cfg`, `config.ini`/`keybinds.ini`, and `saves/` beside the executable.
+An AppImage mount is read-only, so the generated `AppRun` unpacks
+`usr/bin/` to `$XDG_DATA_HOME/<app>/app` (default
+`~/.local/share/<app>/app`) and runs there. Updates copy the new payload
+over that directory **without deleting player files**. Pass
+`--run-in-place` only when the game already stores its sidecars in XDG/user
+directories.
+
+On Steam Deck / Game Mode (`SteamDeck=1` in the environment), pass
+`--steamdeck-args "--fullscreen=1 --resize-view"` (or whatever display
+flags the game supports); `AppRun` prepends them. Keep an explicit
+consumer-side opt-out if players may want windowed mode.
+
+**glibc floor.** SteamOS does not provide a rolling distro's glibc. Build
+the shipped executable in an old environment (Steam Runtime SDK or a pinned
+Debian 12 container) and check it:
+
+```sh
+objdump -T build-compat/FFTARecomp | grep -o 'GLIBC_[0-9.]*' | sort -V | tail
+```
+
+The FFTA reference implementation is
+[`tools/compat_build.py`](https://github.com/james2doyle/ffta-recomp/blob/main/tools/compat_build.py)
+with [`tools/compat/Containerfile`](https://github.com/james2doyle/ffta-recomp/blob/main/tools/compat/Containerfile)
+(Debian 12, glibc 2.36 floor; the produced binary requires 2.35). Do not
+bundle glibc, the graphics stack, or libstdc++; they must come from the
+host.
+
+**AppImage checks.** The script pins appimagetool 1.9.1 and the AppImage type-2 runtime by SHA-256 and
+supports `--appimagetool PATH`, `--appdir-only` (CI/staging, no download),
+`--no-appimage`, `--no-tarball`, and `--clean`. It applies generic portable
+hygiene (no symlinks; no `.gba/.agb/.sav/.srm/.apk`), and runs the
+executable's `--help` startup smoke unless `--no-smoke`. Consumer policy
+still owns the ROM/BIOS hash sweep, release signing, upload, and the strict
+coverage smoke; the FFTA reference implementations are
+[`tools/make_appimage.py`](https://github.com/james2doyle/ffta-recomp/blob/main/tools/make_appimage.py)
+and
+[`tools/publish_release.py`](https://github.com/james2doyle/ffta-recomp/blob/main/tools/publish_release.py).
+After building, extract the AppImage (`--appimage-extract`, or
+`--appimage-extract-and-run` where FUSE is unavailable), rerun the
+consumer's private-material sweep, and boot the packaged AppImage to the
+game's strict coverage line.
+
+## macOS
+
+`package_macos.sh` stages a flat portable folder and tarball:
+
+```sh
+gbarecompx/packaging/package_macos.sh \
+    --target FFTARecomp --name FFTARecomp --version v1.7 \
+    --payload game.toml --payload bios --payload mods
+```
+
+A `.app` bundle is deliberately not used: macOS validates everything under
+`Contents/MacOS` as signed code, but gbarecomp resolves assets beside the
+executable, so those assets cannot be ad-hoc signed there. The flat
+directory runs signed or unsigned and keeps the runtime's sidecar layout.
+raylib is linked statically, so the script only verifies that `otool -L`
+shows system libraries; signing/notarization belongs to the consumer.
 
 ## Android (APK)
 
@@ -34,9 +110,6 @@ CMake through `platform/android/cpp/CMakeLists.txt`, which pins
 pulls the vendored native_app_glue for the lifecycle.
 
 ### `package_android.sh` — the scaffold-level build wrapper
-
-The one current script in this directory (it supersedes
-`platform/android/tools/build-apk.ps1`):
 
 ```sh
 gbarecompx/packaging/package_android.sh [--project DIR] [--abis LIST]
@@ -103,28 +176,7 @@ wrapper, the release packager and its debug-signing caveat):
   run.
 - **`generated/` is not committed anywhere in this ecosystem**; regenerate
   it locally (the consumer's change cycle) before any packaging step.
-- `packaging/tests/test_generation.sh` still checks the script mechanics
-  (shell syntax, metadata generation from a source path containing `&`,
-  both Flatpak YAML forms, metainfo XML, desktop-entry validation, and
-  that ROM/BIOS plus arbitrary `build-*` directories are excluded). Needs
-  PyYAML and `desktop-file-validate` on Linux.
-
-## The scripts, as they stand
-
-| Path | Era | State |
-|---|---|---|
-| `package_macos.sh` | SDL | Was verified booting a real ROM (SDL build); untouched since |
-| `package_linux.sh` | SDL | Was **untested** even in the SDL era ("counterpart to the macOS script") |
-| `flatpak/` (manifests + `build_flatpak.sh`) | SDL | Was verified on a real Deck (SDL build); the manifests fetch SDL2 2.30.9 as a module |
-| Windows | — | Lives in the consumer's release pipeline (see above), not here |
-
-## If you revive this for raylib
-
-The work is smaller than the history: drop the SDL2 module from both
-Flatpak manifests (raylib needs only GL/EGL and the X11 client libs the
-freedesktop runtime already ships — or add raylib as a module if you want
-it built in the sandbox), delete the dylib-bundling walks from the
-macOS/Linux scripts (a statically-linked exe ships alone), re-point the
-example targets and flags at a current consumer, and then re-verify on
-real hardware — the Deck verification predates the backend swap by two
-backend generations.
+- `packaging/tests/test_packaging.sh` checks the current scripts: shell
+  syntax, the Linux portable/AppDir staging, the writable AppRun contract,
+  unsafe-name rejection, and the macOS script's argument parsing. It needs
+  only bash; `desktop-file-validate` is used when present.

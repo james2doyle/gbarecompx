@@ -1,215 +1,208 @@
 #!/usr/bin/env bash
-# package_macos.sh — build a game target into a self-contained, portable
-# directory on macOS, plus a .tar.gz of it.
+# package_macos.sh — package a gbarecomp game for macOS.
 #
-# Game-agnostic: every gbarecomp game exe is a plain SDL2 program, so the same
-# steps work for any of them. Run from a game repo root:
+# Current pipeline (raylib is statically linked): stage the executable plus
+# consumer-declared payload into a flat, portable directory and tar it. No
+# dylib bundling or SDL shims are needed.
 #
-#   gbarecomp/packaging/package_macos.sh --target BoktaiRecomp \
-#       --name Boktai -DGBAGAME_RECOMP_UI=ON
+#   gbarecompx/packaging/package_macos.sh \
+#       --target FFTARecomp --name FFTARecomp --version v1.7 \
+#       --payload game.toml --payload bios --payload mods --payload assets
 #
-# Output: <root>/release-stage/<name>-macos-<arch>/  (+ .tar.gz)
+# Output:
+#   release-stage/<name>-<version>-macos-<arch>/
+#   release-stage/<name>-<version>-macos-<arch>.tar.gz
 #
-# ---------------------------------------------------------------------------
-# Why a flat directory and not a .app bundle
+# A flat directory is deliberate: a .app bundle validates everything under
+# Contents/MacOS as signed code, but a gbarecomp game resolves assets beside
+# the executable, so assets placed there cannot be ad-hoc signed. The flat
+# directory runs signed or unsigned and keeps the runtime's sidecar layout.
 #
-# A .app was tried first and does not work: launching
-# Contents/MacOS/<exe> makes the kernel validate the whole bundle, and the
-# process is SIGKILLed (exit 137) before it prints a byte. The cause is
-# structural, not a signing mistake — the launcher resolves its assets directory
-# as the executable's own directory, so assets/ has to sit in Contents/MacOS,
-# and codesign reads everything under Contents/MacOS as code:
-#
-#     code object is not signed at all
-#     In subcomponent: .../Contents/MacOS/assets/fonts/OpenMoji-black-glyf.ttf
-#
-# so the bundle can never carry a valid signature while the assets are where the
-# runtime needs them. A flat directory is not bundle-validated, runs signed or
-# unsigned, and was verified booting the real ROM for 30 frames.
-#
-# Why not GBARECOMP_STATIC_RELEASE: it pins C:/msys64/mingw64/lib/libSDL2.a and
-# links Windows system libs, so it is MSYS2-only by construction. macOS has no
-# static libSystem either, so a fully static binary is not a supported
-# configuration here.
-# ---------------------------------------------------------------------------
-
+# Policy stays in the consumer: ROM/BIOS content pins, signing/notarization,
+# upload, and the strict coverage smoke. This script applies the portable
+# hygiene rules (no symlinks, no ROM/save/APK extensions) and can run the
+# executable's --help startup smoke.
 set -euo pipefail
 
-TARGET=""; APP_NAME=""; BUILD_DIR="build-release"; ROOT="$(pwd)"
+TARGET=""; APP_NAME=""; VERSION=""; ROOT="$(pwd)"; BUILD_DIR="build-release"
+BINARY=""; ARCH="$(uname -m)"
+PAYLOADS=(); PAYLOAD_DIRS=(); TARBALL=1; CLEAN=0; SMOKE=1
+JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
 CONFIGURE_ARGS=()
 
-usage() {
-    cat <<'USAGE'
-package_macos.sh --target <cmake-target> [options]
+die() { echo "package_macos: $*" >&2; exit 1; }
 
-  --target <name>      CMake target to build (required)
-  --name <name>        distribution name (default: the target name)
-  --build-dir <dir>    build directory (default: build-release)
-  --root <dir>         game repo root (default: cwd)
-  -D<var>=<value>      passed through to the cmake configure step
+usage() {
+    sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    cat <<'USAGE'
+
+Options:
+  --target <name>        CMake target to build (or use --binary)
+  --binary <path>        use an already-built executable
+  --name <name>          distribution name (default: target or binary name)
+  --version <v>          version string (default: git describe)
+  --root <dir>           game repo root (default: cwd)
+  --build-dir <dir>      build directory (default: build-release)
+  --payload <src[=dst]>  copy a file/dir into the payload (repeatable)
+  --payload-dir <dir>    copy a directory's contents into the payload root
+  --arch <arch>          architecture label (default: uname -m)
+  --jobs <n>             build parallelism (default: hw.ncpu)
+  --no-tarball           keep the folder only
+  --no-smoke             skip the --help startup smoke
+  --clean                remove the portable folder after packaging
+  -D<var>=<value>        passed through to the CMake configure step
 USAGE
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --target)    TARGET="$2"; shift 2 ;;
-        --name)      APP_NAME="$2"; shift 2 ;;
-        --build-dir) BUILD_DIR="$2"; shift 2 ;;
-        --root)      ROOT="$2"; shift 2 ;;
-        -D*)         CONFIGURE_ARGS+=("$1"); shift ;;
-        -h|--help)   usage; exit 0 ;;
-        *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
+        --target)         TARGET="$2"; shift 2 ;;
+        --binary)         BINARY="$2"; shift 2 ;;
+        --name)           APP_NAME="$2"; shift 2 ;;
+        --version)        VERSION="$2"; shift 2 ;;
+        --root)           ROOT="$2"; shift 2 ;;
+        --build-dir)      BUILD_DIR="$2"; shift 2 ;;
+        --payload)        PAYLOADS+=("$2"); shift 2 ;;
+        --payload-dir)    PAYLOAD_DIRS+=("$2"); shift 2 ;;
+        --arch)           ARCH="$2"; shift 2 ;;
+        --jobs)           JOBS="$2"; shift 2 ;;
+        --no-tarball)     TARBALL=0; shift ;;
+        --no-smoke)       SMOKE=0; shift ;;
+        --clean)          CLEAN=1; shift ;;
+        -D*)              CONFIGURE_ARGS+=("$1"); shift ;;
+        -h|--help)        usage; exit 0 ;;
+        *) die "unknown argument: $1 (see --help)" ;;
     esac
 done
 
-[ -n "$TARGET" ] || { echo "--target is required" >&2; usage; exit 2; }
-APP_NAME="${APP_NAME:-$TARGET}"
-
-# APP_NAME becomes part of a directory that is recursively replaced below.
-# Keep it a single, visible path component and reject control characters.
+[ "$(uname -s)" = "Darwin" ] || die "package_macos.sh only runs on macOS"
+[ -n "$TARGET" ] || [ -n "$BINARY" ] || die "--target or --binary is required"
+[ -n "$APP_NAME" ] || APP_NAME="${TARGET:-$(basename "$BINARY")}"
 case "$APP_NAME" in
     ""|[.-]*|*/*|*\\*|*$'\n'*|*$'\r'*)
-        echo "--name must be a visible filename component without slashes" >&2
-        exit 2
-        ;;
+        die "--name must be a visible filename component without slashes" ;;
 esac
-[ "$(uname -s)" = "Darwin" ] || { echo "package_macos.sh only runs on macOS" >&2; exit 1; }
 
-# Canonicalize after resolving a possibly-relative --root. Keeping ROOT in its
-# original relative form after cd made paths such as game/game/build-release.
 ROOT="$(cd -- "$ROOT" && pwd -P)"
 cd -- "$ROOT"
 case "$BUILD_DIR" in
     /*) BUILD_PATH="$BUILD_DIR" ;;
     *)  BUILD_PATH="$ROOT/$BUILD_DIR" ;;
 esac
-ARCH="$(uname -m)"
 mkdir -p -- "$ROOT/release-stage"
 RELEASE_STAGE="$(cd -- "$ROOT/release-stage" && pwd -P)"
-OUT="$RELEASE_STAGE/$APP_NAME-macos-$ARCH"
-case "$OUT" in
-    "$RELEASE_STAGE"/*) ;;
-    *) echo "refusing output outside release-stage: $OUT" >&2; exit 2 ;;
+
+if [ -z "$VERSION" ]; then
+    VERSION="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)"
+fi
+VERSION="$(printf '%s' "$VERSION" | tr '/ ' '--')"
+[ -n "$VERSION" ] || VERSION="dev"
+
+if [ -z "$BINARY" ]; then
+    echo "==> configure ($BUILD_DIR)"
+    cmake -S "$ROOT" -B "$BUILD_PATH" -DCMAKE_BUILD_TYPE=Release \
+        "${CONFIGURE_ARGS[@]+"${CONFIGURE_ARGS[@]}"}"
+    echo "==> build $TARGET"
+    cmake --build "$BUILD_PATH" --target "$TARGET" --parallel "$JOBS"
+    BINARY="$BUILD_PATH/$TARGET"
+fi
+case "$BINARY" in
+    /*) ;;
+    *)  BINARY="$ROOT/$BINARY" ;;
 esac
+[ -x "$BINARY" ] || die "executable not found or not executable: $BINARY"
+EXE_NAME="$(basename "$BINARY")"
 
-echo "==> configure ($BUILD_DIR)"
-cmake -S "$ROOT" -B "$BUILD_PATH" -DCMAKE_BUILD_TYPE=Release \
-    "${CONFIGURE_ARGS[@]+"${CONFIGURE_ARGS[@]}"}"
-
-echo "==> build $TARGET"
-cmake --build "$BUILD_PATH" --target "$TARGET" -j"$(sysctl -n hw.ncpu)"
-
-EXE="$BUILD_PATH/$TARGET"
-[ -x "$EXE" ] || { echo "built executable not found: $EXE" >&2; exit 1; }
-
+FOLDER="$APP_NAME-$VERSION-macos-$ARCH"
+OUT="$RELEASE_STAGE/$FOLDER"
 echo "==> stage $OUT"
-rm -rf -- "$OUT"; mkdir -p -- "$OUT"
-cp "$EXE" "$OUT/$TARGET"
+rm -rf -- "$OUT"
+mkdir -p -- "$OUT"
+cp "$BINARY" "$OUT/$EXE_NAME"
+chmod 755 "$OUT/$EXE_NAME"
 
-# recomp-ui stages launcher assets next to the built exe; the seam resolves them
-# relative to the executable, so they travel beside it.
-[ -d "$BUILD_PATH/assets" ] && cp -R "$BUILD_PATH/assets" "$OUT/assets" &&
-    echo "    + launcher assets"
-
-# ---- copy every non-system dylib next to the exe --------------------------
-echo "==> collect dylibs"
-relocate() {
-    local binary="$1" dep base
-    otool -L "$binary" | tail -n +2 | awk '{print $1}' | while read -r dep; do
-        case "$dep" in /usr/lib/*|/System/*|@*) continue ;; esac
-        base="$(basename "$dep")"
-        if [ ! -f "$OUT/$base" ]; then
-            cp -L "$dep" "$OUT/$base"; chmod u+w "$OUT/$base"
-            install_name_tool -id "@executable_path/$base" "$OUT/$base" 2>/dev/null
-            echo "    + $base"
-            relocate "$OUT/$base"
-        fi
-        install_name_tool -change "$dep" "@executable_path/$base" "$binary" 2>/dev/null
-    done
+copy_payload() {
+    local spec="$1" src dst
+    src="${spec%%=*}"
+    if [ "$src" = "$spec" ]; then
+        dst="$(basename "$src")"
+    else
+        dst="${spec#*=}"
+    fi
+    [ -n "$dst" ] || die "empty payload destination: $spec"
+    case "$src" in
+        /*) ;;
+        *) src="$ROOT/$src" ;;
+    esac
+    [ -e "$src" ] || die "payload source not found: $src"
+    mkdir -p -- "$(dirname "$OUT/$dst")"
+    if [ -d "$src" ]; then
+        cp -R -- "$src" "$OUT/$dst"
+    else
+        cp -- "$src" "$OUT/$dst"
+    fi
+    echo "    + $dst"
 }
-relocate "$OUT/$TARGET"
-
-# ---- satisfy dlopen'd dependencies ---------------------------------------
-# otool -L cannot see a library that is dlopen'd rather than linked, and missing
-# one is not a link error — it is a hard abort at runtime with no output.
-#
-# sdl2-compat is exactly this case and is what Homebrew's `sdl2` now installs on
-# many systems: its libSDL2 is a shim that dlopens SDL3, probing
-# @loader_path/libSDL3.dylib first. Copying SDL3 in beside it satisfies that
-# probe. Without it the game dies with "failed to load SDL3".
-echo "==> resolve dlopen'd libraries"
-for lib in "$OUT"/*.dylib; do
-    [ -f "$lib" ] || continue
-    # grep returns 1 for the ordinary no-match case. Capture it explicitly so
-    # pipefail does not abort packaging on a dylib that dlopens nothing.
-    wants="$(strings "$lib" 2>/dev/null |
-        grep -oE '@loader_path/lib[A-Za-z0-9._+-]*\.dylib' |
-        sed 's|@loader_path/||' | sort -u || true)"
-    [ -n "$wants" ] || continue
-    printf '%s\n' "$wants" | while read -r want; do
-        [ -f "$OUT/$want" ] && continue
-        found=""
-        for p in "$(brew --prefix 2>/dev/null)/lib" /opt/homebrew/lib \
-                 /usr/local/lib /opt/homebrew/opt/*/lib; do
-            [ -f "$p/$want" ] && { found="$p/$want"; break; }
-        done
-        if [ -n "$found" ]; then
-            cp -L "$found" "$OUT/$want"; chmod u+w "$OUT/$want"
-            echo "    + $want (dlopen'd by $(basename "$lib"))"
-        else
-            echo "    WARNING: $(basename "$lib") dlopens $want, not found" >&2
-            echo "             the game will abort at startup without it" >&2
-        fi
-    done
+for p in "${PAYLOADS[@]+"${PAYLOADS[@]}"}"; do
+    copy_payload "$p"
+done
+for d in "${PAYLOAD_DIRS[@]+"${PAYLOAD_DIRS[@]}"}"; do
+    case "$d" in
+        /*) ;;
+        *) d="$ROOT/$d" ;;
+    esac
+    [ -d "$d" ] || die "payload directory not found: $d"
+    cp -R -- "$d/." "$OUT/"
+    echo "    + $d/ contents"
 done
 
-# install_name_tool invalidates the linker's ad-hoc signature and an
-# invalidly-signed arm64 binary is killed on launch, so re-sign each file. Safe
-# here precisely because nothing is inside a .app: codesign sees plain Mach-Os.
-echo "==> ad-hoc codesign"
-if command -v codesign >/dev/null 2>&1; then
-    for f in "$OUT"/*.dylib "$OUT/$TARGET"; do
-        [ -f "$f" ] || continue
-        codesign --remove-signature "$f" 2>/dev/null || true
-        codesign --force --sign - "$f" 2>/dev/null &&
-            echo "    signed $(basename "$f")"
-    done
+if find "$OUT" -type l | grep -q .; then
+    die "payload contains a symlink (use regular files)"
+fi
+if find "$OUT" -type f | grep -Eiq '\.(gba|agb|sav|srm|apk)$'; then
+    die "payload contains a ROM/save/APK extension; use the consumer's allowlist"
 fi
 
 cat > "$OUT/README.txt" <<TXT
-$APP_NAME — macOS ($ARCH)
+$APP_NAME $VERSION — macOS ($ARCH)
 
-Run ./$TARGET from this directory. Everything it needs is here; nothing is
-installed system-wide.
+Run ./$EXE_NAME from this directory. No ROM or BIOS is included: supply your
+own legally dumped cartridge; the launch screen prompts for it and remembers
+the pick beside this executable.
 
-You must supply your own legally-dumped GBA BIOS and cartridge ROM. The
-launcher prompts for both on first run and caches the paths beside this file.
-
-If macOS refuses to open it after a download:
-    xattr -dr com.apple.quarantine "$(basename "$OUT")"
+If macOS quarantines the download:
+    xattr -dr com.apple.quarantine "$FOLDER"
 TXT
 
-echo "==> verify"
-LEFT="$(otool -L "$OUT/$TARGET" | tail -n +2 | awk '{print $1}' |
-        grep -vE '^(/usr/lib|/System|@executable_path)' || true)"
-[ -n "$LEFT" ] && { echo "    WARNING: unrelocated deps:" >&2; printf '      %s\n' $LEFT >&2; } ||
-    echo "    every dependency is a system lib or beside the executable"
-
-# Smoke test: --help exercises startup, dynamic linking and every dlopen the
-# runtime performs before it needs a ROM. A broken payload SIGKILLs here.
-printf "    smoke test: "
-if ( cd "$OUT" && ./"$TARGET" --help >/dev/null 2>&1 ); then
-    echo "startup OK"
-else
-    echo "FAILED (exit $?) — the payload is incomplete" >&2
-    exit 1
+# raylib is linked statically; only system frameworks/libraries should remain.
+if command -v otool >/dev/null 2>&1; then
+    LEFT="$(otool -L "$OUT/$EXE_NAME" | tail -n +2 | awk '{print $1}' |
+            grep -vE '^(/usr/lib|/System|@executable_path)' || true)"
+    if [ -n "$LEFT" ]; then
+        die "non-system dependencies remain (the consumer must stage them):
+$LEFT"
+    fi
 fi
 
-echo "==> tarball"
-( cd "$RELEASE_STAGE" && tar -czf "$APP_NAME-macos-$ARCH.tar.gz" -- \
-    "$APP_NAME-macos-$ARCH" )
-echo "    release-stage/$APP_NAME-macos-$ARCH.tar.gz"
+if [ "$SMOKE" -eq 1 ]; then
+    printf '==> startup smoke: '
+    if ( cd "$OUT" && "./$EXE_NAME" --help >/dev/null 2>&1 ); then
+        echo "OK"
+    else
+        die "the payload did not survive the --help startup smoke (use --no-smoke to skip)"
+    fi
+fi
+
+if [ "$TARBALL" -eq 1 ]; then
+    echo "==> tarball"
+    ( cd "$RELEASE_STAGE" && tar -czf "$FOLDER.tar.gz" -- "$FOLDER" )
+    echo "    release-stage/$FOLDER.tar.gz"
+fi
+if [ "$CLEAN" -eq 1 ]; then
+    rm -rf -- "$OUT"
+fi
 
 echo
-echo "Built $OUT"
-echo "Run:   (cd \"$OUT\" && ./$TARGET)"
+echo "Built:"
+[ "$TARBALL" -eq 1 ] && echo "  release-stage/$FOLDER.tar.gz"
+echo "  release-stage/$FOLDER"

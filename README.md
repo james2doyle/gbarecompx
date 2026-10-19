@@ -55,9 +55,9 @@ inherits upstream's license terms (see [License](#license)).
   the classic "B opens the menu" plague) is consumed before it can fire.
   The pad's menu button opens the settings overlay on every platform.
 - **Runs where players are.** raylib 6 on desktop with packaged releases
-  (portable zip, static Windows executable, public Android APK), and an
-  Android scaffold with touch controls and a complete
-  suspend/resume/relaunch lifecycle.
+  (portable zip, static Windows executable, public Android APK, and a
+  Steam Deck/Linux AppImage), and an Android scaffold with touch controls
+  and a complete suspend/resume/relaunch lifecycle.
 
 ## What replaced upstream's SDL2 host and recomp-ui
 
@@ -118,6 +118,9 @@ Configure with CMake (raylib is fetched at configure time), build the
 recompiler and the runtime, and run the CTest suite. The `docs/`
 directory carries the deep material: architecture, the timing model, the
 oracle protocol, multiplayer, mod packages, the accuracy burndown.
+Desktop packaging (portable zip, Steam Deck AppImage, glibc floor) is
+documented in [`packaging/README.md`](packaging/README.md); the reference
+consumer owns the implementation.
 
 ### Four CI jobs, every push, all green or the release waits
 
