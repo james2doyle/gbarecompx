@@ -218,9 +218,9 @@ int main(void) {
     // ── the State rows render: existence pinned at the DRAWN layer ────
     // The model comes from HostMenu::build (the product path), not a
     // fixture: if the host stops appending the rows, marks them invisible,
-    // or a label changes, these drawn-string pins fail. The System section
-    // shows at the top level; its rows draw in the editing view with the
-    // seeded slot value.
+    // or a label changes, these drawn-string pins fail. The Save states
+    // section shows at the top level; its rows draw in the editing view with
+    // the seeded slot value.
     {
         gbarecomp::testing::FakeBackend backend;
         CHECK(backend.open(gbarecomp::OpenParams{}).ok());
@@ -232,20 +232,20 @@ int main(void) {
         LegacyMenuEngine engine;
 
         engine.draw(ov, host.model());  // top level: the section list
-        bool saw_system = false;
+        bool saw_save_states = false;
         for (const auto& t : ov.texts)
-            if (t.utf8 == "System") saw_system = true;
-        CHECK(saw_system);
+            if (t.utf8 == "Save states") saw_save_states = true;
+        CHECK(saw_save_states);
 
         MenuModel& m = host.model();
-        int sys = -1;
+        int save_states = -1;
         for (int i = 0; i < m.section_count; ++i)
             if (m.sections[i].title &&
-                std::strcmp(m.sections[i].title, "System") == 0)
-                sys = i;
-        CHECK(sys >= 0);
+                std::strcmp(m.sections[i].title, "Save states") == 0)
+                save_states = i;
+        CHECK(save_states >= 0);
         m.editing = true;
-        m.section_index = sys;
+        m.section_index = save_states;
         m.row_index = 0;
         ov.texts.clear();
         engine.draw(ov, m);

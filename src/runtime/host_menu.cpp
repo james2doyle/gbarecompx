@@ -4,8 +4,8 @@
 // (recomp-ui/src/common/recomp_runtime_settings.c) where the V2 capabilities
 // overlap: Display (Fullscreen, Window scale, Linear filter, Show FPS),
 // Graphics (LCD ghosting, Frame interpolation, the LCD shader group when the
-// backend can run it), Audio (Audio, Volume), System (save states, Resume),
-// and Assist (Fast-forward speed).
+// backend can run it), Audio (Audio, Volume), Save states (Slot / Save / Load /
+// Resume), and Assist (Fast-forward speed).
 #include "host_menu.h"
 
 #include <cstdint>
@@ -270,8 +270,8 @@ void HostMenu::build(WindowBackend& backend) {
         add(row, Bind::Volume);
     }
 
-    // ── System ──────────────────────────────────────────────────────────
-    const int system = section("System");
+    // ── Save states ─────────────────────────────────────────────────────
+    const int system = section("Save states");
     {
         // Save-state slots (framework content, every product build): the
         // Slot choice picks 1..9; the Save/Load actions QUEUE ops that the

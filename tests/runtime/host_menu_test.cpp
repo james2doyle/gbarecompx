@@ -146,7 +146,7 @@ void build_seeds_from_backend() {
     CHECK(section_by_title(m, "Display") == 0);
     CHECK(section_by_title(m, "Graphics") == 1);
     CHECK(section_by_title(m, "Audio") == 2);
-    CHECK(section_by_title(m, "System") == 3);
+    CHECK(section_by_title(m, "Save states") == 3);
     CHECK(section_by_title(m, "Assist") == 4);
     CHECK(m.row_count == 21);  // 18 settings rows + the three State rows
     const int scale = row_by_label(m, "Window scale");
@@ -443,7 +443,7 @@ void resume_action_closes_without_hook() {
 
     press(host, backend, kDown);  // 1
     press(host, backend, kDown);  // 2
-    press(host, backend, kDown);  // 3 (System)
+    press(host, backend, kDown);  // 3 (Save states)
     press(host, backend, kA);     // enter; rows 0-2 = Slot/Save/Load
     press(host, backend, kDown);  // Slot -> Save state
     press(host, backend, kDown);  // Save state -> Load state
@@ -462,7 +462,7 @@ void game_action_row_reaches_hook() {
     host.set_apply_hook(hook_fn, &log);
     host.open(backend);
 
-    const int system = section_by_title(host.model(), "System");
+    const int system = section_by_title(host.model(), "Save states");
     CHECK(system >= 0);
     MenuRow row;
     row.kind = MenuRowKind::Action;
@@ -692,7 +692,7 @@ void apply_bounds_and_nothing_handled() {
 
     // An in-range non-Resume action with no hook: nothing handled.
     host.open(backend);
-    const int system = section_by_title(host.model(), "System");
+    const int system = section_by_title(host.model(), "Save states");
     MenuRow act;
     act.kind = MenuRowKind::Action;
     act.label = "Game action";
@@ -785,7 +785,7 @@ void rebuild_hook_fn(void* user, MenuModel& m) {
     int system = 0;
     for (int i = 0; i < m.section_count; ++i)
         if (m.sections[i].title &&
-            std::strcmp(m.sections[i].title, "System") == 0)
+            std::strcmp(m.sections[i].title, "Save states") == 0)
             system = i;
     MenuRow row;
     row.kind = MenuRowKind::Toggle;
@@ -960,7 +960,7 @@ void menu_view_step_resolves_geometry_policy() {
 }
 
 // ── State: save-state slots in the menu ────────────────────────────────
-// The rows must exist with these literal labels in the System section, and
+// The rows must exist with these literal labels in the Save states section, and
 // the actions must queue slot ops for the host loop's dispatch boundary —
 // never execute mid-frame. A label change or a missing row fails here; the
 // rendered half is pinned in menu_engine_test.cpp and
@@ -973,7 +973,7 @@ void state_rows_and_actions() {
     host.build(backend);
     const MenuModel& m = host.model();
 
-    const int sys = section_by_title(m, "System");
+    const int sys = section_by_title(m, "Save states");
     CHECK(sys >= 0);
     const int slot_row = row_by_label(m, "Slot");
     CHECK(slot_row >= 0);
@@ -1054,7 +1054,7 @@ void drain_menu_state_ops_folds_pending_into_events() {
     // Save action for slot 3 (seeded the way the host seeds it).
     host.set_state_slot(3);
     host.open(backend);
-    const int sys = section_by_title(host.model(), "System");
+    const int sys = section_by_title(host.model(), "Save states");
     CHECK(sys >= 0);
     select_row(host.model(), sys, row_by_label(host.model(), "Save state"));
     press(host, backend, kA);

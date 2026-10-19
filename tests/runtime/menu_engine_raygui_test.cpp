@@ -241,17 +241,17 @@ int main() {
 
         gbarecomp::testing::reset_recording();
         engine.draw(ov, host.model());  // top level: the section list
-        CHECK(has_text("System"));
+        CHECK(has_text("Save states"));
 
         MenuModel& m = host.model();
-        int sys = -1;
+        int save_states = -1;
         for (int i = 0; i < m.section_count; ++i)
             if (m.sections[i].title &&
-                std::strcmp(m.sections[i].title, "System") == 0)
-                sys = i;
-        CHECK(sys >= 0);
+                std::strcmp(m.sections[i].title, "Save states") == 0)
+                save_states = i;
+        CHECK(save_states >= 0);
         m.editing = true;
-        m.section_index = sys;
+        m.section_index = save_states;
         m.row_index = 0;
         gbarecomp::testing::reset_recording();
         engine.draw(ov, m);

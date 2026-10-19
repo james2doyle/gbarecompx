@@ -3631,7 +3631,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         &runtime_ui_context,
         opts.resize_driven_view && opts.max_resize_view_width > 240);
 
-    // Save-state slots: the menu's System section rows (Slot / Save state /
+    // Save-state slots: the menu's Save states section rows (Slot / Save state /
     // Load state) seed from the persisted setting; the actions queue ops
     // that drain_menu_state_ops folds into ev.save_slot / ev.load_slot —
     // the same ungated executor the assist scripts use (below). The slot
