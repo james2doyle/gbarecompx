@@ -5145,7 +5145,20 @@ void GuiLoadStyleDefault(void)
     GuiSetStyle(COLORPICKER, HUEBAR_SELECTOR_HEIGHT, 8);
     GuiSetStyle(COLORPICKER, HUEBAR_SELECTOR_OVERFLOW, 2);
 
-    if (guiFont.texture.id != GetFontDefault().texture.id)
+    // gbarecompx patch: the default-font identity check must include the
+    // glyph table, not just the texture id. GL may reuse the launcher
+    // context's texture id after CloseWindow/InitWindow, while recs/glyphs
+    // still point into freed launcher-context memory; an id-only check then
+    // short-circuits and text samples a dead table (shapes still draw).
+    // Never free the old tables in that same-id case — they are already
+    // dangling. Identity mismatch with a different id keeps the old unload
+    // path.
+    const Font liveFont = GetFontDefault();
+    const bool fontChanged = (guiFont.texture.id != liveFont.texture.id) ||
+                             (guiFont.recs != liveFont.recs) ||
+                             (guiFont.glyphs != liveFont.glyphs);
+
+    if (guiFont.texture.id != liveFont.texture.id)
     {
         // Unload previous font texture
         UnloadTexture(guiFont.texture);
@@ -5153,9 +5166,12 @@ void GuiLoadStyleDefault(void)
         RAYGUI_FREE(guiFont.glyphs);
         guiFont.recs = NULL;
         guiFont.glyphs = NULL;
+    }
 
-        // Setup default raylib font
-        guiFont = GetFontDefault();
+    if (fontChanged)
+    {
+        // Setup default raylib font (or heal a same-id stale glyph table)
+        guiFont = liveFont;
 
         // NOTE: Default raylib font character 95 is a white square
         Rectangle whiteChar = guiFont.recs[95];

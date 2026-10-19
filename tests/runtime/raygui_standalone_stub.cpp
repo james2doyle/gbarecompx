@@ -66,12 +66,44 @@ int& shapes_texture_binds() {
     return n;
 }
 
+static Font make_stale_font_copy() {
+    // A valid but separate glyph table for the dead-context binding. The
+    // real bug leaves this pointing at freed launcher memory; a live copy
+    // keeps the test's measuring path safe while still differing in
+    // pointer identity from GetFontDefault().
+    const Font live = GetFontDefault();
+    Font stale = live;
+    stale.recs = static_cast<Rectangle*>(
+        std::malloc(sizeof(Rectangle) * live.glyphCount));
+    stale.glyphs = static_cast<GlyphInfo*>(
+        std::malloc(sizeof(GlyphInfo) * live.glyphCount));
+    for (int i = 0; i < live.glyphCount; ++i) {
+        stale.recs[i] = live.recs[i];
+        stale.glyphs[i] = live.glyphs[i];
+    }
+    return stale;
+}
+
 void corrupt_font_texture(unsigned int stale_id) {
     // guiFont is raygui's file-static, visible in this TU (the
-    // implementation TU). Only the binding is poisoned — glyph/rec
-    // pointers stay valid so measuring during the corrupted draw walks
-    // real memory, exactly like the real stale-context state.
+    // implementation TU). Use a separate valid table so the healing path's
+    // cleanup frees only the poisoned copy, never the live default.
+    guiFont = make_stale_font_copy();
     guiFont.texture.id = stale_id;
+}
+
+void corrupt_font_same_texture() {
+    // The driver reused the dead context's texture id, so the id-only
+    // rebind guard sees "same font". Point the glyph tables at an
+    // identical *different* allocation: the id matches, the recs/glyphs
+    // pointers do not, and drawing must heal the latter.
+    guiFont = make_stale_font_copy();
+}
+
+bool font_binding_is_default() {
+    const Font live = GetFontDefault();
+    return guiFont.texture.id == live.texture.id &&
+           guiFont.recs == live.recs && guiFont.glyphs == live.glyphs;
 }
 
 unsigned int font_texture_id() { return guiFont.texture.id; }

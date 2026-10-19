@@ -42,6 +42,11 @@ int& shapes_texture_binds();
 // font_texture_id() reads the binding back; a healed draw restores the
 // live font's id.
 void corrupt_font_texture(unsigned int stale_id);
+// Same dead-context state, but the driver reused the texture id: guiFont's
+// texture id matches the live default while recs/glyphs still point at the
+// old context's tables. An id-only rebind guard cannot see this.
+void corrupt_font_same_texture();
+bool font_binding_is_default();
 unsigned int font_texture_id();
 void reset_recording();
 // Fold the per-codepoint log into text runs — call after each engine draw,

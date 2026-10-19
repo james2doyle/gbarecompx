@@ -140,6 +140,9 @@ void RayguiMenuEngine::draw(HostOverlay& surface, const MenuModel& m) {
     // styles land right after, and the save/restore below still sees a
     // clean default state.
     GuiLoadStyleDefault();
+    // The gbarecompx raygui guard below rebinds the live default when the
+    // glyph table identity differs, even if the driver reused the launcher
+    // texture id — the case the old id-only check missed.
 
     // Global style: dark palette + scaled text + opacity. Restored on the
     // way out so the launcher (same raygui instance, same process) keeps its

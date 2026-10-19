@@ -227,6 +227,22 @@ int main() {
         CHECK(gbarecomp::testing::shapes_texture_binds() == 1);  // idempotent
     }
 
+    // The dead-context case that the id-only guard used to miss: the driver
+    // hands the new default font the same texture id the launcher's font
+    // had. guiFont.texture.id matches, but recs/glyphs still point at the
+    // old context's tables. The explicit live-font bind on every draw heals
+    // it; text must still be recorded.
+    {
+        MenuModel m = two_toggle_model(/*first_on=*/true);
+        gbarecomp::testing::reset_recording();
+        gbarecomp::testing::corrupt_font_same_texture();
+        CHECK(!gbarecomp::testing::font_binding_is_default());
+        engine.draw(ov, m);
+        CHECK(gbarecomp::testing::font_binding_is_default());
+        gbarecomp::testing::assemble_text_runs();
+        CHECK(!gbarecomp::testing::text_runs().empty());
+    }
+
     // The State rows render through THIS engine too (the desktop product
     // path): a HostMenu-built model — the product path, not a fixture —
     // drawn and asserted at the run layer. The run assembler reconstructs
