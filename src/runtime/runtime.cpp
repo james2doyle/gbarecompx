@@ -3537,9 +3537,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         HostMenu* host;
         const char* dir;
         int* fixed_width;
+        RuntimeUiContext* ui;
     };
     HookCtx hook_ctx{&menu_settings, &host_menu,
-                     menu_config_dir.c_str(), &menu_fixed_view_width};
+                     menu_config_dir.c_str(), &menu_fixed_view_width,
+                     &runtime_ui_context};
     if (menu_available) {
         host_menu.set_apply_hook(
             [](void* user, WindowBackend& window, const MenuResult&) {
@@ -3602,7 +3604,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
 #if defined(GBARECOMP_RUNTIME_UI)
                     // The recomp-ui path drains the context, not the backend
                     // input, so mirror the menu change there as well.
-                    runtime_ui_context.fast_forward_multiplier =
+                    ctx->ui->fast_forward_multiplier =
                         ms.fast_forward_multiplier;
 #endif
                 }
