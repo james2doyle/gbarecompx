@@ -54,10 +54,12 @@ inherits upstream's license terms (see [License](#license)).
   synthesis (the device keymap turns an unhandled BUTTON_B into BACK —
   the classic "B opens the menu" plague) is consumed before it can fire.
   The pad's menu button or Y opens the settings overlay on every platform.
-  The Android platform vibrator sink is wired too: one-shot pulses are
-  attributed as media/game so OEM touch-haptics settings cannot drop them,
-  and `host_primary_haptic` routes gameplay pulses to the last-used input
-  modality (controller-motor routing is staged for the glue device-id phase).
+  **Fork-only, not in upstream gbarecomp:** the Android platform vibrator
+  sink is wired too — one-shot pulses are attributed as media/game so OEM
+  touch-haptics settings cannot drop them, and `host_primary_haptic` routes
+  gameplay pulses to the last-used input modality (controller-motor routing
+  is staged for the glue device-id phase). See
+  [`docs/HAPTICS.md`](docs/HAPTICS.md).
 - **Runs where players are.** raylib 6 on desktop with packaged releases
   (portable zip, static Windows executable, public Android APK, and a
   Steam Deck/Linux AppImage), and an Android scaffold with touch controls
@@ -121,7 +123,8 @@ regression gates. The FFTA recompilation is the reference consumer.
 Configure with CMake (raylib is fetched at configure time), build the
 recompiler and the runtime, and run the CTest suite. The `docs/`
 directory carries the deep material: architecture, the timing model, the
-oracle protocol, multiplayer, mod packages, the accuracy burndown.
+oracle protocol, multiplayer, mod packages,
+[Android haptics](docs/HAPTICS.md) (fork-only), the accuracy burndown.
 Desktop packaging (portable zip, Steam Deck AppImage, glibc floor) is
 documented in [`packaging/README.md`](packaging/README.md); the reference
 consumer owns the implementation.

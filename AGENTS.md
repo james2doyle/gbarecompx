@@ -65,6 +65,13 @@ at the hook before raylib or the dispatcher can act on it. Extend the
 tables and their tests there; do not re-route gamepad handling through
 raylib's Android backend.
 
+**Fork-only haptics (not in upstream gbarecomp).** The same glue/runtime
+owns the Android platform-vibrator sink (`android_haptics_pulse` →
+`GbaGameActivity.vibrate`) and the routed `host_primary_haptic` seam. The
+contract lives in `docs/HAPTICS.md`; keep the controller-motor sink scoped
+to the glue device-id capture (Phase 2) rather than adding a second input
+path.
+
 ## Public-repo hygiene
 
 Summaries + attribution only, never verbatim third-party text; keep
