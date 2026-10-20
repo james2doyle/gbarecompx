@@ -212,6 +212,14 @@ int main() {
         check(!translate_input(up, b, e).toggle_menu, "release clears it");
     }
 
+    // ---- guide or Y opens the settings overlay ----------------------------
+    {
+        check(pad_opens_menu(true, false), "Guide opens the menu");
+        check(pad_opens_menu(false, true), "Y opens the menu");
+        check(pad_opens_menu(true, true), "Guide+Y still opens it");
+        check(!pad_opens_menu(false, false), "neither held means no menu");
+    }
+
     // ---- turbo is LEVEL triggered ------------------------------------------
     {
         InputEdges e;

@@ -83,7 +83,9 @@ enum PadButton {
     // The pad's menu button (Xbox GUIDE / home / Android BUTTON_MODE). No
     // GBA meaning: the backends inject the CONFIGURED HK_MENU key from it,
     // so the settings overlay opens from the controller through the menu's
-    // own binding (and closes on a second press, via the hotkey edge).
+    // own binding (and closes on a second press, via the hotkey edge). Y is
+    // the second trigger (pad_opens_menu) for pads whose menu button is
+    // missing or swallowed by the OS.
     kPadGuide,
     kPadButtonCount
 };
@@ -202,6 +204,16 @@ inline bool hotkey_down(const InputSnapshot& s, const InputBindings& b, int h) {
     const HotkeyBinding& hb = b.hotkeys[h];
     return hb.key != kHostKeyNone && s.is_held(hb.key) &&
            hotkey_mods_ok(hb, s.mods);
+}
+
+// The settings-overlay trigger, given the two pad buttons that can carry it:
+// the pad's menu/guide button and Y. GUIDE is primary; Y covers pads without
+// a usable menu button, and it is the free face button (no GBA meaning), so
+// the shortcut costs no game input. The backends turn a held trigger into the
+// CONFIGURED HK_MENU key, so the menu's own binding decides what "menu" means
+// and the hotkey edge gives press-open / press-close.
+inline bool pad_opens_menu(bool guide_down, bool y_down) {
+    return guide_down || y_down;
 }
 
 // Assist pad binding evaluation, given portable pad state. The ENCODING of a

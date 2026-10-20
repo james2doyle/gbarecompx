@@ -2089,12 +2089,15 @@ public:
                 }
             }
             // The guide button (the pad's menu button; BUTTON_MODE on
-            // Android) opens the settings overlay by holding the CONFIGURED
-            // HK_MENU key: the menu's own binding decides what "menu" means,
-            // and the hotkey path's edge gives press-open/press-close. The
-            // menu itself navigates from GBA KEYINPUT levels (menu_keyinput),
-            // so the pad's d-pad + A/B drive it once open.
-            if (g_android_pad.button_down(kPadGuide)) {
+            // Android) or Y opens the settings overlay by holding the
+            // CONFIGURED HK_MENU key: the menu's own binding decides what
+            // "menu" means, and the hotkey path's edge gives
+            // press-open/press-close. The menu itself navigates from GBA
+            // KEYINPUT levels (menu_keyinput), so the pad's d-pad + A/B drive
+            // it once open. Y is the fallback for pads whose menu button is
+            // unavailable; it has no GBA meaning, so nothing is stolen.
+            if (pad_opens_menu(g_android_pad.button_down(kPadGuide),
+                               g_android_pad.button_down(kPadY))) {
                 const HostKey menu_key = b.hotkeys[HK_MENU].key;
                 if (menu_key != kHostKeyNone) s.hold(menu_key);
             }
@@ -2173,13 +2176,15 @@ public:
                     }
                 }
                 // The guide button (the pad's menu button — kGlfwBtnGuide,
-                // skipped above because it has no GBA meaning) opens the
+                // skipped above because it has no GBA meaning) or Y opens the
                 // settings overlay by holding the CONFIGURED HK_MENU key:
                 // the menu's own binding decides what "menu" means, and the
                 // hotkey path's edge gives press-open/press-close. The menu
                 // navigates from GBA KEYINPUT levels, so the pad's d-pad +
-                // A/B drive it once open.
-                if (st.buttons[kGlfwBtnGuide]) {
+                // A/B drive it once open. Y is the fallback for pads whose
+                // menu button is unavailable; it has no GBA meaning either.
+                if (pad_opens_menu(st.buttons[kGlfwBtnGuide],
+                                   st.buttons[kGlfwBtnY])) {
                     const HostKey menu_key = b.hotkeys[HK_MENU].key;
                     if (menu_key != kHostKeyNone) s.hold(menu_key);
                 }
