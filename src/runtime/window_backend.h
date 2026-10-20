@@ -233,6 +233,10 @@ public:
     // takes effect on the next frame. Out-of-range values are clamped.
     virtual void set_fast_forward_multiplier(int multiplier) = 0;
     virtual bool gamepad_connected() const = 0;  // standard-mapped pad present
+    // True when the pad, not the touchscreen, is the most recently used
+    // input modality. Android tracks the two activity stamps; desktop and
+    // stub builds report false so their haptic behavior stays unchanged.
+    virtual bool controller_is_primary() const = 0;
     virtual void rumble(float low, float high, std::uint32_t duration_ms) = 0;
     virtual void haptic_pulse(int duration_ms, float strength) = 0;
 };

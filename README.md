@@ -54,6 +54,10 @@ inherits upstream's license terms (see [License](#license)).
   synthesis (the device keymap turns an unhandled BUTTON_B into BACK —
   the classic "B opens the menu" plague) is consumed before it can fire.
   The pad's menu button or Y opens the settings overlay on every platform.
+  The Android platform vibrator sink is wired too: one-shot pulses are
+  attributed as media/game so OEM touch-haptics settings cannot drop them,
+  and `host_primary_haptic` routes gameplay pulses to the last-used input
+  modality (controller-motor routing is staged for the glue device-id phase).
 - **Runs where players are.** raylib 6 on desktop with packaged releases
   (portable zip, static Windows executable, public Android APK, and a
   Steam Deck/Linux AppImage), and an Android scaffold with touch controls

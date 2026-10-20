@@ -41,6 +41,7 @@ int main() {
     assert(!w.fps_readout());
     assert(w.assist_tools_enabled());          // enhancement defaults ON
     assert(w.fast_forward_multiplier() == 4);
+    assert(!w.controller_is_primary());        // no backend, touch default
     assert(w.px_per_mm() == 96.0f / 25.4f);
 
     int w_out = 0, h_out = 0;

@@ -1,10 +1,17 @@
 package org.gbarecomp;
 
+import android.annotation.TargetApi;
+import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
 import android.graphics.Insets;
+import android.media.AudioAttributes;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.VibrationAttributes;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.util.DisplayMetrics;
 import android.view.DisplayCutout;
 import android.view.View;
@@ -130,6 +137,56 @@ public class GbaGameActivity extends NativeActivity {
             // libmain loads during super.onCreate; later passes succeed.
             nativeReady = false;
         }
+    }
+
+    /**
+     * One-shot system-vibrator pulse for host haptics. Called from native on
+     * the game thread; Vibrator APIs are system-service calls, so they are
+     * safe off the UI thread. Attributed as media/game on purpose: a bare
+     * vibrate() carries USAGE_TOUCH and OEMs that disable touch haptics drop
+     * it silently. Android 13+ takes VibrationAttributes; API 26-32 takes
+     * AudioAttributes.USAGE_GAME.
+     */
+    public void vibrate(int durationMs, float strength) {
+        if (durationMs <= 0 || !(strength > 0.0f)) return;
+        float clamped = Math.min(1.0f, strength);
+        Vibrator vibrator;
+        if (Build.VERSION.SDK_INT >= 31) {
+            VibratorManager manager =
+                (VibratorManager) getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+            if (manager == null) return;
+            vibrator = manager.getDefaultVibrator();
+        } else {
+            vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        }
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        // Non-zero amplitudes round up to 100% on devices without amplitude
+        // control; use DEFAULT_AMPLITUDE there rather than pretending to scale.
+        int amplitude = vibrator.hasAmplitudeControl()
+            ? Math.max(1, Math.min(255, Math.round(clamped * 255.0f)))
+            : VibrationEffect.DEFAULT_AMPLITUDE;
+        VibrationEffect effect =
+            VibrationEffect.createOneShot(durationMs, amplitude);
+        if (Build.VERSION.SDK_INT >= 33) {
+            vibrateMedia(vibrator, effect);
+        } else {
+            vibrateGame(vibrator, effect);
+        }
+    }
+
+    @TargetApi(33)
+    private static void vibrateMedia(Vibrator vibrator, VibrationEffect effect) {
+        vibrator.vibrate(effect,
+            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_MEDIA));
+    }
+
+    @SuppressWarnings("deprecation")  // VibrationEffect+AudioAttributes, API 26-32
+    private static void vibrateGame(Vibrator vibrator, VibrationEffect effect) {
+        AudioAttributes attributes = new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_GAME)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build();
+        vibrator.vibrate(effect, attributes);
     }
 
     protected void enterImmersiveMode() {

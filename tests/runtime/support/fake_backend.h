@@ -140,6 +140,7 @@ public:
         ff = std::clamp(multiplier, 2, 10);
     }
     bool gamepad_connected() const override { return pad_connected; }
+    bool controller_is_primary() const override { return primary; }
     void rumble(float low, float high, std::uint32_t duration_ms) override {
         ++rumble_calls;
         last_low = low;
@@ -159,6 +160,7 @@ public:
     bool assist = true;
     int ff = 4;
     bool pad_connected = false;
+    bool primary = false;
     std::string last_config_dir;
     int read_calls = 0, load_config_calls = 0, rumble_calls = 0, haptic_calls = 0;
     float last_low = 0.0f, last_high = 0.0f, last_haptic_strength = 0.0f;

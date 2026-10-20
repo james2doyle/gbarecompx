@@ -1330,6 +1330,16 @@ target_compile_options(host_window_delegation_tests PRIVATE -UNDEBUG)
 add_test(NAME host_window_delegation_tests
          COMMAND host_window_delegation_tests)
 
+# Routed haptics: host_primary_haptic -> controller sink when the pad is
+# primary, system vibrator otherwise. Config-adaptive like the delegation
+# test (skips in the no-backend build).
+add_executable(primary_haptic_tests tests/runtime/primary_haptic_test.cpp)
+target_include_directories(primary_haptic_tests PRIVATE
+    src/runtime tests/runtime)
+target_link_libraries(primary_haptic_tests PRIVATE gbarecomp_runtime)
+target_compile_options(primary_haptic_tests PRIVATE -UNDEBUG)
+add_test(NAME primary_haptic_tests COMMAND primary_haptic_tests)
+
 # Host-stack budget guard (mobile_platform): the predicates must be live on
 # the host platform and the two tiers (primary margin / critical tier) must
 # order correctly against the calling thread's real stack bounds. Linux-only

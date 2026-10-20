@@ -196,6 +196,9 @@ public:
     // Short vibration where the platform supports it (no-op otherwise).
     void haptic_pulse(int duration_ms, float strength);
     bool gamepad_supports_rumble() const;
+    // True when the pad, not the touchscreen, is the most recently used input
+    // modality (Android; false on desktop/stub builds).
+    bool controller_is_primary() const;
     void gamepad_rumble(float low_frequency, float high_frequency,
                         std::uint32_t duration_ms);
 
@@ -253,6 +256,12 @@ private:
 // Engine-wide haptic hook for game input policies (touch_input.h users).
 // Installed by the open HostWindow; a no-op when no window/vibrator exists.
 void host_haptic_pulse(int duration_ms, float strength);
+
+// Route a gameplay haptic to the primary input device: the active controller
+// when the pad was used most recently, otherwise the system vibrator. The
+// duration is clamped to a sane one-shot window; strength is 0..1 and is
+// clamped by the sinks. No-op when no window or no supported hardware exists.
+void host_primary_haptic(float strength, std::uint32_t duration_ms);
 
 // Stable public API for RECOMPILED GAME CODE to add effects the base GBA
 // hardware could never produce. This is the surface third-party recompilers

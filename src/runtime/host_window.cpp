@@ -495,9 +495,31 @@ void host_haptic_pulse(int duration_ms, float strength) {
     if (g_haptic_window) g_haptic_window->haptic_pulse(duration_ms, strength);
 }
 
+void host_primary_haptic(float strength, std::uint32_t duration_ms) {
+    if (!g_haptic_window || duration_ms == 0) return;
+    // The public API is uint32; the system sinks take int milliseconds. A
+    // gameplay impact never needs more than a minute, and clamping keeps the
+    // conversion defined.
+    const int ms = duration_ms > 60000u ? 60000 : static_cast<int>(duration_ms);
+    if (g_haptic_window->controller_is_primary()) {
+        g_haptic_window->gamepad_rumble(strength, strength, duration_ms);
+    } else {
+        g_haptic_window->haptic_pulse(ms, strength);
+    }
+}
+
+bool HostWindow::controller_is_primary() const {
+    if (!open_ || !impl_) return false;
+    return impl_->input().controller_is_primary();
+}
+
 bool HostWindow::gamepad_supports_rumble() const {
     if (!open_ || !impl_) return false;
     return impl_->caps().rumble;  // capability is data in V2
+}
+
+bool host_gamepad_supports_rumble() {
+    return g_haptic_window && g_haptic_window->gamepad_supports_rumble();
 }
 
 void HostWindow::gamepad_rumble(float low_frequency, float high_frequency,
@@ -639,7 +661,9 @@ void HostWindow::set_presentation_anchor_top(bool) {}
 bool HostWindow::wait_for_foreground() { return false; }
 void HostWindow::haptic_pulse(int, float) {}
 void host_haptic_pulse(int, float) {}
+void host_primary_haptic(float, std::uint32_t) {}
 bool HostWindow::gamepad_supports_rumble() const { return false; }
+bool HostWindow::controller_is_primary() const { return false; }
 void HostWindow::gamepad_rumble(float, float, std::uint32_t) {}
 void host_gamepad_rumble(float, float, std::uint32_t) {}
 bool host_gamepad_supports_rumble() { return false; }

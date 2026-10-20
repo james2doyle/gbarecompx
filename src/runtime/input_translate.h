@@ -216,6 +216,16 @@ inline bool pad_opens_menu(bool guide_down, bool y_down) {
     return guide_down || y_down;
 }
 
+// Which modality owns the routed haptic: the pad is primary only when its
+// most recent activity is strictly newer than the touchscreen's. Stamps are
+// monotonic milliseconds; the subtraction is wrap-safe. Defaults (0, 0) and
+// simultaneous activity keep the touchscreen primary, matching "touchscreen
+// is the default on Android".
+inline bool pad_is_primary(std::uint32_t last_touch_ms,
+                           std::uint32_t last_pad_ms) {
+    return static_cast<std::int32_t>(last_pad_ms - last_touch_ms) > 0;
+}
+
 // Assist pad binding evaluation, given portable pad state. The ENCODING of a
 // binding lives in assist_pad_binding.h; this is the platform-free evaluation.
 inline bool assist_pad_down(const InputBindings& b, int index,

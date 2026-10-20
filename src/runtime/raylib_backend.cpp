@@ -406,6 +406,12 @@ struct RaylibBackend::Impl {
     int pad_glfw_index = -1;
     int pad_raylib_slot = -1;
 
+    // Primary-modality stamps (monotonic ms). Android updates both while
+    // reading input; the pad is primary only when strictly newer. Defaults
+    // (0, 0) make the touchscreen primary, the platform default.
+    std::uint32_t last_touch_activity_ms = 0;
+    std::uint32_t last_pad_activity_ms = 0;
+
     // Last presented layout + drawable size. Plain state (not raylib types),
     // kept outside the guard: the touch pad geometry helper reads them in
     // both builds, and present() refreshes them whenever it runs.
@@ -1984,6 +1990,12 @@ public:
             out = InputSnapshot{};
             return;
         }
+#if defined(__ANDROID__)
+        // One monotonic stamp per pump: both primary-modality paths use it,
+        // so a pad event and a touch in the same frame compare equal and the
+        // touchscreen keeps its default priority.
+        const std::uint32_t activity_ms = touch_clock_ms();
+#endif
 
         // raylib is PULL-based: there is no KEYDOWN event with a repeat flag, so
         // every edge in Events is recovered by translate_input() from prior-pump
@@ -2117,6 +2129,28 @@ public:
             // ACTIVE-HIGH pressed bits (see input_translate.h), so invert once.
             s.pad_gba_bits =
                 static_cast<std::uint16_t>(~gamepad_to_keyinput(pad) & kGbaKeyAll);
+            // Primary-modality tracking: any button or deadzoned stick/trigger
+            // reading means the pad is in use. The Phase 2 glue hook will
+            // publish exact event times; until then this per-pump level is
+            // enough and shares the touch stamp's monotonic clock.
+            bool pad_active = false;
+            for (int i = 0; i < kPadButtonCount && !pad_active; ++i)
+                pad_active = s.pad_button[i];
+            if (!pad_active) {
+                for (const int axis :
+                     {kPadAxisLeftX, kPadAxisLeftY, kPadAxisRightX,
+                      kPadAxisRightY}) {
+                    if (std::abs(s.pad_axis[axis]) > kStickDeadzone) {
+                        pad_active = true;
+                        break;
+                    }
+                }
+            }
+            if (!pad_active &&
+                (std::abs(s.pad_axis[kPadAxisLeftTrigger]) > kStickDeadzone ||
+                 std::abs(s.pad_axis[kPadAxisRightTrigger]) > kStickDeadzone))
+                pad_active = true;
+            if (pad_active) impl_->last_pad_activity_ms = activity_ms;
         }
 #else
 #if defined(PLATFORM_MEMORY)
@@ -2311,6 +2345,12 @@ public:
                 // quiet period is never swallowed.
                 impl->pad_last_touch_ms = now_ms;
                 impl->pad_idle_hidden = false;
+#if defined(__ANDROID__)
+                // Interactive touch refreshes the touchscreen's claim on the
+                // primary haptic sink (pad presses take it back on the next
+                // pump only when the pad is actually active).
+                impl->last_touch_activity_ms = activity_ms;
+#endif
             }
             for (const auto& lp : live) {
                 auto it = impl->touches.find(lp.id);
@@ -2536,6 +2576,17 @@ public:
         return false;
     }
 
+    bool controller_is_primary() const override {
+#if defined(__ANDROID__)
+        return pad_is_primary(impl_->last_touch_activity_ms,
+                              impl_->last_pad_activity_ms);
+#else
+        // Desktop keeps the historical haptic path (system pulse -> pad-0
+        // motors); no modality routing is introduced there.
+        return false;
+#endif
+    }
+
     void rumble(float low_frequency, float high_frequency,
                     std::uint32_t duration_ms) override {
 #if defined(GBARECOMP_USE_RAYLIB)
@@ -2558,15 +2609,17 @@ public:
         // no raylib equivalent. Desktop haptics therefore ride the gamepad motors
         // via the rumble path (the spin-off enhancement working as designed); with
         // no pad attached this is a documented no-op, matching "no-op sans
-        // vibrator" in the SDL path. Android should route to the platform
-        // vibrator when that port lands.
+        // vibrator" in the SDL path. Android routes to the platform vibrator
+        // (mobile_platform.h) — raylib's SetGamepadVibration is a stub there.
         if (!haptic_should_play(duration_ms)) return;
-#if defined(GBARECOMP_USE_RAYLIB)
-        if (!impl_->open || !impl_->api->IsWindowReady() || !impl_->api->IsGamepadAvailable(0)) return;
         const float s = haptic_clamp_strength(strength);
+#if defined(__ANDROID__)
+        (void)android_haptics_pulse(duration_ms, s);
+#elif defined(GBARECOMP_USE_RAYLIB)
+        if (!impl_->open || !impl_->api->IsWindowReady() || !impl_->api->IsGamepadAvailable(0)) return;
         impl_->api->SetGamepadVibration(0, s, s, duration_ms / 1000.0f);
 #else
-        (void)strength;
+        (void)s;
 #endif
     }
 
@@ -3056,6 +3109,10 @@ Result RaylibBackend::open(const OpenParams& params) {
     // Fresh edge state: stale "was held" flags from a previous open would
     // swallow the first press after reopening.
     impl_->input_edges = InputEdges{};
+    // A new session starts touchscreen-primary until the player actually
+    // moves the pad (the Android default).
+    impl_->last_touch_activity_ms = 0;
+    impl_->last_pad_activity_ms = 0;
 
     // LCD shader startup default: a set GBARECOMP_LCD_SHADER wins over the
     // config file (remembered so load_input_config cannot clobber it); unset
@@ -3345,9 +3402,15 @@ Caps RaylibBackend::caps() const {
     // answered false (the "assume true when a pad is present" intent never
     // landed). input().rumble() no-ops safely anyway.
     c.rumble = false;
-    // No cross-platform system vibrator in raylib core (haptics ride the
-    // gamepad motors); the Android port is where a real vibrator lands.
+#if defined(__ANDROID__)
+    // The platform vibrator sink exists (Activity.vibrate via JNI). A device
+    // without a vibrator is a silent no-op inside the sink, matching the API
+    // contract; the capability bit means "the sink is wired", not "hardware
+    // is present".
+    c.haptics = true;
+#else
     c.haptics = false;
+#endif
 #if defined(GBARECOMP_USE_RAYLIB)
     c.menu = true;  // the shared menu_draw.h presentation exists (Phase 3b)
 #endif

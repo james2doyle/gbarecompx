@@ -27,7 +27,12 @@
 #endif
 
 #if defined(__ANDROID__)
+#include "android_native_app_glue.h"  // struct android_app (activity/vm/clazz)
 #include <jni.h>
+// raylib's Android platform owns the NativeActivity app object. The symbol is
+// exported by rcore_android.c but deliberately absent from raylib.h (upstream
+// note: "Add this to header (if apps really need it)"), so declare it here.
+extern "C" struct android_app* GetAndroidApp(void);
 // The shared Java shell's JNI bridge (org.gbarecomp.GbaNative): the Activity
 // pushes cutout insets + the physical panel density. Ported from the retired
 // shell's SDL region (Phase 4f) — same Java contract, the store above.
@@ -48,6 +53,35 @@ Java_org_gbarecomp_GbaNative_setDisplayDpi(JNIEnv*, jclass, jfloat xdpi,
     info.xdpi.store(xdpi);
     info.ydpi.store(ydpi);
 }
+
+namespace {
+// Attach the calling (native game) thread to the JVM if needed. Detaching is
+// the caller's decision: detaching an already-Java thread would tear down the
+// VM attachment the runtime does not own.
+JNIEnv* attach_env(JavaVM* vm, bool* attached) {
+    *attached = false;
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
+        return env;
+    }
+    if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return nullptr;
+    *attached = true;
+    return env;
+}
+
+// Clear a pending JNI exception. Describe/log only the first one: a missing
+// Java method would otherwise spam the log on every haptic call.
+void clear_jni_exception(JNIEnv* env, const char* what) {
+    if (!env->ExceptionCheck()) return;
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true)) {
+        env->ExceptionDescribe();
+        __android_log_print(ANDROID_LOG_WARN, "FFTARecomp",
+                            "haptics: %s failed (JNI exception)", what);
+    }
+    env->ExceptionClear();
+}
+}  // namespace
 #endif
 
 namespace gbarecomp {
@@ -55,6 +89,48 @@ namespace gbarecomp {
 AndroidDisplayInfo& android_display_info() {
     static AndroidDisplayInfo info;
     return info;
+}
+
+bool android_haptics_pulse(int duration_ms, float strength) {
+#if defined(__ANDROID__)
+    struct android_app* app = GetAndroidApp();
+    if (!app || !app->activity) return false;
+    JavaVM* vm = app->activity->vm;
+    if (!vm) return false;
+    bool attached = false;
+    JNIEnv* env = attach_env(vm, &attached);
+    if (!env) return false;
+    jobject activity = app->activity->clazz;
+    bool ok = false;
+    if (activity) {
+        jclass cls = env->GetObjectClass(activity);
+        if (cls) {
+            // Method ids are stable for the Activity class; cache so the
+            // per-impact path does one lookup, not a class scan.
+            static std::atomic<jmethodID> cached_mid{nullptr};
+            jmethodID mid = cached_mid.load(std::memory_order_relaxed);
+            if (!mid) {
+                mid = env->GetMethodID(cls, "vibrate", "(IF)V");
+                if (mid) cached_mid.store(mid, std::memory_order_relaxed);
+                clear_jni_exception(env, "GetMethodID(vibrate)");
+            }
+            if (mid) {
+                env->CallVoidMethod(activity, mid,
+                                    static_cast<jint>(duration_ms),
+                                    static_cast<jfloat>(strength));
+                ok = !env->ExceptionCheck();
+                if (!ok) clear_jni_exception(env, "vibrate");
+            }
+            env->DeleteLocalRef(cls);
+        }
+    }
+    if (attached) vm->DetachCurrentThread();
+    return ok;
+#else
+    (void)duration_ms;
+    (void)strength;
+    return false;
+#endif
 }
 
 const char* mobile_internal_storage_path() {

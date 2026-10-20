@@ -220,6 +220,16 @@ int main() {
         check(!pad_opens_menu(false, false), "neither held means no menu");
     }
 
+    // ---- primary modality is last-used, touchscreen by default -----------
+    {
+        check(!pad_is_primary(0, 0), "no activity keeps touchscreen primary");
+        check(pad_is_primary(0, 10), "newer pad activity wins");
+        check(!pad_is_primary(10, 0), "newer touch activity wins");
+        check(!pad_is_primary(10, 10), "simultaneous activity keeps touch");
+        check(pad_is_primary(0xFFFFFFF0u, 0x00000010u),
+              "wrap-safe pad stamp comparison");
+    }
+
     // ---- turbo is LEVEL triggered ------------------------------------------
     {
         InputEdges e;

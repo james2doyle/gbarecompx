@@ -39,6 +39,14 @@ struct AndroidDisplayInfo {
 
 AndroidDisplayInfo& android_display_info();
 
+// Android: one-shot system-vibrator pulse for host haptics. Strength is
+// clamped to 0..1 and mapped onto the platform's 1..255 amplitude range when
+// the vibrator supports amplitude control (otherwise DEFAULT_AMPLITUDE).
+// Returns false when there is no JNI path or the platform call failed; always
+// false off Android. Safe to call from the game thread (the Activity method
+// only touches thread-safe system services).
+bool android_haptics_pulse(int duration_ms, float strength);
+
 struct MobileProcessOptions {
     const char* game_config = nullptr;   // e.g. "variants/emerald/game.toml"
     const char* program_name = nullptr;  // argv[0] stand-in, e.g. "./EmeraldRecomp"
