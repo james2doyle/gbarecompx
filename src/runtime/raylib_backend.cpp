@@ -1969,6 +1969,7 @@ static int32_t android_pad_observe(struct android_app* app,
 }
 #endif  // __ANDROID__
 
+#if defined(GBARECOMP_USE_RAYLIB)
 // Bounded desktop key census: the FIRST THREE sightings of each distinct
 // keycode arriving in the GetKeyPressed queue, tagged with whether the level
 // was already down. The 2026-10-20 Enter-as-Select report resolved as host
@@ -1987,6 +1988,7 @@ static void key_census_key(RaylibApi* api, const int* queued, int queued_count) 
                      k, api->IsKeyDown(k) ? "yes" : "no", n);
     }
 }
+#endif  // GBARECOMP_USE_RAYLIB
 
 // ── V2 concern: Input ───────────────────────────────────────────
 // The V2 `Input` interface over the backend's Impl state. read() is the
