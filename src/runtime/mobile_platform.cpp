@@ -24,6 +24,7 @@
 #endif
 
 #include <android/log.h>
+#include <atomic>
 #endif
 
 #if defined(__ANDROID__)
@@ -93,6 +94,18 @@ AndroidDisplayInfo& android_display_info() {
 
 bool android_haptics_pulse(int duration_ms, float strength) {
 #if defined(__ANDROID__)
+    // Sink census: reached = the facade routed here with a clamped request.
+    // Bounded (first 8) like the game's damage census — proves how far the
+    // call got, never a flood.
+    {
+        static std::atomic<int> logged{0};
+        if (logged.load(std::memory_order_relaxed) < 8) {
+            logged.fetch_add(1, std::memory_order_relaxed);
+            __android_log_print(ANDROID_LOG_INFO, "FFTARecomp",
+                                "haptics-sink: pulse ms=%d strength=%.2f",
+                                duration_ms, static_cast<double>(strength));
+        }
+    }
     struct android_app* app = GetAndroidApp();
     if (!app || !app->activity) return false;
     JavaVM* vm = app->activity->vm;

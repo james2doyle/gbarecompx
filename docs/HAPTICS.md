@@ -11,7 +11,7 @@
 | Android phone vibrator | **Live** (issue #30 Phase 1) |
 | `host_primary_haptic` routing | **Live**; touchscreen routes to the phone |
 | Controller motors | Seam ready; Android sink deferred (Phase 2 glue device-id capture) |
-| Battle-damage trigger | Deferred (game-repo Phase 4) |
+| Battle-damage trigger | **Live in the FFTA game repo** (issue #30 Phase 4, device-verified 2026-10-20) |
 | User setting | Deferred (Phase 5) |
 
 The FF pill's existing `host_haptic_pulse(15, 0.5)` is the first real
@@ -65,6 +65,32 @@ pad-motor haptic path.
 - `host_window_closed_tests` — closed-window fallback.
 - The consumer's full gate: `tools/check.py` 17/17, attract hash unchanged.
 - Device: the FF pill pulses the phone vibrator (user-confirmed 2026-10-20).
+
+## Damage haptics (consumer design, FFTA game repo)
+
+The FFTA game repo (issue #30 Phase 4) drives `host_primary_haptic` from
+battle damage; the design lessons are framework-relevant because every
+consumer will face the same shape:
+
+- **Damage applies through more than one code path.** FFTA uses a shared HP
+  delta helper for the melee/fight family AND a direct HP store for
+  enemy-unit ability damage (`strh r1,[unit+0x1C]`) — a hook on the helper
+  alone silently misses whole attack classes. Map every apply path before
+  trusting a single seam.
+- **Display sync beats a fixed delay.** The HP apply happens at damage
+  calculation; the damage number appears at the animation's impact — the
+  gap varies per animation (measured ~22 to ~240 frames). The game hooks
+  the number's popup initializer and releases the pulse one frame later,
+  with a grace deadline so a pulse is never lost.
+- **Savestate loads must clear armed state.** The mods reset callback does
+  not run on TCP/observer loads; the game's frame policy watches
+  `ExtendedViewFrameInfo::state_epoch` to reset. Stale "last popup frame"
+  state otherwise releases a fresh pulse immediately after arming.
+
+Device-verified 2026-10-20: landed hits log `entry → damage → popup →
+PULSE fire → haptics-sink ms=120`, pulse one frame after the popup; misses
+spawn a value-0 popup and are silent (no arm). The consumer's BRINGUP entry
+carries the full evidence trail (trap PCs, frames, two-load regression).
 
 ## Not in upstream
 
