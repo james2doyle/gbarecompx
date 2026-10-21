@@ -1969,6 +1969,25 @@ static int32_t android_pad_observe(struct android_app* app,
 }
 #endif  // __ANDROID__
 
+// Bounded desktop key census: the FIRST THREE sightings of each distinct
+// keycode arriving in the GetKeyPressed queue, tagged with whether the level
+// was already down. The 2026-10-20 Enter-as-Select report resolved as host
+// keycode corruption (a single physical press delivering 344 then 257) —
+// this log makes the next such report decidable from stderr alone.
+// RaylibApi-free: the interface has no way to enumerate key events, so this
+// runs right after the queue drain in pump() with the interface calls it
+// needs (IsKeyDown per keycode).
+static void key_census_key(RaylibApi* api, const int* queued, int queued_count) {
+    static std::map<int, int> seen;
+    for (int i = 0; i < queued_count; ++i) {
+        const int k = queued[i];
+        const int n = seen[k]++;
+        if (n < 3)
+            TraceLog(LOG_INFO, "key-census: key=%d (queue, level-down=%s) #%d",
+                     k, api->IsKeyDown(k) ? "yes" : "no", n);
+    }
+}
+
 // ── V2 concern: Input ───────────────────────────────────────────
 // The V2 `Input` interface over the backend's Impl state. read() is the
 // snapshot fill (levels only) that used to sit at the top of the flat
@@ -2034,6 +2053,16 @@ public:
              k != 0 && queued_count < 16;
              k = impl_->api->GetKeyPressed())
             queued[queued_count++] = k;
+
+        // Bounded key census (desktop): the FIRST THREE sightings of each
+        // distinct keycode, with the level/queue evidence. Same spirit as
+        // the Android pad-census lines: when a user reports "Enter acts as
+        // Select", the runtime's innocence or guilt reads off this log —
+        // the raw keycode is the ground truth the mapping consumes. Bounded
+        // so it never spams; a corrupt host (keyboard firmware layer, input
+        // remapper) shows up as a wrong keycode here, cleanly separated from
+        // a mapping bug, without kernel-level capture.
+        key_census_key(impl_->api, queued, queued_count);
         auto poll = [&](HostKey k) {
             if (k == kHostKeyNone) return;
             if (impl_->api->IsKeyDown(k) || impl_->api->IsKeyPressed(k)) {

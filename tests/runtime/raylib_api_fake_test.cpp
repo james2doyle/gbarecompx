@@ -440,12 +440,80 @@ void config_enabled_lcd_compiles() {
     b.close();
 }
 
+// 16. KEYINPUT bit isolation at the fake-API seam (2026-10-20 live-poll
+// investigation): given any scripted keycode sequence, Enter (257) may only
+// ever clear the Start bit (3); the Select bit (2, keycode 344) may only
+// clear when 344 was scripted. The live evidence was Select+Start from one
+// Enter press — which means the HOST delivered two keycodes (344 then 257),
+// something this suite cannot see if the mapping is correct. These cases pin
+// that: correct input in -> correct bits out, so a future regression report
+// with raw-keycode logs (the key census below) distinguishes runtime bug
+// from host-keyboard corruption in one step.
+static constexpr int kGbaSelectBit = 1u << 2;
+static constexpr int kGbaStartBit = 1u << 3;
+
+void enter_press_maps_to_start_only() {
+    FakeRaylibApi fake;
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    fake.key_down = {257};
+    auto ev = b.pump();
+    CHECK(!(ev.keyinput & kGbaStartBit));       // Start pressed
+    CHECK(ev.keyinput & kGbaSelectBit);         // Select untouched
+    b.close();
+}
+
+void right_shift_press_maps_to_select_only() {
+    FakeRaylibApi fake;
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    fake.key_down = {344};
+    auto ev = b.pump();
+    CHECK(!(ev.keyinput & kGbaSelectBit));      // Select pressed
+    CHECK(ev.keyinput & kGbaStartBit);          // Start untouched
+    b.close();
+}
+
+void queue_plus_level_duplicate_press_stays_one_key() {
+    // A press spanning a Poll boundary arrives in BOTH the GetKeyPressed
+    // queue and IsKeyDown: the snapshot must still read it as one held key,
+    // and exactly one Start edge must reach KEYINPUT (Select never fires).
+    FakeRaylibApi fake;
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    fake.press_queue = {257};  // press callback enqueued it...
+    fake.key_down = {257};     // ...and the level is still down this pump
+    auto ev = b.pump();
+    CHECK(!(ev.keyinput & kGbaStartBit));
+    CHECK(ev.keyinput & kGbaSelectBit);
+    // Next pump: queue drained, level still down -> still just Start.
+    auto ev2 = b.pump();
+    CHECK(!(ev2.keyinput & kGbaStartBit));
+    CHECK(ev2.keyinput & kGbaSelectBit);
+    b.close();
+}
+
+void unrelated_keycodes_never_set_select_or_start() {
+    FakeRaylibApi fake;
+    RaylibBackend b(&fake, nullptr);
+    CHECK(b.open(OpenParams{}).ok());
+    fake.press_queue = {344, 259, 260};  // RShift, Space, Right — no levels
+    auto ev = b.pump();
+    CHECK(!(ev.keyinput & kGbaSelectBit));  // 344 (Select) fires
+    CHECK(ev.keyinput & kGbaStartBit);      // 259/260 unbound -> no Start
+    b.close();
+}
+
 int main() {
     init_window_failure_is_a_window_error();
     audio_unavailable_refuses_claim();
     shader_failure_still_stores_fx_values();
     monitor_edge_falls_back_to_60hz();
     queue_only_delete_press_fires_menu_edge_once();
+    enter_press_maps_to_start_only();
+    right_shift_press_maps_to_select_only();
+    queue_plus_level_duplicate_press_stays_one_key();
+    unrelated_keycodes_never_set_select_or_start();
     window_scale_resizes_the_window();
     fullscreen_drives_window_state();
     linear_filter_reaches_texture();

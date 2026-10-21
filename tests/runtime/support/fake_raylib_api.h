@@ -21,7 +21,9 @@
 #include "raylib_api.h"
 
 #include <cstring>
+#include <deque>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -288,14 +290,23 @@ public:
 
     // ── input ─────────────────────────────────────────────────────────
     bool IsKeyDown(int key) override {
+        if (!key_down.empty()) return key_down.count(key) != 0;
         (void)key;
         return key_down_held;
     }
     bool IsKeyPressed(int key) override {
+        if (!key_pressed.empty()) return key_pressed.count(key) != 0;
         (void)key;
         return key_pressed_held;
     }
     int GetKeyPressed() override {
+        // A scripted queue wins over the legacy one-shot knob (which stays
+        // for existing tests).
+        if (!press_queue.empty()) {
+            const int v = press_queue.front();
+            press_queue.pop_front();
+            return v;
+        }
         const int v = press_queue_once;
         press_queue_once = 0;
         return v;
@@ -414,6 +425,12 @@ public:
     bool key_down_held = false;
     bool key_pressed_held = false;
     int press_queue_once = 0;
+    // Per-key scripting for key-sequence tests (backend polls one pump per
+    // snapshot): set maps override the blanket knobs when non-empty; the
+    // queue drains one entry per GetKeyPressed call.
+    std::set<int> key_down;
+    std::set<int> key_pressed;
+    std::deque<int> press_queue;
     bool should_close = false;
     int screen_w = 720, screen_h = 480;
     unsigned int config_flags = 0;
