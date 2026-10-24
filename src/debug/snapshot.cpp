@@ -216,7 +216,7 @@ bool load_state_bytes(const uint8_t* data, std::size_t size,
         return false;
     }
     uint32_t version = head.u32();
-    if (version != kSnapshotVersion && version != kLegacySnapshotVersion) {
+    if (version != kSnapshotVersion) {
         if (err) {
             *err = "snapshot: version mismatch (file v" +
                    std::to_string(version) + ", runtime v" +
