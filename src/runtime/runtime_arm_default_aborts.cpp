@@ -539,7 +539,7 @@ extern "C" int runtime_bridge_interpret(uint32_t entry_pc, bool entry_thumb,
     // family (FFTA 0x0FF8 thumb->ARM, 0x08000494 ARM->thumb) needs the
     // entry mode + LR/SP/CPSR at the miss instant to be classifiable from
     // a run log alone.
-    std::fprintf(stderr,
+    if (self_heal_verbose()) std::fprintf(stderr,
         "runtime_arm: bridge entry pc=0x%08X thumb=%u stop=0x%08X "
         "lr=0x%08X sp=0x%08X cpsr=0x%08X depth=%u top_level=%u\n",
         entry_pc, entry_thumb ? 1u : 0u, stop_pc,
