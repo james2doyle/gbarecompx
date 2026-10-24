@@ -1009,7 +1009,7 @@ extern "C" bool runtime_should_yield(void) {
     // protocol as the vblank yield, gated the same way (never inside a live
     // IRQ handler, whose dispatch must complete), before the stack is
     // exhausted. Inert while no budget is armed.
-    {
+    if constexpr (gbarecomp::host_stack_guard_supported()) {
         char probe;
         const bool in_handler = g_irq_nest_depth != 0u;
         const bool fire =

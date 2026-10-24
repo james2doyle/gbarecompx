@@ -92,6 +92,17 @@ bool host_stack_critically_low(const void* probe);
 // (Linux). No-op on unsupported platforms.
 void host_stack_guard_arm_current(std::size_t reserve_bytes);
 
+// Keep unsupported hosts' instruction-boundary path a compile-time no-op.
+// Their arming operation cannot establish bounds; an out-of-line probe would
+// still pay the thread-local lookup (emulated TLS on MinGW) on every branch.
+constexpr bool host_stack_guard_supported() {
+#if defined(__linux__)
+    return true;
+#else
+    return false;
+#endif
+}
+
 // True when built for a mobile platform (compile-time).
 constexpr bool mobile_platform() {
 #if defined(__ANDROID__)
