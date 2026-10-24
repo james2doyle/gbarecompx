@@ -291,7 +291,7 @@ std::string self_heal_misses_json() {
 
     // FULLY_STATIC iff nothing was bridged AND nothing was healed (a warm
     // cache heals with zero misses but is still NOT fully static).
-    const bool fully_static = g_misses.empty() && healed == 0;
+    const bool fully_static = g_misses.empty() && healed == 0 && g_interp_insns == 0;
 
     std::string out;
     char buf[640];
