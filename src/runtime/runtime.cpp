@@ -3538,13 +3538,17 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
         const char* dir;
         int* fixed_width;
         RuntimeUiContext* ui;
+        void (*opts_menu_apply)(void*, const MenuModel&,
+                                const MenuResult&) = nullptr;
+        void* opts_menu_apply_user = nullptr;
     };
     HookCtx hook_ctx{&menu_settings, &host_menu,
                      menu_config_dir.c_str(), &menu_fixed_view_width,
-                     &runtime_ui_context};
+                     &runtime_ui_context, opts.menu_apply,
+                     opts.menu_apply_user};
     if (menu_available) {
         host_menu.set_apply_hook(
-            [](void* user, WindowBackend& window, const MenuResult&) {
+            [](void* user, WindowBackend& window, const MenuResult& result) {
                 auto* ctx = static_cast<HookCtx*>(user);
                 MenuSettings& ms = *ctx->ms;
                 const MenuModel& model = ctx->host->model();
@@ -3610,8 +3614,14 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                 }
                 save_menu_settings(ctx->dir, ms);
                 window.audio().set_enabled(ms.audio_enabled);
+                if (ctx->opts_menu_apply)
+                    ctx->opts_menu_apply(ctx->opts_menu_apply_user, model,
+                                         result);
             },
             &hook_ctx);
+        if (opts.menu_rebuild)
+            host_menu.set_rebuild_hook(opts.menu_rebuild,
+                                       opts.menu_rebuild_user);
     }
     // Generic-menu View row (Native / Adaptive / Fixed): the mode lives in
     // runtime_ui_context (applied per-frame by sync_resize_driven_view); the

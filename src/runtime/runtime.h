@@ -13,6 +13,8 @@
 
 namespace gbarecomp {
 struct GbaNetplayLaunch;
+struct MenuModel;
+struct MenuResult;
 
 struct TouchFrameInfo;   // touch_input.h
 class HostOverlay;       // host_overlay.h
@@ -340,6 +342,17 @@ struct RunOptions {
     // null => the launcher's default "assets/img/boxart.tga". Multi-variant
     // repos stage one file per variant (e.g. "assets/img/boxart_firered.tga").
     const char* launcher_boxart = nullptr;
+    // ---- game-owned V2 menu rows (host_menu.h) ----------------------------
+    // The engine owns HostMenu; games contribute rows here instead of
+    // reaching into the menu. Rebuild appends rows via menu_add_row (build()
+    // resets the model, so rows added elsewhere do not survive open/toggle).
+    // Apply fires after the engine handled a change; the game reads its rows
+    // back from the model. Null leaves the established menu byte-identical.
+    void (*menu_rebuild)(void* user, MenuModel& model) = nullptr;
+    void* menu_rebuild_user = nullptr;
+    void (*menu_apply)(void* user, const MenuModel& model,
+                       const MenuResult& result) = nullptr;
+    void* menu_apply_user = nullptr;
 };
 
 int run_game(int argc, char** argv, const RunOptions& opts = {});
